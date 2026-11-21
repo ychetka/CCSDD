@@ -36,9 +36,11 @@ CAND=""; ENV=""; VER=""; MAXL=2000; ORCH_DIR=""
 # Default canon root = the parent of the deployed canon dir
 # (canon/root/ in the package layout). The candidate tree mirrors
 # that root (contains canon/ inside), so files deploy verbatim.
+# The authoritative manifest/history live one level ABOVE canon_home
+# (<pkg>/canon/MANIFEST.json) - start_project.sh reads that path.
 CANON_ROOT="$(dirname "$CANON_DIR")"
-MANIFEST="$(dirname "$CANON_DIR")/MANIFEST.json"
-HISTORY="$(dirname "$CANON_DIR")/release_history.jsonl"
+MANIFEST="$(dirname "$(dirname "$CANON_DIR")")/MANIFEST.json"
+HISTORY="$(dirname "$(dirname "$CANON_DIR")")/release_history.jsonl"
 while [ $# -gt 0 ]; do
   [ $# -ge 2 ] || { echo "canon_pub: dangling flag $1" >&2; exit 2; }
   case "$1" in
@@ -133,11 +135,26 @@ if not key:
     fail("human signing key unavailable "
          "(set CANON_HUMAN_KEY or ~/.config/canon/human_key - "
          "the same key that signs decision envelopes on the bus)", 5)
-payload = f"{env.get('verdict')}|{env.get('artifact_sha')}|{env.get('signed_by','')}|{env.get('ts','')}"
+# The signed payload binds the TARGET version too - a valid envelope
+# for this tree cannot be replayed under a different version string.
+payload = (f"{env.get('verdict')}|{env.get('artifact_sha')}|"
+           f"{env.get('signed_by','')}|{env.get('ts','')}|{ver}")
 want = hmac.new(key.encode(), payload.encode(), hashlib.sha256).hexdigest()
 got = str(env.get("sig") or "")
 if not hmac.compare_digest(want, got):
     fail("envelope signature invalid (HMAC mismatch)", 5)
+# Envelope freshness: a publication decision older than 24h is stale
+# (the tree may be identical but the decision context is not).
+try:
+    ts = datetime.datetime.fromisoformat(
+        str(env.get("ts", "")).replace("Z", "+00:00"))
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=datetime.timezone.utc)
+    age = (datetime.datetime.now(datetime.timezone.utc) - ts).total_seconds()
+except Exception:
+    fail("envelope ts is not a parseable ISO timestamp", 5)
+if not (0 <= age <= 86400):
+    fail(f"envelope ts outside the 24h freshness window (age {int(age)}s)", 5)
 
 # -- 3. read-limit ------------------------------------------------
 for p in files:
@@ -149,6 +166,7 @@ for p in files:
 SECRET_RX = re.compile(
     r"(BEGIN [A-Z ]*PRIVATE KEY|AKIA[0-9A-Z]{16}|"
     r"ghp_[A-Za-z0-9]{36}|xox[baprs]-[A-Za-z0-9-]{10,}|"
+    r"sk-[A-Za-z0-9_-]{20,}|"
     r"api[_-]?key[\"'\s:=]{1,6}[A-Za-z0-9_/-]{20,})", re.I)
 for p in files:
     m = SECRET_RX.search(p.read_text(encoding="utf-8", errors="replace"))
@@ -156,13 +174,29 @@ for p in files:
         fail(f"secrets-shaped content in {p.relative_to(cand)}: {m.group(0)[:24]}..")
 
 # -- 5. publish ---------------------------------------------------
+# Guard before the destructive sweep: a wrong --canon-root must not
+# mass-delete a foreign tree. The target must either be absent/empty
+# (fresh init) or already look like a canon root (canon/RULES.md).
+if canon_root.exists():
+    if not canon_root.is_dir():
+        fail(f"--canon-root exists and is not a dir: {canon_root}")
+    existing = [p for p in canon_root.rglob("*") if p.is_file()]
+    if existing and not (canon_root / "canon/RULES.md").is_file():
+        fail(f"--canon-root {canon_root} is a non-empty dir without "
+             f"canon/RULES.md - refusing to sweep a foreign tree "
+             f"(pass the real canon root)", 6)
 canon_root.mkdir(parents=True, exist_ok=True)
 # stale-file sweep: anything in root that the candidate no longer
 # ships is removed - deployment is whole-manifest, not additive
 kept = {p.relative_to(cand).as_posix() for p in files}
+removed = []
 for old in canon_root.rglob("*"):
     if old.is_file() and old.relative_to(canon_root).as_posix() not in kept:
+        removed.append(old.relative_to(canon_root).as_posix())
         old.unlink()
+if removed:
+    print(f"canon_pub: swept {len(removed)} stale file(s): "
+          f"{removed[:5]}", file=sys.stderr)
 for p in files:
     rel = p.relative_to(cand)
     dst = canon_root / rel
@@ -173,7 +207,7 @@ for p in files:
 
 manifest = {
     "canon_version": ver,
-    "canon_home": "canon",
+    "canon_home": "canon/root",
     "canary": "GENERATED_AT_DEPLOY",
     "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     "envelope": {
@@ -186,11 +220,18 @@ manifest = {
 }
 # Schema continuity: keys the deploy pipeline/check_setup rely on
 # (canon_home, canary, gitignore, description) carry over from the
-# previous manifest so a release published through this gate stays
-# compatible with start_project.sh + check_setup.sh.
-for k in ("canon_home", "canary", "gitignore", "description"):
-    if k in prev:
-        manifest[k] = prev[k]
+# previous manifest; a first-time publish falls back to the shipped
+# product defaults so the result still deploys under start_project.sh.
+DEFAULTS = {
+    "canon_home": "canon/root",
+    "canary": "GENERATED_AT_DEPLOY",
+    "gitignore": ["canon/", ".devin/", ".windsurfrules",
+                  ".windsurfrules.bak", "AGENTS.md", "CLAUDE.md",
+                  ".claude/"],
+    "description": "CCSDD neutral canon release.",
+}
+for k, dv in DEFAULTS.items():
+    manifest[k] = prev.get(k, dv)
 # orchestrator layer hash-pin: protocols/PLAYBOOK/bin drift was a
 # real bypass source - the release manifest pins it like the canon
 orch_env = os.environ.get("ORCH_DIR")

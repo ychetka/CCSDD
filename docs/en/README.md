@@ -8,7 +8,18 @@ both committees verify — and discipline is held not by prompts but by
 mechanical gates, hash-pinned artifacts, and signed human decision
 envelopes.
 
-Version: 1.0.0 (first release).
+Two version axes, deliberately separate: **product release** `v0.0.1`
+(the repo tag on this package) and **canon version** `1.0.0`
+(`MANIFEST.json.canon_version`, released as `canon-v*` tags — the axis
+deploy/release fencing cares about). Product tags track the package;
+canon tags track the methodology payload.
+
+Requirements: `git`, `python3`, `bash`. The merge/release pipeline
+(`repo_merge.sh`, `repo_release.sh`, `repo_pr_review.sh`,
+`verify_constraints.sh` PR checks) additionally needs an authenticated
+`gh` on PATH — it is the remote truth source for reviews, required
+checks and merge binding; `check_setup.sh` fails closed without it.
+Everything else (commit gates, canon integrity, gateway) is remote-free.
 
 [Russian version → ../ru/README.md](../ru/README.md)
 [Methodology deep-dive → methodology.md](methodology.md)

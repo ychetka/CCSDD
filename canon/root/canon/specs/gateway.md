@@ -60,7 +60,13 @@ not change the class.
 ## 5. Limits
 
 - `Audit`: hard iteration counter per audit; exhaustion — a
-  terminal signal (escalation path, not auto-renewal).
+  terminal signal (escalation path, not auto-renewal). The audit key
+  defaults to a deterministic hash of the audited payload, so the
+  same artifact shares one budget; a global daily cap
+  (`audit_daily_max_total` in policy.json) backstops key spraying.
 - `Consult`: budget limits per item/period; exhaustion — refusal
   with failure_class=quota_limited or parking per the quota
   protocol (`quota.md`), with no silent profile upgrade.
+- The gateway counter file is integrity-critical state: an
+  unreadable/corrupt file is a fail-closed refusal until repaired,
+  never a silent reset.

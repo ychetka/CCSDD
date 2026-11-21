@@ -12,6 +12,7 @@
   },
   "gateway": {
     "audit_max_per_key": 20,
+    "audit_daily_max_total": 100,
     "consult_daily_max_per_partner": 50,
     "call_timeout_seconds": 300
   }

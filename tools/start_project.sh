@@ -19,6 +19,8 @@
 #                            available: files adapters/<name>.sh of this product
 #   --repo owner/name        repo slug for canon/project.json (default: git remote)
 #   --text-lang en|ru        text_language for project.json (default: en)
+#   --repo-lang en|ru        repo_language: language of committed artifacts
+#                            (default en; opt out only for a non-English repo)
 #   --canon DIR              canon source root dir (default: this product's canon/root)
 #   --manifest PATH          MANIFEST.json path (default: <canon>/../MANIFEST.json)
 #   --protected-paths a,b,c  extra paths for project.json protected_paths
@@ -30,7 +32,7 @@ set -euo pipefail
 die() { echo "start_project: $*" >&2; exit 1; }
 warn() { echo "start_project WARN: $*" >&2; }
 
-WORKSPACE=""; REPO_SLUG=""; TEXT_LANG="en"; CANON_DIR=""; MANIFEST=""
+WORKSPACE=""; REPO_SLUG=""; TEXT_LANG="en"; REPO_LANG=""; CANON_DIR=""; MANIFEST=""
 PROTECTED=""; ALLOW_UNTAGGED=0; DRY_RUN=0; ADAPTERS=()
 
 while [ $# -gt 0 ]; do
@@ -39,6 +41,7 @@ while [ $# -gt 0 ]; do
     --adapter)    ADAPTERS+=("${2:?--adapter requires name}"); shift 2 ;;
     --repo)       REPO_SLUG="${2:?--repo requires owner/name}"; shift 2 ;;
     --text-lang)  TEXT_LANG="${2:?--text-lang requires en|ru}"; shift 2 ;;
+    --repo-lang)  REPO_LANG="${2:?--repo-lang requires en|ru}"; shift 2 ;;
     --canon)      CANON_DIR="${2:?--canon requires path}"; shift 2 ;;
     --manifest)   MANIFEST="${2:?--manifest requires path}"; shift 2 ;;
     --protected-paths) PROTECTED="${2:?--protected-paths requires a,b,c}"; shift 2 ;;
@@ -53,6 +56,7 @@ done
 [ -d "$WORKSPACE" ] || die "workspace not found: $WORKSPACE"
 WORKSPACE=$(cd "$WORKSPACE" && pwd -P)
 case "$TEXT_LANG" in en|ru) ;; *) die "--text-lang must be en or ru" ;; esac
+case "$REPO_LANG" in en|ru|"") ;; *) die "--repo-lang must be en or ru" ;; esac
 
 PRODUCT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 ADAPTER_DIR="$PRODUCT_DIR/adapters"
@@ -172,10 +176,11 @@ for rel in old_files:
 
 os.makedirs(os.path.dirname(stamp), exist_ok=True)
 # Executable hooks that gate scripts may invoke but that live outside
-# the shipped manifest (repo-declared adapters like version_source.sh /
-# baseline_env.sh, canon/tools/* helpers): pin their sha256 into the
-# deploy stamp so check_setup can distinguish "declared hook" from
-# "planted file". Re-run start_project to re-pin after legit changes.
+# the shipped manifest: ONLY the declared adapter names at the canon
+# root plus anything under canon/tools/. A planted canon/bin/evil.sh
+# must stay an "extra file", never a silently-legalized "hook" - the
+# allowlist is closed on purpose.
+HOOK_NAMES = {"canon/version_source.sh", "canon/baseline_env.sh"}
 adapters = {}
 for dp, _dn, fns in os.walk(os.path.join(ws, "canon")):
     for name in sorted(fns):
@@ -183,7 +188,7 @@ for dp, _dn, fns in os.walk(os.path.join(ws, "canon")):
                                          os.path.join(ws, "canon"))
         if rel in new_set:
             continue
-        if name.endswith(".sh") or rel.startswith("canon/tools/"):
+        if rel in HOOK_NAMES or rel.startswith("canon/tools/"):
             adapters[rel] = hashlib.sha256(
                 open(os.path.join(dp, name), "rb").read()).hexdigest()
 if adapters:
@@ -317,15 +322,17 @@ PY
 
 if [ ! -f "$WORKSPACE/canon/project.json" ]; then
   [ -n "$REPO_SLUG" ] || REPO_SLUG="owner/$(basename "$WORKSPACE")"
-  python3 - "$WORKSPACE/canon/project.json" "$REPO_SLUG" "$TEXT_LANG" "$PROTECTED" <<'PY'
+  python3 - "$WORKSPACE/canon/project.json" "$REPO_SLUG" "$TEXT_LANG" "$PROTECTED" "$REPO_LANG" <<'PY'
 import json, sys
-path, repo, lang, protected = sys.argv[1:5]
+path, repo, lang, protected, rlang = sys.argv[1:6]
 cfg = {
     "repo": repo,
     "text_language": lang,
     "protected_paths": ["canon/", ".devin/", ".windsurfrules", "AGENTS.md",
                       "partners/config.json"],
 }
+if rlang:
+    cfg["repo_language"] = rlang
 if protected:
     cfg["protected_paths"] += [p for p in protected.split(",") if p]
 with open(path, "w", encoding="utf-8") as fh:

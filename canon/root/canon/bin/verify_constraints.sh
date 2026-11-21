@@ -73,7 +73,7 @@ ON_BASE=0
 if [[ "$BRANCH" =~ ^issue_([0-9]+)-[a-z0-9][a-z0-9_-]*$ ]]; then
   pass "branch $BRANCH"
   ISSUE_N="${BASH_REMATCH[1]}"
-elif [[ "$BRANCH" =~ ^release/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+elif [[ "$BRANCH" =~ ^release/v[0-9]+\.[0-9]+\.[0-9]+(-r[0-9a-zA-Z]+)?$ ]]; then
   pass "release branch $BRANCH"
 elif [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
   if [ -n "$VERIFY_BRANCH" ]; then

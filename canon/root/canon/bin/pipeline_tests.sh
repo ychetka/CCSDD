@@ -20,7 +20,24 @@
 #   G7  audit verdict is journaled before returning
 #   M1  repo_merge fails closed without review.reviewer_logins
 #   M2  REVIEWERS env cannot substitute for reviewer_logins
-#   M3  configured reviewers pass the binding check (later gate fails)
+#   M3  configured reviewers reach the approval gate (alice missing)
+#   M4  approval on a stale head sha does not count
+#   M5  approval on head + green required check passes the verdict
+#       stage (fails later at verify/release, never at review)
+#   M6  pending reviewRequest strips the standing approval
+#   M7  required check missing from rollup -> missing_required_checks
+#   M8  regular PR bumping the version source -> version_drift
+#   M9  full path: on-head approval + green check -> real
+#       `gh pr merge --match-head-commit` + post-merge release
+#   M10 required checks union: ruleset-only requirement is enforced
+#       even when classic protection 404s
+#   G8  corrupt gateway counter file fails closed
+#   G9  audit keys auto-derive from payload + share/differ correctly
+#   G10 global daily audit cap blocks fresh-key spraying
+#   CP1 canon_pub refuses to sweep a foreign --canon-root
+#   CP2 canon_pub writes the canonical manifest schema
+#   PR1 repo_pr_review refuses a stale commit_id
+#   PR2/3 a bound commit_id submits pinned to the head
 #   R1  release PR with provenance-clean diff skips .changes gate
 #   R2  release PR with an out-of-allowlist file is a REGULAR PR
 #       (missing_changes_entry blocks it)
@@ -98,6 +115,16 @@ expect D5b-restored 0 $? "SETUP OK"
 mkdir -p "$WS/canon/partner_journal" && echo '{}' > "$WS/canon/partner_journal/x.json"
 (cd "$WS" && canon/bin/check_setup.sh) >"$SCRATCH/out" 2>&1
 expect D6-runtime-exempt 0 $? "SETUP OK"
+
+# Commit the deploy-written .gitignore onto main: without it a later
+# `git add -A` on a branch that lacks the file swallows canon/ into
+# the index and `git checkout main` then wipes the deployed tree.
+# pyproject.toml gives main a detectable version source (v1.2.2) so
+# the version-drift gate has a base to compare against.
+(cd "$WS" && git add .gitignore \
+  && printf '[project]\nname="pipe"\nversion="1.2.2"\n' > pyproject.toml \
+  && git add pyproject.toml \
+  && git commit -qm "track .gitignore + version source")
 
 # ---------- G: gateway limits/timeout/journal ----------------------
 IMPL="$SCRATCH/partner_impl"
@@ -190,31 +217,121 @@ FAKEBIN="$SCRATCH/fakebin"; mkdir -p "$FAKEBIN"
 # Scripted via FAKEGH_STATE files so each test tunes the PR head/branch.
 cat > "$FAKEBIN/fakegh" <<'SH'
 #!/usr/bin/env bash
+# Faithful-enough gh: canned RAW JSON per endpoint + the --jq filters
+# repo_merge relies on. Without --jq handling every check silently
+# flips fail-closed and tests could never reach past the review gate.
 set -uo pipefail
 S="${FAKEGH_STATE:?}"
-case "$1 $2" in
-  "pr view")
-    cat "$S/pr_view.json" ;;
-  "repo view")
-    echo '{"defaultBranchRef":{"name":"main"}}' ;;
-  api\ *)
-    url="$2"
+# Log merge invocations verbatim (before flag stripping) - the gate's
+# --match-head-commit binding is what we are testing.
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "merge" ]; then
+  printf '%s\n' "$*" >> "$S/merge_calls"
+fi
+METHOD=""; JQ=""; INPUT_F=""; ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --jq) JQ="$2"; shift 2 ;;
+    --paginate|--squash|--merge|--rebase|--delete-branch|--auto|--draft) shift ;;
+    --match-head-commit|--subject|--body|-t|-b|-X) [ "$1" = "-X" ] && METHOD="$2"; shift 2 ;;
+    --input) INPUT_F="$2"; [ "$INPUT_F" = "-" ] && cat > "$S/post_body"; shift 2 ;;
+    --json|--fields|--field|-f|-F|-H) shift 2 ;;
+    *) ARGS+=("$1"); shift ;;
+  esac
+done
+set -- "${ARGS[@]}"
+RAW='{}'
+case "$1" in
+  api)
+    url="${2:-}"
     case "$url" in
-      *"/protection/required_status_checks") echo '{"contexts":[]}' ;;
-      *"/rulesets"*) echo '[]' ;;
-      *"/reviews"*) cat "$S/reviews.json" ;;
-      *"/pulls"*) echo '{}' ;;
-      *) echo '{}' ;;
+      *protection/required_status_checks*)
+        if [ -f "$S/protection_contexts" ]; then
+          RAW=$(python3 -c 'import json,sys
+print(json.dumps({"contexts": json.load(open(sys.argv[1]))}))' "$S/protection_contexts")
+        else
+          echo "HTTP 404: Branch not protected" >&2; exit 1
+        fi ;;
+      *rulesets/*)
+        rid="${url##*rulesets/}"; RAW=$(cat "$S/ruleset_$rid.json" 2>/dev/null || echo '{}') ;;
+      *rulesets*)
+        RAW=$(cat "$S/rulesets.json" 2>/dev/null || echo '[]') ;;
+      */reviews*)
+        if [ "$METHOD" = "POST" ]; then
+          f="$INPUT_F"; [ "$f" = "-" ] && f="$S/post_body"
+          cat "$f" >> "$S/review_posts.jsonl" 2>/dev/null || true
+          RAW='{"id":1}'
+        else
+          RAW=$(cat "$S/reviews.json" 2>/dev/null || echo '[]')
+        fi ;;
+      *) RAW='[]' ;;
     esac ;;
-  "pr merge") echo "merged" ;;
-  *) echo '{}' ;;
+  repo)
+    RAW='{"defaultBranchRef":{"name":"main"}}' ;;
+  pr)
+    case "${2:-}" in
+      view) RAW=$(cat "$S/pr_view.json") ;;
+      list) RAW='[]' ;;
+      create) RAW='"https://example/pr/7"' ;;
+      merge)
+        if [ "${FAKEGH_MERGE_FAIL:-0}" = "1" ]; then
+          echo "the pull request is not mergeable" >&2; exit 1
+        fi
+        # Apply the merge: land the PR head on the base ref on the
+        # remote so the post-merge release sees the merged fragments.
+        python3 - "$S/pr_view.json" "$FAKEGH_REPO" <<'PY' || {
+import json, subprocess, sys
+d = json.load(open(sys.argv[1]))
+subprocess.run(["git", "-C", sys.argv[2], "push", "-q", "origin",
+                d["headRefOid"] + ":refs/heads/" + d["baseRefName"]],
+               check=True)
+PY
+          echo "merge apply failed" >&2; exit 1; }
+        RAW='"merged"' ;;
+      *) RAW='[]' ;;
+    esac ;;
+  release)
+    case "${2:-}" in
+      view) echo "release not found" >&2; exit 1 ;;
+      create) printf '%s\n' "$*" >> "$S/release_calls"; RAW='"created"' ;;
+      *) RAW='[]' ;;
+    esac ;;
+  issue) RAW='{"number":1,"state":"open"}' ;;
+  *) echo "fakegh: unhandled $*" >&2; exit 1 ;;
 esac
+if [ -n "$JQ" ]; then
+  printf '%s' "$RAW" | JQ="$JQ" python3 -c '
+import json, os, sys
+d = json.loads(sys.stdin.read() or "null")
+jq = os.environ["JQ"]
+if jq.startswith("[.contexts[]?"):
+    ctx = list((d or {}).get("contexts") or [])
+    ctx += [c.get("context") for c in (d or {}).get("checks") or [] if c.get("context")]
+    print("\n".join(sorted(set(ctx))))
+elif jq == ".[] | @json":
+    for it in (d or []):
+        print(json.dumps(it))
+elif jq.startswith(".labels"):
+    for it in (d or {}).get("labels") or []:
+        print(it.get("name") or "")
+else:
+    cur = d
+    for k in jq.lstrip(".").split("."):
+        cur = cur.get(k) if isinstance(cur, dict) else None
+    print(json.dumps(cur) if isinstance(cur, (dict, list)) else ("" if cur is None else cur))
+'
+else
+  printf '%s\n' "$RAW"
+fi
 exit 0
 SH
 chmod +x "$FAKEBIN/fakegh"
+# verify_constraints/repo_release call a BARE `gh` inside blood-sign
+# and the release step - the same fake answers both names.
+cp "$FAKEBIN/fakegh" "$FAKEBIN/gh" && chmod +x "$FAKEBIN/gh"
 
 GHSTATE="$SCRATCH/ghstate"; mkdir -p "$GHSTATE"
-: > "$GHSTATE/reviews.json"   # jsonl of review objects; empty = none
+echo '[]' > "$GHSTATE/reviews.json"   # array of review objects
+echo '[]' > "$GHSTATE/rulesets.json"
 
 # A second scratch repo acting as the "github remote" (local path whose
 # string contains github.com so repo_merge's remote regex matches).
@@ -241,8 +358,19 @@ expect M1-no-reviewers 1 $? "no reviewers configured"
        canon/bin/repo_merge.sh 42 "$HEADSHA" squash) >"$SCRATCH/out" 2>&1
 expect M2-env-no-substitute 1 $? "no reviewers configured"
 
+# A PR branch that can pass the .changes entry gate: the approval
+# gate sits AFTER it, so fragment-less PRs never reach the review
+# verdict. issue_42-fix carries a bump fragment.
+(cd "$WS" && git checkout -q -b issue_42-fix main \
+  && mkdir -p .changes && printf 'bump: patch\n\nfix\n' > .changes/fix.md \
+  && git add -A && git commit -qm "fix" \
+  && git push -q origin issue_42-fix)
+FIXSHA=$(cd "$WS" && git rev-parse issue_42-fix)
+printf '{"headRefOid":"%s","headRefName":"issue_42-fix","baseRefName":"main","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"closes #42","reviewRequests":[]}' "$FIXSHA" > "$GHSTATE/pr_view.json"
+echo '["ci"]' > "$GHSTATE/protection_contexts"
+
 # Configure reviewers in project.json -> binding check passes; gate
-# must now fail LATER, proving logins were read.
+# must now fail LATER at the APPROVAL gate, naming alice as missing.
 python3 - "$WS/canon/project.json" <<'PY'
 import json, sys
 p = sys.argv[1]
@@ -251,19 +379,100 @@ d["review"]["reviewer_logins"] = ["alice"]
 json.dump(d, open(p, "w"), indent=1)
 PY
 (cd "$WS" && env FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
-       canon/bin/repo_merge.sh 42 "$HEADSHA" squash) >"$SCRATCH/out" 2>&1
-if grep -q "no reviewers configured" "$SCRATCH/out"; then
-  echo "FAIL M3-binding-ok: still refused"; fail=$((fail+1))
+       canon/bin/repo_merge.sh 42 "$FIXSHA" squash) >"$SCRATCH/out" 2>&1
+expect M3a-binding-ok 1 $? "missing_approvals"
+grep -q '"alice"' "$SCRATCH/out" \
+  && { echo "PASS M3b-names-reviewer"; pass=$((pass+1)); } \
+  || { echo "FAIL M3b-names-reviewer"; fail=$((fail+1)); }
+
+# Stale-head approval must NOT count: alice APPROVED a different sha.
+python3 - "$GHSTATE/reviews.json" <<'PY'
+import json, sys
+json.dump([{"user": {"login": "alice"}, "id": 7, "state": "APPROVED",
+            "commit_id": "0" * 40, "submitted_at": "2026-01-01T00:00:00Z"}],
+          open(sys.argv[1], "w"))
+PY
+(cd "$WS" && env FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
+       canon/bin/repo_merge.sh 42 "$FIXSHA" squash) >"$SCRATCH/out" 2>&1
+expect M4-stale-approval 1 $? "gate_blocked"
+
+# Approved ON the head + a green required check -> must get PAST the
+# review/check gates into the later stages (version drift, blood-sign,
+# or the merge itself). Proves the verdict path is reachable.
+python3 - "$GHSTATE/reviews.json" "$FIXSHA" <<'PY'
+import json, sys
+json.dump([{"user": {"login": "alice"}, "id": 7, "state": "APPROVED",
+            "commit_id": sys.argv[2], "submitted_at": "2026-01-01T00:00:00Z"}],
+          open(sys.argv[1], "w"))
+PY
+(cd "$WS" && env FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
+       canon/bin/repo_merge.sh 42 "$FIXSHA" squash) >"$SCRATCH/out" 2>&1
+if grep -q 'missing_approvals\|"approved":false' "$SCRATCH/out"; then
+  echo "FAIL M5-past-review-gate: $SCRATCH/out"; fail=$((fail+1))
+elif grep -q 'verify_failed\|version_source_missing\|merged\|release' "$SCRATCH/out"; then
+  echo "PASS M5-past-review-gate"; pass=$((pass+1))
 else
-  echo "PASS M3-binding-ok"; pass=$((pass+1))
+  echo "FAIL M5-past-review-gate: unexpected $(cat "$SCRATCH/out" | head -3)"; fail=$((fail+1))
 fi
+
+# A pending review request on alice strips her standing approval.
+python3 - "$GHSTATE/pr_view.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["reviewRequests"] = [{"login": "alice"}]
+json.dump(d, open(sys.argv[1], "w"))
+PY
+(cd "$WS" && env FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
+       canon/bin/repo_merge.sh 42 "$FIXSHA" squash) >"$SCRATCH/out" 2>&1
+expect M6-pending-review 1 $? "gate_blocked"
+python3 - "$GHSTATE/pr_view.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["reviewRequests"] = []
+json.dump(d, open(sys.argv[1], "w"))
+PY
+
+# Required check present in protection but absent from the rollup ->
+# missing_required_checks, not a silent pass.
+python3 - "$GHSTATE/pr_view.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["statusCheckRollup"] = []
+json.dump(d, open(sys.argv[1], "w"))
+PY
+(cd "$WS" && env FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
+       canon/bin/repo_merge.sh 42 "$FIXSHA" squash) >"$SCRATCH/out" 2>&1
+expect M7-missing-required 1 $? 'missing_required_checks.*ci'
+python3 - "$GHSTATE/pr_view.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["statusCheckRollup"] = [{"name": "ci", "conclusion": "SUCCESS"}]
+json.dump(d, open(sys.argv[1], "w"))
+PY
+
+# Version drift: a regular PR bumping the autodetected version source
+# must be blocked even with a valid .changes fragment.
+(cd "$WS" && git checkout -q -b issue_7-ver main \
+  && printf '[project]\nname="pipe"\nversion="9.9.9"\n' > pyproject.toml \
+  && mkdir -p .changes && printf 'bump: patch\n\nv\n' > .changes/v.md \
+  && git add -A && git commit -qm "bump" \
+  && git push -q origin issue_7-ver)
+VERSHA=$(cd "$WS" && git rev-parse issue_7-ver)
+printf '{"headRefOid":"%s","headRefName":"issue_7-ver","baseRefName":"main","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"closes #7","reviewRequests":[]}' "$VERSHA" > "$GHSTATE/pr_view.json"
+python3 - "$GHSTATE/reviews.json" "$VERSHA" <<'PY'
+import json, sys
+json.dump([{"user": {"login": "alice"}, "id": 7, "state": "APPROVED",
+            "commit_id": sys.argv[2], "submitted_at": "2026-01-01T00:00:00Z"}],
+          open(sys.argv[1], "w"))
+PY
+(cd "$WS" && env FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
+       canon/bin/repo_merge.sh 42 "$VERSHA" squash) >"$SCRATCH/out" 2>&1
+expect M8-version-drift 1 $? "version_drift"
 
 # Release PR provenance: branch release/v1.2.3, one commit
 # "release: v1.2.3", diff = pyproject.toml only (autodetected version
 # source). Must pass the .changes gate (-> fails later on reviews).
 (cd "$WS" && git checkout -q main \
-  && printf '[project]\nname="pipe"\nversion="1.2.2"\n' > pyproject.toml \
-  && git add pyproject.toml && git commit -qm "add pyproject" \
   && git push -q origin main \
   && git checkout -q -b release/v1.2.3 \
   && printf '[project]\nname="pipe"\nversion="1.2.3"\n' > pyproject.toml \
@@ -271,12 +480,17 @@ fi
   && git push -q origin release/v1.2.3)
 REL_SHA=$(cd "$WS" && git rev-parse release/v1.2.3)
 printf '{"headRefOid":"%s","headRefName":"release/v1.2.3","baseRefName":"main","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"","reviewRequests":[]}' "$REL_SHA" > "$GHSTATE/pr_view.json"
+echo '[]' > "$GHSTATE/reviews.json"
 (cd "$WS" && env FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
        canon/bin/repo_merge.sh 42 "$REL_SHA" squash) >"$SCRATCH/out" 2>&1
+# Provenance-clean release PR skips the .changes gate and reaches the
+# approval gate (missing_approvals) - not a mere absence of the block.
 if grep -q "missing_changes_entry" "$SCRATCH/out"; then
   echo "FAIL R1-release-provenance: blocked as regular PR"; fail=$((fail+1))
-else
+elif grep -q "missing_approvals" "$SCRATCH/out"; then
   echo "PASS R1-release-provenance"; pass=$((pass+1))
+else
+  echo "FAIL R1-release-provenance: unexpected $(head -3 "$SCRATCH/out")"; fail=$((fail+1))
 fi
 
 # Same branch shape but the diff also touches src/evil.py -> NOT
@@ -291,6 +505,188 @@ printf '{"headRefOid":"%s","headRefName":"release/v9.9.9","baseRefName":"main","
 (cd "$WS" && env FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
        canon/bin/repo_merge.sh 42 "$BAD_SHA" squash) >"$SCRATCH/out" 2>&1
 expect R2-tainted-release 1 $? "missing_changes_entry"
+
+# M10: rulesets union — classic protection 404s but an active ruleset
+# requires check "sec" which the rollup lacks -> missing_required_checks
+# must name it (proving the union path was consulted, not just classic).
+rm -f "$GHSTATE/protection_contexts"
+cat > "$GHSTATE/rulesets.json" <<'JSON'
+[{"id":1,"source_type":"Repository","enforcement":"active"}]
+JSON
+cat > "$GHSTATE/ruleset_1.json" <<'JSON'
+{"id":1,"enforcement":"active","target":"branch",
+ "conditions":{"ref_name":{"include":["~ALL"],"exclude":[]}},
+ "rules":[{"type":"required_status_checks",
+           "parameters":{"required_status_checks":[{"context":"sec"}]}}]}
+JSON
+python3 - "$GHSTATE/pr_view.json" "$REL_SHA" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["headRefOid"] = sys.argv[2]
+d["headRefName"] = "release/v1.2.3"
+d["statusCheckRollup"] = [{"name": "ci", "conclusion": "SUCCESS"}]
+json.dump(d, open(sys.argv[1], "w"))
+PY
+(cd "$WS" && env FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
+       canon/bin/repo_merge.sh 42 "$REL_SHA" squash) >"$SCRATCH/out" 2>&1
+expect M10-ruleset-union 1 $? 'missing_required_checks.*sec'
+echo '[]' > "$GHSTATE/rulesets.json"
+echo '["ci"]' > "$GHSTATE/protection_contexts"
+
+# ---------- M9: the full path - real merge + release --------------
+# A fragment with ALL mandatory fields, an issue-linked branch, an
+# on-head approval and a green required check must reach
+# `gh pr merge --match-head-commit` and the post-merge release.
+(cd "$WS" && git checkout -q -b issue_43-full main \
+  && mkdir -p .changes \
+  && printf 'bump: patch\nuser_visible: true\nissue: 43\n\nfix\n\n## Spec impact\n- none\n' \
+       > .changes/full.md \
+  && echo "fix" > fix.txt \
+  && git add -A && git commit -qm "fix" \
+  && git push -q origin issue_43-full)
+FULLSHA=$(cd "$WS" && git rev-parse issue_43-full)
+printf '{"headRefOid":"%s","headRefName":"issue_43-full","baseRefName":"main","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"closes #43","reviewRequests":[]}' "$FULLSHA" > "$GHSTATE/pr_view.json"
+python3 - "$GHSTATE/reviews.json" "$FULLSHA" <<'PY'
+import json, sys
+json.dump([{"user": {"login": "alice"}, "id": 9, "state": "APPROVED",
+            "commit_id": sys.argv[2], "submitted_at": "2026-01-01T00:00:00Z"}],
+          open(sys.argv[1], "w"))
+PY
+: > "$GHSTATE/merge_calls"
+(cd "$WS" && env FAKEGH_REPO="$WS" FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
+       canon/bin/repo_merge.sh 43 "$FULLSHA" squash) >"$SCRATCH/out" 2>&1
+expect M9a-merge-ok 0 $? '"status": "merged"'
+grep -q -- "--match-head-commit $FULLSHA" "$GHSTATE/merge_calls" \
+  && { echo "PASS M9b-bound-merge-call"; pass=$((pass+1)); } \
+  || { echo "FAIL M9b-bound-merge-call: $(cat "$GHSTATE/merge_calls")"; fail=$((fail+1)); }
+grep -q '"release"' "$SCRATCH/out" \
+  && { echo "PASS M9c-release-ran"; pass=$((pass+1)); } \
+  || { echo "FAIL M9c-release-ran"; fail=$((fail+1)); }
+
+# ---------- G8/G9: counter integrity + audit-key derivation --------
+echo 'not json' > "$CNTR"
+PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool t \
+  --audit-key k --class audit --args '{}' >"$SCRATCH/out" 2>&1
+expect G8-corrupt-counters 4 $? "unreadable"
+
+rm -f "$CNTR"
+PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool t \
+  --class audit --args '{"a":1}' >/dev/null 2>&1
+PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool t \
+  --class audit --args '{"a":1}' >/dev/null 2>&1
+PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool t \
+  --class audit --args '{"b":2}' >/dev/null 2>&1
+python3 - "$CNTR" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1]))
+auto = {k: v for k, v in c.items() if k.startswith("audit:auto:")}
+day = [v for k, v in c.items() if k.startswith("audit_day:")]
+assert len(auto) == 2, f"expected 2 distinct auto keys, got {auto}"
+assert sorted(auto.values()) == [1, 2], f"same payload must share one budget: {auto}"
+assert day == [3], f"global daily counter must total 3: {c}"
+print("ok")
+PY
+[ $? -eq 0 ] && { echo "PASS G9-auto-key-derivation"; pass=$((pass+1)); } \
+  || { echo "FAIL G9-auto-key-derivation"; fail=$((fail+1)); }
+
+# Global daily cap: seed the day counter at the policy ceiling ->
+# refused even with a fresh audit key.
+python3 - "$CNTR" <<'PY'
+import datetime, json, sys
+c = json.load(open(sys.argv[1]))
+c[f"audit_day:{datetime.date.today().isoformat()}"] = 100
+json.dump(c, open(sys.argv[1], "w"))
+PY
+PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool t \
+  --class audit --args '{"fresh":true}' >"$SCRATCH/out" 2>&1
+expect G10-daily-cap 4 $? "quota_limited"
+rm -f "$CNTR"
+
+# ---------- CP: canon_pub sweep guard + schema ---------------------
+# A foreign non-empty --canon-root must be refused BEFORE the stale
+# sweep touches it (needs a valid signed envelope to reach stage 5).
+CAND="$SCRATCH/candidate"; mkdir -p "$CAND/canon/specs" "$CAND/canon/bin"
+cp "$PRODUCT/canon/root/canon/RULES.md" "$CAND/canon/RULES.md"
+cp "$PRODUCT/canon/root/canon/specs/harness.md" "$CAND/canon/specs/harness.md"
+cp "$PRODUCT/canon/root/canon/bin/check_setup.sh" "$CAND/canon/bin/check_setup.sh"
+FOREIGN="$SCRATCH/foreign"; mkdir -p "$FOREIGN/docs" && echo x > "$FOREIGN/docs/keep.md"
+ENVF="$SCRATCH/env.json"
+export CANON_HUMAN_KEY="test-human-key"
+python3 - "$CAND" "$ENVF" <<'PY'
+import datetime, hashlib, hmac, json, pathlib, sys, os
+cand = pathlib.Path(sys.argv[1])
+entries = []
+for p in sorted(cand.rglob("*")):
+    if p.is_file():
+        entries.append((p.relative_to(cand).as_posix(),
+                        hashlib.sha256(p.read_bytes()).hexdigest()))
+tree_sha = hashlib.sha256(
+    "".join(f"{r}={s}" for r, s in entries).encode()).hexdigest()
+ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+payload = f"approve|{tree_sha}|human|{ts}|9.9.9"
+sig = hmac.new(os.environ["CANON_HUMAN_KEY"].encode(),
+               payload.encode(), hashlib.sha256).hexdigest()
+json.dump({"verdict": "approve", "artifact_sha": tree_sha,
+           "signed_by": "human", "ts": ts, "sig": sig},
+          open(sys.argv[2], "w"))
+PY
+"$PRODUCT/canon/root/canon/bin/canon_pub.sh" publish \
+  --candidate "$CAND" --envelope "$ENVF" --version 9.9.9 \
+  --canon-root "$FOREIGN" \
+  --manifest "$SCRATCH/pub_manifest.json" \
+  --history "$SCRATCH/pub_history.jsonl" >"$SCRATCH/out" 2>&1
+expect CP1-foreign-sweep-guard 6 $? "refusing to sweep"
+[ -f "$FOREIGN/docs/keep.md" ] \
+  && { echo "PASS CP1b-foreign-preserved"; pass=$((pass+1)); } \
+  || { echo "FAIL CP1b-foreign-preserved: sweep ran anyway"; fail=$((fail+1)); }
+
+# Happy path: same envelope, proper empty canon-root -> publishes and
+# writes a manifest in the canonical schema (canon_version + files +
+# sha256 map + canary/gitignore keys preserved).
+PUBROOT="$SCRATCH/pubroot"
+"$PRODUCT/canon/root/canon/bin/canon_pub.sh" publish \
+  --candidate "$CAND" --envelope "$ENVF" --version 9.9.9 \
+  --canon-root "$PUBROOT" \
+  --manifest "$SCRATCH/pub_manifest.json" \
+  --history "$SCRATCH/pub_history.jsonl" >"$SCRATCH/out" 2>&1
+expect CP2a-publish-ok 0 $?
+python3 - "$SCRATCH/pub_manifest.json" <<'PY' \
+  && { echo "PASS CP2b-manifest-schema"; pass=$((pass+1)); } \
+  || { echo "FAIL CP2b-manifest-schema"; fail=$((fail+1)); }
+import json, sys
+m = json.load(open(sys.argv[1]))
+assert m.get("canon_version") == "9.9.9", m
+assert "canon/RULES.md" in m.get("files", []), m.get("files")
+assert isinstance(m.get("sha256"), dict) and m["sha256"].get("canon/RULES.md"), m.get("sha256")
+for k in ("canon_home", "canary", "gitignore", "description"):
+    assert k in m, f"manifest lost required key {k}: {sorted(m)}"
+print("ok")
+PY
+unset CANON_HUMAN_KEY
+
+# ---------- PR: repo_pr_review commit_id binding -------------------
+# JSON-file reviews must bind to the CURRENT head: a stale commit_id
+# is refused; a matching/absent one submits bound to the head.
+python3 - "$GHSTATE/pr_view.json" "$FIXSHA" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["headRefOid"] = sys.argv[2]
+json.dump(d, open(sys.argv[1], "w"))
+PY
+REV="$SCRATCH/review.json"
+printf '{"event":"APPROVE","body":"ok","commit_id":"%s"}' "$(printf '0%.0s' {1..40})" > "$REV"
+(cd "$WS" && env GH_BIN=fakegh FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
+       canon/bin/repo_pr_review.sh --pr 42 --json-file "$REV") >"$SCRATCH/out" 2>&1
+expect PR1-stale-commit-id 2 $? "stale_input"
+
+printf '{"event":"APPROVE","body":"ok","commit_id":"%s"}' "$FIXSHA" > "$REV"
+: > "$GHSTATE/review_posts.jsonl"
+(cd "$WS" && env GH_BIN=fakegh FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
+       canon/bin/repo_pr_review.sh --pr 42 --json-file "$REV") >"$SCRATCH/out" 2>&1
+expect PR2-bound-submit 0 $? '"status": "ok"'
+grep -q "\"commit_id\": \"$FIXSHA\"" "$GHSTATE/review_posts.jsonl" \
+  && { echo "PASS PR3-submitted-bound"; pass=$((pass+1)); } \
+  || { echo "FAIL PR3-submitted-bound: $(cat "$GHSTATE/review_posts.jsonl")"; fail=$((fail+1)); }
 
 # ---------- F: migration rollforward in the deployed layout --------
 # canon/ is gitignored in the deployed ws, so coverage comes from a

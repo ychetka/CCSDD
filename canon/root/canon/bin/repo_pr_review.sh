@@ -58,11 +58,18 @@ if [ -n "$JFILE" ]; then
   JFILE=$(realpath -m "$JFILE")
   SANIT=$(mktemp "${TMPDIR:-/tmp}/review-payload.XXXXXX.json")
   trap 'rm -f "$SANIT"' EXIT INT TERM
+  # Resolve the CURRENT head before validation: the submitted review
+  # is always pinned to it (caller commit_id must match; an absent
+  # one is filled in) - a review bound to a stale/arbitrary commit
+  # does not count at the merge gate.
+  HEAD_SHA=$("$GH_BIN" pr view "$PR" --json headRefOid --jq .headRefOid 2>/dev/null)
+  [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+    echo '{"status":"error","failure_class":"upstream_error","message":"cannot resolve PR head sha"}'; exit 1; }
   # Read the payload once into memory (no TOCTOU between validation
   # and submission): validate its shape, hygiene-gate every text
   # field, and write a sanitized copy that is what actually gets
   # submitted - the caller's file is never re-read by gh.
-  JFILE="$JFILE" SANIT="$SANIT" CANON_DIR="$CANON_DIR" python3 - <<'PY' || {
+  JFILE="$JFILE" SANIT="$SANIT" CANON_DIR="$CANON_DIR" HEAD_SHA="$HEAD_SHA" python3 - <<'PY' || {
 import json, os, subprocess, sys, tempfile
 jfile = os.environ["JFILE"]
 try:
@@ -143,6 +150,9 @@ EVENT_MAP = {"approve": "APPROVE", "request-changes": "REQUEST_CHANGES",
 clean = {k: payload[k] for k in ("commit_id", "body", "event", "comments")
          if k in payload}
 clean["event"] = EVENT_MAP.get(clean["event"], clean["event"])
+# The review is bound to the resolved head unconditionally - absent
+# commit_id is filled, a matching one is kept.
+clean["commit_id"] = os.environ["HEAD_SHA"]
 with open(os.environ["SANIT"], "w", encoding="utf-8") as f:
     f.write(json.dumps(clean))
 print("hygiene-ok")

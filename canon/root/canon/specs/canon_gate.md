@@ -28,9 +28,13 @@ area) -> CANON_PUB (publication gate) -> CANON (immutable release)
   the human approval envelope.
 - The approval envelope — a signed record (see `harness.md` §3):
   `{verdict, artifact_sha, sig, signed_by, ts}`; `artifact_sha` must
-  equal the candidate tree hash (PR head). Without a valid envelope
-  publication is rejected fail-closed — orchestrator
-  self-publication of canon is impossible.
+  equal the candidate tree hash (PR head). The signature payload
+  additionally binds the target `--version` string, so an envelope
+  cannot be replayed under a different release number, and `ts`
+  must sit inside a 24h freshness window — a stale approval is not
+  a current decision. Without a valid envelope publication is
+  rejected fail-closed — orchestrator self-publication of canon is
+  impossible.
 - A canon release = a `canon-v<canon_version>` tag (a separate
   semver space from product `v*`), a MANIFEST.json with sha256 of
   all files, a changelog and a record in the canon release history.
@@ -57,7 +61,7 @@ area) -> CANON_PUB (publication gate) -> CANON (immutable release)
 
 - A worker receives canon only from a released build: onboarding
   deploy verifies every file against the manifest sha256 AND checks
-  that `canon_version` has a `canon-v<version>` tag in ai_controller
+  that `canon_version` has a `canon-v<version>` tag in the canon repo
   (proof the gate was passed). An untagged version — onboarding
   refusal with a drift event, except an explicit
   `--allow-untagged-canon` (recorded in the instance journal).

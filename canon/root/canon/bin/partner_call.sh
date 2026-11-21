@@ -59,7 +59,7 @@ JOURNAL="$JOURNAL" COUNTERS="$COUNTERS" POLICY="$POLICY" \
   ARGS_JSON="$ARGS_JSON" ARGS_FILE="$ARGS_FILE" \
   AUDIT_KEY="$AUDIT_KEY" REQ_CLASS="$REQ_CLASS" \
   python3 - <<'PY'
-import datetime, fcntl, json, os, re, signal, sys
+import datetime, fcntl, hashlib, json, os, re, signal, sys
 
 journal_dir = os.environ["JOURNAL"]
 counters_path = os.environ["COUNTERS"]
@@ -67,7 +67,6 @@ partner, tool = os.environ["PARTNER"], os.environ["TOOL"]
 args_file = os.environ.get("ARGS_FILE")
 args_raw = open(args_file, encoding="utf-8").read() \
     if args_file else os.environ["ARGS_JSON"]
-audit_key = os.environ["AUDIT_KEY"] or "default"
 req_class = os.environ["REQ_CLASS"]
 
 try:
@@ -102,6 +101,15 @@ if scan(call_args):
           "(gateway.md: secrets never cross the boundary)", file=sys.stderr)
     sys.exit(3)
 
+# Audit key: an explicitly passed --audit-key is used as-is; without
+# one the key is derived deterministically from the audited payload -
+# re-auditing the SAME artifact shares one budget (the anti
+# verdict-shopping property), and there is no way to launder a fresh
+# budget by picking a new key.
+audit_key = os.environ["AUDIT_KEY"] or \
+    "auto:" + hashlib.sha256(
+        json.dumps(call_args, sort_keys=True).encode()).hexdigest()[:16]
+
 # --- deterministic classification --------------------------------
 AUDIT_PARTNERS = {"architect-partner", "code-reviewer"}
 call_class = "audit" if partner in AUDIT_PARTNERS else "consult"
@@ -127,15 +135,35 @@ consult_max = int(os.environ.get("GATEWAY_CONSULT_DAILY_MAX",
                                  _gw.get("consult_daily_max_per_partner", 50)))
 consult_max = min(consult_max,
                   int(_gw.get("consult_daily_max_per_partner", 50)))
+audit_daily = int(_gw.get("audit_daily_max_total", 100))
 today = datetime.date.today().isoformat()
 # flock: concurrent calls must not lose counter increments.
 lock_f = open(counters_path + ".lock", "a")
 fcntl.flock(lock_f, fcntl.LOCK_EX)
-try:
-    counters = json.load(open(counters_path, encoding="utf-8"))
-except Exception:
+if os.path.exists(counters_path):
+    try:
+        counters = json.load(open(counters_path, encoding="utf-8"))
+        if not isinstance(counters, dict):
+            raise ValueError("not an object")
+    except Exception as e:
+        # Fail CLOSED: a corrupted quota file must not silently reset
+        # every counter - that is a quota bypass without touching
+        # policy. Refuse until a human repairs the state.
+        print(f"partner_call: REFUSED - gateway counters file is "
+              f"unreadable ({e}) - fail closed, repair "
+              f"{counters_path}", file=sys.stderr)
+        sys.exit(4)
+else:
     counters = {}
 if call_class == "audit":
+    # Global daily backstop bounds audit-key spraying: the per-key
+    # budget only helps if keys cannot be minted freely.
+    day_key = f"audit_day:{today}"
+    if int(counters.get(day_key, 0)) >= audit_daily:
+        print(f"partner_call: REFUSED - global daily audit limit "
+              f"({audit_daily}) reached - "
+              f"failure_class=quota_limited", file=sys.stderr)
+        sys.exit(4)
     key = f"audit:{audit_key}"
     n = int(counters.get(key, 0))
     if n >= audit_max:
@@ -145,6 +173,7 @@ if call_class == "audit":
               file=sys.stderr)
         sys.exit(4)
     counters[key] = n + 1
+    counters[day_key] = int(counters.get(day_key, 0)) + 1
 else:
     key = f"consult:{today}:{partner}"
     n = int(counters.get(key, 0))
@@ -208,7 +237,11 @@ entry = {
     "request_args": call_args,
     "response": result,
 }
-name = f"{ts.strftime('%Y%m%dT%H%M%S')}-{partner}-{os.getpid()}.json"
+# Journal filename: the partner id is caller-supplied - strip anything
+# but a safe basename charset so '--partner ../x' cannot write outside
+# partner_journal/.
+safe_partner = re.sub(r"[^A-Za-z0-9_-]", "_", partner)
+name = f"{ts.strftime('%Y%m%dT%H%M%S')}-{safe_partner}-{os.getpid()}.json"
 with open(os.path.join(journal_dir, name), "w", encoding="utf-8") as f:
     json.dump(entry, f, ensure_ascii=False, indent=2)
 
