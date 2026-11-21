@@ -1,0 +1,18 @@
+{
+  "exec": {
+    "deny": [
+      "git", "gh", "sudo",
+      "bash -", "sh -", "zsh -", "dash -",
+      "eval", "env ", "xargs ", "time ", "nohup ",
+      "command ", "source "
+    ],
+    "allow": [
+      "canon/bin/"
+    ]
+  },
+  "gateway": {
+    "audit_max_per_key": 20,
+    "consult_daily_max_per_partner": 50,
+    "call_timeout_seconds": 300
+  }
+}

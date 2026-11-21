@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# repo_version_set.sh - write a version into the repo's version source.
+# Sibling of repo_version_at.sh (which reads): used by repo_release.sh
+# to stamp the computed next version into the version file on the base
+# branch during the release commit.
+#
+# Usage: repo_version_set.sh <version>
+#   Prints the path of the updated source file on stdout.
+#   Exit 2 = no version source found; exit 1 = write failed.
+#
+# Resolution order (mirrors repo_version_at.sh):
+#   1. repo adapter canon/version_source.sh set <version>
+#   2. project.json version.file + version.regex (regex is rewritten
+#      with the new version substituted into its first capture group)
+#   3. autodetect: pyproject.toml [project].version, package.json
+#      .version, Cargo.toml [package].version, VERSION, setup.cfg
+#      [metadata].version - first hit wins, same order as the reader.
+set -euo pipefail
+# CANON_DIR resolves from the script location, not the git top: in
+# nested workspaces the git top may be a subdir like
+# code/ while canon/ lives at the workspace root.
+CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
+cd "$TOP"
+VER="${1:?usage: repo_version_set.sh <version>}"
+[[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.a-zA-Z0-9-]*)?$ ]] || {
+  echo "repo_version_set: not a semver: $VER" >&2; exit 2; }
+
+# 1. repo-declared adapter
+if [ -x "$CANON_DIR/version_source.sh" ]; then
+  "$CANON_DIR/version_source.sh" set "$VER" && exit 0
+  echo "repo_version_set: adapter version_source.sh failed" >&2; exit 1
+fi
+
+# 2. project.json-declared file+regex
+PJ="$CANON_DIR/project.json"
+if [ -f "$PJ" ] && python3 -c "import json;d=json.load(open('$PJ'));exit(0 if d.get('version') else 1)" 2>/dev/null; then
+  VFILE=$(python3 -c "import json;print(json.load(open('$PJ'))['version']['file'])")
+  VREGEX=$(python3 -c "import json;print(json.load(open('$PJ'))['version']['regex'])")
+  # The declared file must be a normalized relative path inside the
+  # repo - a project.json pointing at '../x' or '/etc/y' would make
+  # the release commit write outside the worktree.
+  VFILE="$VFILE" python3 -c 'import os,sys
+vf = os.environ["VFILE"]
+n = os.path.normpath(vf)
+if os.path.isabs(vf) or n.startswith("..") or n in ("", "."):
+    sys.exit(2)' || { echo "repo_version_set: unsafe version.file in project.json" >&2; exit 2; }
+  VER="$VER" VFILE="$VFILE" VREGEX="$VREGEX" python3 - <<'PY'
+import os, re, sys
+vf, vr, ver = os.environ["VFILE"], os.environ["VREGEX"], os.environ["VER"]
+try:
+    body = open(vf, encoding="utf-8").read()
+except OSError:
+    sys.exit(2)
+m = re.search(vr, body)
+if not m:
+    sys.exit(2)
+start, end = m.span(1) if m.groups() else m.span(0)
+open(vf, "w", encoding="utf-8").write(body[:start] + ver + body[end:])
+print(vf)
+PY
+  rc=$?
+  # A DECLARED version source that fails to match must not fall
+  # through to autodetect - writing some other file's 'version' key
+  # creates the version_drift the reader flags later. Fail closed.
+  [ $rc -eq 0 ] || { echo "repo_version_set: declared version file/regex did not match" >&2; exit 2; }
+  exit 0
+fi
+
+# 3. autodetect common manifests - SAME order and SAME section
+# anchors as repo_version_at.sh (pyproject [project], package.json,
+# Cargo [package], VERSION, setup.cfg [metadata]); divergent order or
+# an unanchored pattern writes the version the reader will not find.
+VER="$VER" python3 - <<'PY'
+import json, os, re, sys
+ver = os.environ["VER"]
+candidates = [
+    ("pyproject.toml", r'(?ms)(^\[project\](?:(?!^\[).)*?^\s*version\s*=\s*["\'])([^"\']+)(["\'])'),
+    ("package.json",   r'("version"\s*:\s*")([^"]+)(")'),
+    ("Cargo.toml",     r'(?ms)(^\[package\](?:(?!^\[).)*?^\s*version\s*=\s*["\'])([^"\']+)(["\'])'),
+]
+for path, pat in candidates:
+    if not os.path.isfile(path):
+        continue
+    body = open(path, encoding="utf-8").read()
+    m = re.search(pat, body)
+    if not m:
+        continue
+    new = body[:m.start(2)] + ver + body[m.end(2):]
+    open(path, "w", encoding="utf-8").write(new)
+    print(path)
+    sys.exit(0)
+if os.path.isfile("VERSION"):
+    open("VERSION", "w", encoding="utf-8").write(ver + "\n")
+    print("VERSION")
+    sys.exit(0)
+if os.path.isfile("setup.cfg"):
+    body = open("setup.cfg", encoding="utf-8").read()
+    m = re.search(r'(?ms)(^\[metadata\](?:(?!^\[).)*?^\s*version\s*=\s*)(\S+)', body)
+    if m:
+        open("setup.cfg", "w", encoding="utf-8").write(body[:m.start(2)] + ver + body[m.end(2):])
+        print("setup.cfg")
+        sys.exit(0)
+sys.exit(2)
+PY
+rc=$?
+[ $rc -eq 0 ] || echo "repo_version_set: no version source found" >&2
+exit $rc

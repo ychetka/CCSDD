@@ -1,0 +1,51 @@
+flowchart TB
+  DEV(["👨‍💻 Человек — высший арбитр"])
+
+  subgraph P1["1 · ПЛАН"]
+    RM["roadmap.md<br/>пункты · типы · зависимости · G/W/T · risk-флаги"]
+    AP1{"👨‍💻 аппрув<br/>roadmap"}
+    ISS["заведение issues<br/>(по одному на пункт)"]
+    RM --> AP1 --> ISS
+  end
+
+  subgraph P2["2 · КОНТРАКТ  (опц. пакетный проход §2a)"]
+    CF["файл контракта<br/>draft"]
+    JDG1["⚖️ судья<br/>вердикт по черновику"]
+    SO["👨‍💻 конверт sign-off<br/>sha256 контракта заморожен"]
+    CF --> JDG1 --> SO
+  end
+
+  subgraph P3["3 · ИМПЛЕМЕНТАЦИЯ"]
+    PRE["пред-консультация<br/>(партнёры, флаги)"]
+    SP["спавн исполнителя<br/>белый список контекста"]
+    INT["опрос до кода<br/>допущения · неоднозначности"]
+    CODE["код + тесты<br/>зелёный нативный прогон"]
+    JDG2["⚖️ судья<br/>вердикт по замороженному контракту"]
+    PRE --> SP --> INT --> CODE --> JDG2
+  end
+
+  subgraph P4["4 · СБОРКА → РЕЛИЗ"]
+    INTG["интеграционный прогон"]
+    RVW{"🔍 вердикт ревьюера<br/>только удалённое хранилище"}
+    GIT["🔀 git-агент<br/>коммит кандидата (sha)"]
+    MG{"merge-гейт<br/>изолир. копия + expected_sha<br/>+ APPROVE ревьюеров + зелёные проверки<br/>(manual_gate-фрагмент паркует к 👨‍💻)"}
+    REL["релиз<br/>версия из .changes/"]
+    INTG --> RVW -->|APPROVED| GIT --> MG --> REL
+  end
+
+  ISS --> CF
+  SO --> PRE
+  JDG2 -->|правки, ≤3 раундов| CODE
+  JDG2 -->|принято| INTG
+  JDG2 -.->|">3 раундов"| RES["резолвер → стоп / эскалация"]
+  SO -.->|дрейф| PD["PLAN_DELTA → человек"]
+  RES -.-> DEV
+  PD -.-> DEV
+  AP1 -.-> DEV
+  SO -.-> DEV
+  MG -.->|manual_gate-фрагмент| DEV
+
+  classDef human fill:#f5e6c8,stroke:#8a6d1f,stroke-width:2px
+  classDef gate fill:#fde2e2,stroke:#a33,stroke-width:2px
+  class DEV,AP1,SO human
+  class JDG1,JDG2,RVW,MG gate
