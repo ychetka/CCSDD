@@ -46,12 +46,11 @@ except Exception: print("github")' 2>/dev/null)
 ADAPTER="$FORGE_DIR/$FORGE.sh"
 [ -f "$ADAPTER" ] || { json_out "{\"status\":\"error\",\"failure_class\":\"malformed_input\",\"message\":\"no forge adapter $FORGE.sh\"}"; exit 1; }
 
-# Read identity for signal_get: merge binary fallback review/gh.
-API_BIN=$(PJ="$PJ" python3 -c 'import json,os
-try:
-    pj = json.load(open(os.environ["PJ"]))
-    print(((pj.get("merge") or {}).get("gh_bin")) or ((pj.get("review") or {}).get("gh_bin")) or "gh")
-except Exception: print("gh")' 2>/dev/null)
+# Read identity for signal_get: the merge/author binary through the
+# canonical resolver - never the reviewer identity here (this gate
+# runs under merge credentials; review.* keys are not a fallback).
+API_BIN=$("$CANON_DIR/bin/gh_id.sh" merge 2>/dev/null || true)
+[ -n "$API_BIN" ] || { json_out '{"status":"error","failure_class":"malformed_input","message":"merge.gh_bin in project.json is not a bare binary basename"}'; exit 1; }
 export API_BIN CANON_DIR
 
 # --- 1. mechanical floors ---

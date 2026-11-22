@@ -7,7 +7,9 @@
 #       the token travels to the actor inside its spawn/context
 #       package and authenticates `close`. Roles: orchestrator,
 #       director, executor|code_writer, designer, judge, reviewer,
-#       resolver, repository, git, reader, hygiene, partner.
+#       resolver, repository, git, reader, hygiene, partner, plus the
+#       seven domain reviewers reviewer_<design|docs|fidelity|
+#       product|quality|security|tester> from policy.json.
 #
 #   cycle_log.sh append --item i_30 --actor git-agent \
 #     --action commit --expected "..." --result "..." \
@@ -61,7 +63,8 @@ if [ "$CMD" = "register" ]; then
   done
   [ -n "$ACTOR" ] && [ -n "$ROLE" ] || { echo "register: --actor and --role required" >&2; exit 2; }
   case "$ROLE" in
-    orchestrator|director|executor|code_writer|designer|judge|reviewer|resolver|repository|git|reader|hygiene|partner) ;;
+    orchestrator|director|executor|code_writer|designer|judge|reviewer|resolver|repository|git|reader|hygiene|partner|\
+    reviewer_design|reviewer_docs|reviewer_fidelity|reviewer_product|reviewer_quality|reviewer_security|reviewer_tester) ;;
     *) echo "register: bad role '$ROLE'" >&2; exit 2;;
   esac
   ACTORS="$ACTORS" ACTOR="$ACTOR" ROLE="$ROLE" PROJECT="$PROJECT" \
@@ -190,7 +193,7 @@ if [ "$CMD" = "append" ]; then
       epic_incomplete|missing_issue_field|issue_mismatch|stale_input|plan_drift|\
       verify_escalated|verify_failed|release_failed|\
       missing_review_domain|bad_creator|external_check_failed|panel_incomplete|\
-      missing_panel_registry|\
+      missing_panel_registry|panel_domain|\
       baseline_unresolvable|env_setup_failed|unknown) ;; *) FC=unknown;; esac
   fi
   # failure_class is only meaningful on a failure/escalated verdict -

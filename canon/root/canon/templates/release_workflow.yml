@@ -45,9 +45,45 @@ jobs:
             echo "unexpected release ref '$HEAD_REF' - refusing to tag" >&2
             exit 1
           fi
+          # Provenance, mirrored from repo_release.sh: only a merge
+          # commit whose subject proves a release branch landed may
+          # mint a tag - a hand-crafted release/v* PR title alone
+          # must never reach the tag namespace.
+          SUBJ=$(git log -1 --format=%s "$MERGE_SHA" || true)
+          VER="${TAG#v}"
+          if printf '%s' "$SUBJ" | grep -qE "^release:[[:space:]]*v[0-9]+\.[0-9]+\.[0-9]+([[:space:]]*\(#[0-9]+\))?$" \
+             || printf '%s' "$SUBJ" | grep -qE "^Merge[[:space:]]+pull[[:space:]]+request[[:space:]]+#[0-9]+[[:space:]]+from[[:space:]]+[^[:space:]]+/release/v[0-9]+\.[0-9]+\.[0-9]+(-r[0-9a-zA-Z]+)?$" \
+             || printf '%s' "$SUBJ" | grep -qE "^Merge[[:space:]]+branch[[:space:]]+'release/v[0-9]+\.[0-9]+\.[0-9]+(-r[0-9a-zA-Z]+)?'([[:space:]]+into[[:space:]]+[^[:space:]]+)?$"; then
+            :
+          else
+            echo "merge subject '$SUBJ' is not a canonical release form - refusing to tag" >&2
+            exit 1
+          fi
+          # The version source ON the merge commit must equal the tag
+          # version - provenance over the branch name alone.
+          if [ -f canon/bin/repo_version_at.sh ]; then
+            V=$(bash canon/bin/repo_version_at.sh HEAD 2>/dev/null || true)
+            if [ "$V" != "$VER" ]; then
+              echo "version source on merge reports '${V:-none}', tag is $TAG - refusing" >&2
+              exit 1
+            fi
+          fi
           echo "finalizing release $TAG on merge commit $MERGE_SHA"
           git config user.name "ccsdd-release[bot]"
           git config user.email "ccsdd-release[bot]@users.noreply.github.com"
-          git tag -a "$TAG" -m "release $TAG" "$MERGE_SHA"
-          git push origin "$TAG"
-          gh release create "$TAG" --generate-notes
+          # Idempotent finalization: a concurrent local repo_release.sh
+          # run may already have published tag and/or release - either
+          # is a win when it sits on THIS merge sha.
+          git fetch origin --tags >/dev/null 2>&1 || true
+          if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+            if [ "$(git rev-parse "refs/tags/$TAG^{commit}")" != "$MERGE_SHA" ]; then
+              echo "tag $TAG exists on a different commit - conflict" >&2
+              exit 1
+            fi
+            echo "tag $TAG already on $MERGE_SHA - skipping tag push"
+          else
+            git tag -a "$TAG" -m "release $TAG" "$MERGE_SHA"
+            git push origin "$TAG"
+          fi
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --generate-notes

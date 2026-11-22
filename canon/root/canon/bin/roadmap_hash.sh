@@ -38,7 +38,11 @@ MODE="${MODE#--}" RM="$RM" ITEM="$ITEM" python3 - <<'PY'
 import hashlib, os, re, sys
 
 rm_path, mode, want = os.environ["RM"], os.environ["MODE"], os.environ["ITEM"]
-MUTABLE = re.compile(r"^\s*-\s*(status|pr|issue|frozen_hash)\s*:")
+# additional_acceptance_notes is mutable state the Architecture
+# Committee appends AFTER freeze (§4.4a) - including any deeper-
+# indented continuation lines of its value block.
+MUTABLE = re.compile(
+    r"^\s*-\s*(status|pr|issue|frozen_hash|additional_acceptance_notes)\s*:")
 FH = re.compile(r"^(\s*-\s*frozen_hash\s*:\s*)(.*)$")
 ITEM_RE = re.compile(r"(?m)^##\s+Item\s*:\s*(\S+)\s*$")
 PLACEHOLDER = re.compile(r"^<.*>$|^-$|^(sha256)?$")
@@ -57,7 +61,22 @@ for k, (start, slug) in enumerate(marks):
     blocks.append((start, end, slug))
 
 def canon_hash(block_lines):
-    kept = [l.rstrip() for l in block_lines if not MUTABLE.match(l)]
+    kept = []
+    skip_ind = None
+    for l in block_lines:
+        s = l.strip()
+        ind = len(l) - len(l.lstrip())
+        if skip_ind is not None:
+            # Deeper-indented lines belong to the mutable field's
+            # value block (e.g. a multi-line notes scalar); a blank
+            # line inside that block is skipped too.
+            if not s or ind > skip_ind:
+                continue
+            skip_ind = None
+        if MUTABLE.match(l):
+            skip_ind = ind
+            continue
+        kept.append(l.rstrip())
     while kept and kept[-1] == "":
         kept.pop()
     return hashlib.sha256("\n".join(kept).encode()).hexdigest()

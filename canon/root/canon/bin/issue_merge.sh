@@ -328,16 +328,27 @@ REVIEWERS_RAW=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os
 try:
     pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
     rev = pj.get("review") or {}
-    if "reviewer_logins" in rev:
+    # Union both declarations - same rule as panel_gate.sh: a login
+    # present only under reviewer_profiles is still an expected
+    # reviewer, or a profiles-only config would zero the gate.
+    if "reviewer_logins" in rev or "reviewer_profiles" in rev:
         print("\x01")          # key present marker
-        print("\n".join(str(x) for x in (rev.get("reviewer_logins") or [])))
+        seen = []
+        for x in (rev.get("reviewer_logins") or []):
+            x = str(x)
+            if x not in seen: seen.append(x)
+        rp = rev.get("reviewer_profiles") or {}
+        if isinstance(rp, dict):
+            for x in rp:
+                if x not in seen: seen.append(x)
+        print("\n".join(seen))
 except Exception:
     print("")' 2>/dev/null || true)
 if printf '%s' "$REVIEWERS_RAW" | head -n1 | grep -q $'\x01'; then
   REVIEWERS=$(printf '%s' "$REVIEWERS_RAW" | tail -n +2 | awk 'NF' | paste -sd, -)
-  [ -n "$REVIEWERS" ] || json_error malformed_input "project.json review.reviewer_logins is present but empty - no expected reviewers, gate refuses"
+  [ -n "$REVIEWERS" ] || json_error malformed_input "project.json review.reviewer_logins/reviewer_profiles present but empty - no expected reviewers, gate refuses"
 else
-  json_error malformed_input "no reviewers configured - set review.reviewer_logins in canon/project.json"
+  json_error malformed_input "no reviewers configured - set review.reviewer_logins or review.reviewer_profiles in canon/project.json"
 fi
 
 # Paginated review fetch: gh pr view --json reviews truncates at 100.

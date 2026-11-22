@@ -93,7 +93,7 @@
           "exec"
         ],
         "exec_extra": [
-          "canon/bin/reader_digest.sh, read-only pagers/cat"
+          "read-only pagers/cat - NOT canon/bin/reader_digest.sh: a reader that runs the digest tool itself self-attests its own coverage; --verify belongs to the CALLING director only"
         ]
       },
       "git": {

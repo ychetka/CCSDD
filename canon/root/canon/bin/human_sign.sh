@@ -145,7 +145,7 @@ verify|consume)
   CONSUME="0"; [ "$MODE" = "consume" ] && CONSUME="1"
   E=$(ENVELOPE="$ENVELOPE" SHA="$SHA" VERDICT="$VERDICT" WINDOW="$WINDOW" \
       CONSUME="$CONSUME" \
-      NONCE_STORE="${NONCE_STORE:-$CANON_DIR/human_signoffs/.used_nonces}" \
+      NONCE_STORE="${NONCE_STORE:-${CCSDD_NONCE_STORE:-$CANON_DIR/human_signoffs/.used_nonces}}" \
       SIGNERS_ENV="$SIGNERS" NS_ENV="$NS" \
       python3 - <<'PY'
 import base64, json, os, sys, tempfile, subprocess, time, calendar, shutil, fcntl

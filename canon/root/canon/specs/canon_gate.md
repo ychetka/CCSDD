@@ -26,15 +26,18 @@ area) -> CANON_PUB (publication gate) -> CANON (immutable release)
   `canon/bin/canon_pub.sh`: drafts + validation (hygiene, candidate
   manifest sha comparison, agent read-line limit) + verification of
   the human approval envelope.
-- The approval envelope — a signed record (see `harness.md` §3):
-  `{verdict, artifact_sha, sig, signed_by, ts}`; `artifact_sha` must
-  equal the candidate tree hash (PR head). The signature payload
-  additionally binds the target `--version` string, so an envelope
-  cannot be replayed under a different release number, and `ts`
-  must sit inside a 7-day freshness window — a stale approval is not
-  a current decision. Without a valid envelope publication is
-  rejected fail-closed — orchestrator self-publication of canon is
-  impossible.
+- The approval envelope — the SAME ssh-sig sign-off the merge gates
+  use (`human_sign.sh`, see `harness.md` §3): a signature binding
+  `{verdict, artifact_hash, ts, nonce}` where the artifact is
+  `sha256("canon-v<version>|<candidate_tree_sha256>")`. Binding the
+  version inside the signed hash means an envelope cannot be
+  replayed under a different release number; `ts` must sit inside a
+  7-day freshness window and the nonce burns once — a stale or
+  replayed approval is not a current decision. `verify` runs before
+  publish and `consume` only after it lands, so a refused publish
+  does not strand the envelope. Without a valid envelope publication
+  is rejected fail-closed — orchestrator self-publication of canon
+  is impossible.
 - A canon release = a `canon-v<canon_version>` tag (a separate
   semver space from product `v*`), a MANIFEST.json with sha256 of
   all files, a changelog and a record in the canon release history.

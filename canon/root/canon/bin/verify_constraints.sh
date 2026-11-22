@@ -136,7 +136,7 @@ if [ -n "$ISSUE_LIST" ] || [ -n "$VERIFY_PR" ]; then
   PR_ARGS=(pr view)
   [ -n "$VERIFY_PR" ] && PR_ARGS+=("$VERIFY_PR")
   PR_ARGS+=(--json body,state,headRefName)
-  PR_JSON=$(gh "${PR_ARGS[@]}" 2>"$PR_ERR")
+  PR_JSON=$("$GH" "${PR_ARGS[@]}" 2>"$PR_ERR")
   PR_RC=$?
   PR_BODY="" PR_STATE="" PR_HEAD=""
   if [ $PR_RC -eq 0 ]; then
@@ -298,6 +298,42 @@ PY
     [ -n "$hit" ] && escalate "protected path modified: $hit" \
       "cite the user instruction/task that authorized this change"
   done <<< "$PROT_HITS"
+fi
+
+# 4b. Contract implementation files are human-sign-off territory:
+# a branch touching contract.py/contract.ts must carry a human
+# envelope bound to the branch HEAD - the same ssh-sig machinery
+# manual_gate uses at merge time (canon/human_signoffs/<branch>.*).
+CONTRACT_HITS=$(printf '%s\n' "$PROT_CHANGED" \
+  | grep -E '(^|/)contract\.(py|ts)$' || true)
+if [ -n "$CONTRACT_HITS" ]; then
+  HS="$CANON_DIR/bin/human_sign.sh"
+  HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || true)
+  ENVOK=0
+  for cand in "$CANON_DIR/human_signoffs/$BRANCH.json" \
+              "$CANON_DIR/human_signoffs/$BRANCH.txt" \
+              "$CANON_DIR/human_signoffs/$BRANCH"; do
+    [ -f "$cand" ] || continue
+    [ -f "$HS" ] && [ -n "$HEAD_SHA" ] \
+      && bash "$HS" verify --envelope "$cand" --artifact "$HEAD_SHA" \
+           --verdict approve >/dev/null 2>&1 && { ENVOK=1; break; }
+  done
+  [ "$ENVOK" = 1 ] \
+    || escalate "contract file changed without human sign-off: $(printf '%s' "$CONTRACT_HITS" | head -n3 | paste -sd, -)" \
+      "human_sign.sh sign --verdict approve --artifact $HEAD_SHA --out canon/human_signoffs/$BRANCH.json (or paste the CCSDD-SIGNOFF-1 line into the agent chat)"
+fi
+
+# 4c. Roadmap freeze integrity runs on EVERY verify, not just the
+# freeze flow: a frozen item edited after sign-off (or stripped of
+# its frozen_hash) must surface here, not only when the hash script
+# happens to be invoked. Only runs when a roadmap exists.
+if [ -f "$CANON_DIR/roadmap.md" ]; then
+  if bash "$CANON_DIR/bin/roadmap_hash.sh" --verify >/dev/null 2>&1; then
+    pass "roadmap frozen_hash values verified"
+  else
+    fail "roadmap frozen_hash drift or unfrozen items" \
+         "run canon/bin/roadmap_hash.sh --verify to see the drifted item(s)"
+  fi
 fi
 
 # 5. No stray untracked files (mid-migration scratch docs are exempt;

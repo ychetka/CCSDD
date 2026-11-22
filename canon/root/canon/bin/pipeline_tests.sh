@@ -831,15 +831,24 @@ rm -f "$GDB" "$GDB-wal" "$GDB-shm"
 # ---------- CP: canon_pub sweep guard + schema ---------------------
 # A foreign non-empty --canon-root must be refused BEFORE the stale
 # sweep touches it (needs a valid signed envelope to reach stage 5).
+# canon_pub verifies through human_sign.sh, so the fixture builds a
+# real ssh-sig envelope: a scratch ed25519 key signs the canonical
+# `ccsdd-signoff v1|approve|<publish_sha>|<ts>|<nonce>` message with
+# publish_sha = sha256("canon-v<ver>|<tree_sha>").
 CAND="$SCRATCH/candidate"; mkdir -p "$CAND/canon/specs" "$CAND/canon/bin"
 cp "$PRODUCT/canon/root/canon/RULES.md" "$CAND/canon/RULES.md"
 cp "$PRODUCT/canon/root/canon/specs/harness.md" "$CAND/canon/specs/harness.md"
 cp "$PRODUCT/canon/root/canon/bin/check_setup.sh" "$CAND/canon/bin/check_setup.sh"
 FOREIGN="$SCRATCH/foreign"; mkdir -p "$FOREIGN/docs" && echo x > "$FOREIGN/docs/keep.md"
 ENVF="$SCRATCH/env.json"
-export CANON_HUMAN_KEY="test-human-key"
-python3 - "$CAND" "$ENVF" <<'PY'
-import datetime, hashlib, hmac, json, pathlib, sys, os
+export CCSDD_CONF_DIR="$SCRATCH/ccsdd-conf"
+export CCSDD_NONCE_STORE="$SCRATCH/used_nonces"
+mkdir -p "$CCSDD_CONF_DIR"
+ssh-keygen -t ed25519 -N '' -q -f "$SCRATCH/human_key"
+printf 'human %s\n' "$(cat "$SCRATCH/human_key.pub")" \
+  > "$CCSDD_CONF_DIR/allowed_signers"
+python3 - "$CAND" "$SCRATCH/msg" <<'PY'
+import datetime, hashlib, pathlib, secrets, sys
 cand = pathlib.Path(sys.argv[1])
 entries = []
 for p in sorted(cand.rglob("*")):
@@ -848,12 +857,27 @@ for p in sorted(cand.rglob("*")):
                         hashlib.sha256(p.read_bytes()).hexdigest()))
 tree_sha = hashlib.sha256(
     "".join(f"{r}={s}" for r, s in entries).encode()).hexdigest()
-ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
-payload = f"approve|{tree_sha}|human|{ts}|9.9.9"
-sig = hmac.new(os.environ["CANON_HUMAN_KEY"].encode(),
-               payload.encode(), hashlib.sha256).hexdigest()
-json.dump({"verdict": "approve", "artifact_sha": tree_sha,
-           "signed_by": "human", "ts": ts, "sig": sig},
+publish_sha = hashlib.sha256(
+    f"canon-v9.9.9|{tree_sha}".encode()).hexdigest()
+ts = datetime.datetime.now(datetime.timezone.utc).strftime(
+    "%Y-%m-%dT%H:%M:%SZ")
+nonce = secrets.token_hex(16)
+open(sys.argv[2], "w").write(
+    f"ccsdd-signoff v1|approve|{publish_sha}|{ts}|{nonce}")
+open(sys.argv[2] + ".meta", "w").write(
+    f"{publish_sha}\n{ts}\n{nonce}")
+PY
+ssh-keygen -Y sign -f "$SCRATCH/human_key" -n ccsdd-signoff \
+  "$SCRATCH/msg"
+python3 - "$SCRATCH/msg" "$ENVF" <<'PY'
+import base64, json, sys
+msg = open(sys.argv[1]).read()
+pub_sha, ts, nonce = open(sys.argv[1] + ".meta").read().splitlines()
+sig = base64.b64encode(open(sys.argv[1] + ".sig", "rb").read()).decode()
+json.dump({"format": "ssh-sig-v1", "signer": "human",
+           "verdict": "approve", "artifact_hash": pub_sha,
+           "artifact_alg": "sha256", "ts": ts, "nonce": nonce,
+           "message": msg, "signature_b64": sig},
           open(sys.argv[2], "w"))
 PY
 "$PRODUCT/canon/root/canon/bin/canon_pub.sh" publish \
@@ -888,7 +912,7 @@ for k in ("canon_home", "canary", "gitignore", "description"):
     assert k in m, f"manifest lost required key {k}: {sorted(m)}"
 print("ok")
 PY
-unset CANON_HUMAN_KEY
+unset CCSDD_CONF_DIR CCSDD_NONCE_STORE
 
 # ---------- PR: repo_pr_review commit_id binding -------------------
 # JSON-file reviews must bind to the CURRENT head: a stale commit_id

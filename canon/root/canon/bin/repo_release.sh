@@ -90,10 +90,17 @@ publish_tag_release() {
     printf '{"status":"error","failure_class":"conflict","message":"tag %s exists on different sha %s"}' "$tag" "$(git rev-parse "refs/tags/$tag^{commit}")"
     return 12
   fi
-  git push "$REMOTE" "refs/tags/$tag" >/dev/null 2>&1 || {
-    git tag -d "$tag" >/dev/null 2>&1 || true
-    printf '{"status":"error","failure_class":"upstream_error","message":"tag %s push failed - push it manually on %s"}' "$tag" "$sha"
-    return 13; }
+  if ! git push "$REMOTE" "refs/tags/$tag" >/dev/null 2>&1; then
+    # Lost a publish race (the release workflow or a parallel run
+    # pushed first)? Re-fetch before crying: a remote tag already on
+    # this sha IS the outcome we wanted.
+    git fetch "$REMOTE" --tags >/dev/null 2>&1 || true
+    if [ "$(git rev-parse "refs/tags/$tag^{commit}" 2>/dev/null)" != "$sha" ]; then
+      git tag -d "$tag" >/dev/null 2>&1 || true
+      printf '{"status":"error","failure_class":"upstream_error","message":"tag %s push failed - push it manually on %s"}' "$tag" "$sha"
+      return 13
+    fi
+  fi
   if ! "$GH" release view "$tag" >/dev/null 2>&1; then
     if [ -n "$NOTES" ]; then
       "$GH" release create "$tag" --notes "$NOTES" >/dev/null 2>&1
@@ -393,8 +400,19 @@ else
   # content STILL matches the release we just generated - a stale PR
   # from an earlier attempt carries the wrong base state or misses
   # newer fragments, and merging it would tag the wrong tree.
-  EXISTING_PR=$("$GH" pr list --base "$BASE" --state open \
-    --json headRefName,headRefOid,url --jq '.[] | select(.headRefName | startswith("release/'"$TAG"'")) | .headRefName + " " + .headRefOid + " " + .url' 2>/dev/null | head -n1)
+  # Search ALL open release/v* PRs, not just this tag: a leftover
+  # release/v<older> PR from a superseded bump must be closed, or two
+  # competing release PRs race the same version namespace.
+  RELEASE_PRS=$("$GH" pr list --base "$BASE" --state open \
+    --json headRefName,headRefOid,url --jq '.[] | select(.headRefName | startswith("release/v")) | .headRefName + " " + .headRefOid + " " + .url' 2>/dev/null || true)
+  EXISTING_PR=$(printf '%s\n' "$RELEASE_PRS" | grep -F "release/$TAG" | head -n1 || true)
+  # Superseded release PRs (different tag): close them so they cannot
+  # be merged later and tag a stale tree. Best-effort, never fatal.
+  printf '%s\n' "$RELEASE_PRS" | grep -vF "release/$TAG" | while read -r ob _osha ourl; do
+    [ -n "$ob" ] || continue
+    "$GH" pr close "$ourl" --comment "superseded by release $TAG" >/dev/null 2>&1 || true
+    git push "$REMOTE" --delete "$ob" >/dev/null 2>&1 || true
+  done
   if [ -n "$EXISTING_PR" ]; then
     EBR="${EXISTING_PR%% *}"
     REST="${EXISTING_PR#* }"

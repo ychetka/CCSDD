@@ -30,7 +30,7 @@ fi
 
 ARGS=(issue create --title "$TITLE" --body "$BODY")
 [ -n "$LABELS" ] && ARGS+=(--label "$LABELS")
-URL=$(gh "${ARGS[@]}" 2>&1) || {
+URL=$("$GH" "${ARGS[@]}" 2>&1) || {
   python3 -c 'import json,sys;print(json.dumps({"status":"error","failure_class":"upstream_error","message":sys.argv[1]}))' "$URL"
   exit 1
 }

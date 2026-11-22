@@ -14,26 +14,38 @@
 import re, sys
 
 PATTERNS = [
-    (r"(?i)(api[_-]?key|secret|token|password|passwd)\s*[:=]\s*['\"][^'\"]{8,}['\"]",
+    (r"(?i)(api[_-]?key|secret|token|password|passwd)\s*[:=]\s*['\"]([^'\"]{8,})['\"]",
      "hardcoded credential assignment"),
     (r"-----BEGIN [A-Z ]*PRIVATE KEY-----", "private key material"),
     (r"(?i)bearer\s+[a-z0-9._~+/=-]{20,}", "bearer token literal"),
-    (r"ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}",
+    (r"(ghp_|gho_|ghu_|ghs_|ghr_|github_pat_)[A-Za-z0-9_]{20,}",
      "github token literal"),
     (r"xox[baprs]-[A-Za-z0-9-]{10,}", "slack token literal"),
     (r"sk-[A-Za-z0-9_-]{20,}", "api key literal (sk-*)"),
     (r"AKIA[0-9A-Z]{16}", "aws access key id"),
-    (r"(?i)(?:api[_-]?key|secret|password|passwd|bearer)[\"'\s:=>-]{1,10}[A-Za-z0-9_/+\-.]{20,}",
+    (r"(?i)(?:api[_-]?key|secret|password|passwd|bearer)[\"'\s:=>-]{1,10}([A-Za-z0-9_/+\-.]{20,})",
      "credential-shaped assignment"),
 ]
+
+# Documentation placeholders are not leaked credentials - the same
+# exemption hygiene_check.sh applies, so 'api_key: your_key_here'
+# in docs passes both boundaries identically.
+PLACEHOLDER_RE = re.compile(
+    r"(?i)^(your|example|sample|dummy|changeme|change_me|placeholder|"
+    r"fake|redacted|xxx|\[|<|\$\{|not.real|test|todo|fixme|sk-your|ghp-your)")
 
 def scan_lines(lines):
     hits = []
     for line in lines:
         for rx, label in PATTERNS:
-            if re.search(rx, line):
-                hits.append(f"{label}: {line.strip()[:120]}")
-                break
+            m = re.search(rx, line)
+            if not m:
+                continue
+            if "assignment" in label and m.lastindex:
+                if PLACEHOLDER_RE.match(m.group(m.lastindex)):
+                    continue
+            hits.append(f"{label}: {line.strip()[:120]}")
+            break
     return hits
 
 if __name__ == "__main__":

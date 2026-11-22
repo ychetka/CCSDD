@@ -94,25 +94,19 @@ except Exception:
 if not isinstance(sha, dict):
     sys.exit(1)
 bad = []
-# The unpinned check only fires when the stamp already purports to
-# cover bin/ - a partial legacy stamp is check_setup's complaint,
-# not a forgery proof.
-claims_bin = any(k.startswith("canon/bin/") for k in sha)
-for rel in ("bin/ship_commit.sh", "bin/migration_gate.sh",
-            "bin/migration_pattern.sh", "bin/hygiene_check.sh",
-            "bin/verify_constraints.sh", "bin/verify_worktree.sh",
-            "bin/git_ro.sh", "bin/gh_id.sh",
-            "bin/gate_run.sh", "bin/panel_gate.sh",
-            "bin/panel_verdict.sh"):
-    want = sha.get("canon/" + rel)
-    if not isinstance(want, str):
-        # A pinned script absent from a bin-covering manifest cannot
-        # be trusted - the stamp predates the panel or was tampered.
-        if claims_bin and os.path.isfile(os.path.join(canon_dir, rel)):
-            bad.append(rel + " (unpinned)")
+# Verify EVERY manifest-covered file, not a script subset: a pinned
+# spec/agent/config edit is as much canon drift as a rewritten gate,
+# and partial coverage left the non-script half unchecked.
+for rel, want in sorted(sha.items()):
+    if not isinstance(rel, str) or not rel.startswith("canon/"):
         continue
-    p = os.path.join(canon_dir, rel)
-    got = ""
+    if not isinstance(want, str):
+        bad.append(rel + " (unpinned)")
+        continue
+    p = os.path.normpath(os.path.join(canon_dir, rel[len("canon/"):]))
+    if not p.startswith(canon_dir.rstrip("/") + "/"):
+        bad.append(rel + " (path escape)")
+        continue
     try:
         got = hashlib.sha256(open(p, "rb").read()).hexdigest()
     except OSError:
@@ -121,8 +115,8 @@ for rel in ("bin/ship_commit.sh", "bin/migration_gate.sh",
     if got != want:
         bad.append(rel)
 if bad:
-    sys.stderr.write("gate scripts differ from canon_manifest sha256: "
-                     + ", ".join(bad) + "\n")
+    sys.stderr.write("canon files differ from canon_manifest sha256: "
+                     + ", ".join(bad[:12]) + "\n")
     sys.exit(1)
 PY
   then

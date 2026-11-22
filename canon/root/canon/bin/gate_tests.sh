@@ -618,7 +618,7 @@ mkdir -p "$PANEL_DIR/canon/bin" "$PANEL_DIR/canon/forge" \
          "$PANEL_DIR/canon/config" "$PANEL_DIR/docs/specs" "$PANEL_DIR/.changes"
 (cd "$PANEL_DIR" && git init -q -b main . && git config user.email t@t && git config user.name t)
 for f in gate_run panel_verdict panel_gate spec_anchor_check docs_check \
-         security_check quality_check fidelity_check hygiene_check; do
+         security_check quality_check fidelity_check hygiene_check gh_id; do
   cp "$CANON_DIR/bin/$f.sh" "$PANEL_DIR/canon/bin/"
 done
 cp "$CANON_DIR/forge/test.sh" "$CANON_DIR/forge/github.sh" \

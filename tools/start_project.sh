@@ -347,13 +347,17 @@ with open(path, "w", encoding="utf-8") as fh:
 PY
 fi
 
-"$WORKSPACE/canon/bin/check_setup.sh" || {
-  die "check_setup.sh failed in $WORKSPACE"
-}
-
+# Adapters run BEFORE check_setup so the same pass verifies the
+# runtime glue they produced (.devin/* symlinks, .windsurfrules,
+# the compiled .devin/config.json) instead of blessing a workspace
+# that has not been wired yet.
 for a in "${ADAPTERS[@]}"; do
   "$ADAPTER_DIR/$a.sh" "$WORKSPACE" || die "adapter $a failed"
 done
+
+"$WORKSPACE/canon/bin/check_setup.sh" || {
+  die "check_setup.sh failed in $WORKSPACE"
+}
 
 cat <<EOF
 

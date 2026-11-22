@@ -7,10 +7,14 @@
 #
 # Fail-closed checks, in order:
 #   1. candidate tree exists and is non-empty
-#   2. human decision envelope validates: verdict=approve,
-#      artifact_sha == sha256 of the candidate tree, sig verifies
-#      against the human key ($CANON_HUMAN_KEY or
-#      ~/.config/canon/human_key - never inside the workspace)
+#   2. human decision envelope validates through the SAME sign-off
+#      machinery the merge gates use (canon/bin/human_sign.sh): an
+#      ssh-sig envelope binding verdict=approve + artifact +
+#      ts + nonce. The artifact here is
+#      sha256("canon-v<ver>|<candidate_tree_sha256>") so a valid
+#      envelope can never be replayed under a different version;
+#      verify runs before publish, consume after, so a refused
+#      publish does not burn the human's nonce.
 #   3. read-limit: every candidate file stays within the agent
 #      read limits (--max-lines, default 2000)
 #   4. hygiene: no secrets-shaped content in candidate files
@@ -56,9 +60,10 @@ done
 
 CAND="$CAND" ENV="$ENV" VER="$VER" MAXL="$MAXL" \
 CANON_ROOT="$CANON_ROOT" MANIFEST="$MANIFEST" HISTORY="$HISTORY" \
-ORCH_DIR="$ORCH_DIR" \
+ORCH_DIR="$ORCH_DIR" HS="$CANON_DIR/bin/human_sign.sh" \
+SCAN="$CANON_DIR/bin/secret_scan.py" \
 python3 - <<'PY'
-import datetime, hashlib, hmac, json, os, re, sys, pathlib
+import datetime, hashlib, json, os, re, subprocess, sys, pathlib
 
 cand = pathlib.Path(os.environ["CAND"])
 env_path = os.environ["ENV"]
@@ -115,48 +120,45 @@ tree_sha = hashlib.sha256(
 ).hexdigest()
 
 # -- 2. decision envelope ----------------------------------------
-try:
-    env = json.load(open(env_path, encoding="utf-8"))
-except Exception as e:
-    fail(f"envelope unreadable: {e}")
-if env.get("verdict") != "approve":
-    fail(f"envelope verdict is not 'approve': {env.get('verdict')!r}")
-if env.get("artifact_sha") != tree_sha:
-    fail("envelope artifact_sha does not match candidate tree "
-         f"(envelope={env.get('artifact_sha','?')[:12]}.. tree={tree_sha[:12]}..)",
-         4)
+# One signer, one verifier: delegate to canon/bin/human_sign.sh, the
+# same ssh-sig machinery issue_merge.sh uses (a shared-key HMAC file
+# readable under the agent's UID was the pre-SSH weakness). The
+# signed artifact is the composite sha256 below, so verdict +
+# version + tree are bound inside one signature; freshness (7d) and
+# nonce replay are enforced by the verifier.
+publish_sha = hashlib.sha256(
+    f"canon-v{ver}|{tree_sha}".encode()).hexdigest()
+HS = os.environ.get("HS") or ""
+if not os.path.isfile(HS):
+    fail(f"canon/bin/human_sign.sh missing: {HS!r}", 5)
+r = subprocess.run(["bash", HS, "verify",
+                    "--envelope", env_path,
+                    "--artifact", publish_sha,
+                    "--verdict", "approve"],
+                   capture_output=True, text=True)
+if r.returncode != 0:
+    fail("envelope verification failed: " +
+         (r.stderr or r.stdout).strip()[:240], 5)
 
-key = os.environ.get("CANON_HUMAN_KEY")
-if not key:
-    kf = os.path.expanduser("~/.config/canon/human_key")
-    if os.path.isfile(kf):
-        key = open(kf).read().strip()
-if not key:
-    fail("human signing key unavailable "
-         "(set CANON_HUMAN_KEY or ~/.config/canon/human_key - "
-         "the same key that signs decision envelopes on the bus)", 5)
-# The signed payload binds the TARGET version too - a valid envelope
-# for this tree cannot be replayed under a different version string.
-payload = (f"{env.get('verdict')}|{env.get('artifact_sha')}|"
-           f"{env.get('signed_by','')}|{env.get('ts','')}|{ver}")
-want = hmac.new(key.encode(), payload.encode(), hashlib.sha256).hexdigest()
-got = str(env.get("sig") or "")
-if not hmac.compare_digest(want, got):
-    fail("envelope signature invalid (HMAC mismatch)", 5)
-# Envelope freshness: the window is 7 days - the envelope is bound
-# to (tree_sha, version) cryptographically, so age alone cannot
-# approve a different artifact; the window only limits replay of
-# stale contexts (a Friday decision must survive the weekend).
+# Provenance fields for manifest/history - best-effort parse of the
+# SAME transports verify accepts (JSON file, compact line, literal).
+# Cryptographic truth already came from human_sign above; this only
+# fills the audit stamp.
 try:
-    ts = datetime.datetime.fromisoformat(
-        str(env.get("ts", "")).replace("Z", "+00:00"))
-    if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=datetime.timezone.utc)
-    age = (datetime.datetime.now(datetime.timezone.utc) - ts).total_seconds()
+    raw_e = open(env_path, encoding="utf-8").read().strip() \
+        if os.path.isfile(env_path) else env_path
 except Exception:
-    fail("envelope ts is not a parseable ISO timestamp", 5)
-if not (0 <= age <= 604800):
-    fail(f"envelope ts outside the 7d freshness window (age {int(age)}s)", 5)
+    raw_e = ""
+env = {}
+if raw_e.startswith("CCSDD-SIGNOFF-1|"):
+    _p = raw_e.split("|")
+    if len(_p) == 6:
+        env = {"verdict": _p[1], "ts": _p[3]}
+else:
+    try:
+        env = json.loads(raw_e)
+    except Exception:
+        env = {}
 
 # -- 3. read-limit ------------------------------------------------
 for p in files:
@@ -164,16 +166,21 @@ for p in files:
     if n > max_lines:
         fail(f"line-limit breach: {p.relative_to(cand)} has {n} lines > {max_lines}")
 
-# -- 4. hygiene: secrets-shaped content ---------------------------
-SECRET_RX = re.compile(
-    r"(BEGIN [A-Z ]*PRIVATE KEY|AKIA[0-9A-Z]{16}|"
-    r"ghp_[A-Za-z0-9]{36}|xox[baprs]-[A-Za-z0-9-]{10,}|"
-    r"sk-[A-Za-z0-9_-]{20,}|"
-    r"api[_-]?key[\"'\s:=]{1,6}[A-Za-z0-9_/-]{20,})", re.I)
+# -- 4. hygiene: delegate to the canonical scanner - a separate
+# regex here would drift from the gate-time pattern set (and already
+# missed several GitHub token prefixes + doc placeholders).
+SCAN = os.environ.get("SCAN")
+if not SCAN or not os.path.isfile(SCAN):
+    fail(f"canonical secret_scan.py missing: {SCAN!r}", 6)
 for p in files:
-    m = SECRET_RX.search(p.read_text(encoding="utf-8", errors="replace"))
-    if m:
-        fail(f"secrets-shaped content in {p.relative_to(cand)}: {m.group(0)[:24]}..")
+    r = subprocess.run([sys.executable, SCAN, "--quiet"],
+                       input=p.read_bytes(), capture_output=True)
+    if r.returncode == 1:
+        fail(f"secrets-shaped content in {p.relative_to(cand)} "
+             f"(secret_scan.py hit)")
+    if r.returncode not in (0,):
+        fail(f"secret_scan.py error rc={r.returncode} on "
+             f"{p.relative_to(cand)}", 6)
 
 # -- 5. publish ---------------------------------------------------
 # Guard before the destructive sweep: a wrong --canon-root must not
@@ -213,8 +220,9 @@ manifest = {
     "canary": "GENERATED_AT_DEPLOY",
     "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     "envelope": {
-        "artifact_sha": env["artifact_sha"],
-        "signed_by": env.get("signed_by"),
+        "format": "ssh-sig-v1",
+        "artifact_sha": publish_sha,
+        "signed_by": "human",
         "ts": env.get("ts"),
     },
     "files": [r for r, _ in tree_entries],
@@ -255,13 +263,27 @@ os.replace(tmp, manifest_p)
 row = {
     "canon_version": ver,
     "tree_sha": tree_sha,
-    "signed_by": env.get("signed_by"),
+    "signed_by": "human",
     "ts": env.get("ts"),
     "published_at": manifest["generated_at"],
     "file_count": len(tree_entries),
 }
 with open(history_p, "a", encoding="utf-8") as f:
     f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+# Publish succeeded - burn the nonce NOW (never before the action,
+# so a refused publish does not strand the human's envelope). A
+# consume failure can only be a replay collision or a store write
+# error; the publish already landed, so warn rather than fail.
+r = subprocess.run(["bash", HS, "consume",
+                    "--envelope", env_path,
+                    "--artifact", publish_sha,
+                    "--verdict", "approve"],
+                   capture_output=True, text=True)
+if r.returncode != 0:
+    print("canon_pub: WARNING - sign-off nonce consume failed "
+          "after publish: " + (r.stderr or r.stdout).strip()[:200],
+          file=sys.stderr)
 
 print(json.dumps({
     "status": "published",

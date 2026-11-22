@@ -35,14 +35,14 @@ CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 GATEWAY_DB="$CANON_DIR/gateway.db"
 POLICY="$CANON_DIR/config/policy.json"
 
-PARTNER=""; TOOL=""; ARGS_JSON=""; ARGS_FILE=""; AUDIT_KEY=""; REQ_CLASS=""; ROUND=""
+PARTNER=""; TOOL=""; ARGS_JSON=""; ARGS_FILE=""; AUDIT_KEY=""; REQ_CLASS=""; ROUND=""; REQ_ITEM=""
 while [ $# -gt 0 ]; do
-  [ $# -ge 2 ] || { echo "usage: partner_call.sh --partner <id> --tool <t> (--args '<json>' | --args-file <path>) [--audit-key <k>] [--class consult|audit] [--round <n>]" >&2; exit 2; }
+  [ $# -ge 2 ] || { echo "usage: partner_call.sh --partner <id> --tool <t> (--args '<json>' | --args-file <path>) [--audit-key <k>] [--class consult|audit] [--round <n>] [--item <id>]" >&2; exit 2; }
   case "$1" in
     --partner) PARTNER=$2;; --tool) TOOL=$2;;
     --args) ARGS_JSON=$2;; --args-file) ARGS_FILE=$2;;
     --audit-key) AUDIT_KEY=$2;; --class) REQ_CLASS=$2;;
-    --round) ROUND=$2;;
+    --round) ROUND=$2;; --item) REQ_ITEM=$2;;
     *) echo "partner_call: unknown flag $1" >&2; exit 2;;
   esac; shift 2
 done
@@ -60,6 +60,7 @@ GATEWAY_DB="$GATEWAY_DB" POLICY="$POLICY" \
   PARTNER="$PARTNER" TOOL="$TOOL" \
   ARGS_JSON="$ARGS_JSON" ARGS_FILE="$ARGS_FILE" \
   AUDIT_KEY="$AUDIT_KEY" REQ_CLASS="$REQ_CLASS" ROUND="$ROUND" \
+  REQ_ITEM="$REQ_ITEM" \
   python3 - <<'PY'
 import datetime, hashlib, json, os, re, signal, subprocess, sys
 
@@ -128,6 +129,56 @@ elif req_class and req_class != "consult":
     print(f"partner_call: bad --class '{req_class}'", file=sys.stderr)
     sys.exit(2)
 
+# Open-dispute escalation: a consult call on an item that already has
+# an unresolved failure/escalated record in cycle_log.jsonl is a
+# dispute, not casual advice - raise it to audit class so it spends
+# the bounded per-key budget instead of the loose daily consult one.
+req_item = os.environ.get("REQ_ITEM") or ""
+if req_item and call_class == "consult":
+    clog = os.path.join(os.environ["CANON_DIR"], "cycle_log.jsonl")
+    open_fails = {}
+    if os.path.isfile(clog):
+        for ln in open(clog, encoding="utf-8", errors="replace"):
+            try:
+                rec = json.loads(ln)
+            except Exception:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            k2 = (rec.get("actor"), rec.get("item"))
+            if rec.get("status") == "open" \
+                    and rec.get("verdict") in ("failure", "escalated"):
+                open_fails[k2] = rec
+            act = rec.get("action") or ""
+            if (act.startswith("resolve_") or act == "close") \
+                    and rec.get("token_authenticated") is True \
+                    and rec.get("verdict") not in ("failure", "escalated"):
+                open_fails.pop(k2, None)
+    if any(k[1] == req_item for k in open_fails):
+        call_class = "audit"
+
+# --- partner impl resolution (BEFORE any quota spend) -------------
+# A call that cannot reach a backend must not burn budget - resolve
+# impl_dir first so every counter spent below maps to a real call.
+impl_dir = os.environ.get("PARTNER_IMPL_DIR")
+conf_path = os.path.expanduser("~/.config/canon/mcp_config.json")
+if not impl_dir and os.path.isfile(conf_path):
+    conf = json.load(open(conf_path, encoding="utf-8"))
+    srv = (conf.get("mcpServers") or conf).get(partner) or {}
+    argv = srv.get("args") or []
+    if argv:
+        impl_dir = os.path.dirname(argv[0])
+if not impl_dir or not os.path.isdir(impl_dir):
+    print(f"partner_call: cannot resolve partner impl dir for "
+          f"'{partner}' (set PARTNER_IMPL_DIR)", file=sys.stderr)
+    sys.exit(2)
+sys.path.insert(0, impl_dir)
+os.environ["PARTNER_ID"] = partner
+os.environ.setdefault("PARTNER_CONFIG",
+                      os.path.join(impl_dir, "config.json"))
+
+from core.server import PartnerMCPServer  # noqa: E402
+
 # --- counters + limits -------------------------------------------
 # Limits come from the manifest-hashed canon policy
 # (canon/config/policy.json), not from caller-controlled env: a
@@ -151,6 +202,7 @@ today = datetime.date.today().isoformat()
 # and the transaction commits BEFORE the backend call below (a
 # transaction is never held open across the network).
 con = gw_store.connect(db_path)
+spent_keys = []
 if call_class == "audit":
     # Global daily backstop bounds audit-key spraying: the per-key
     # budget only helps if keys cannot be minted freely.
@@ -169,6 +221,7 @@ if call_class == "audit":
               f"escalation path, no auto-renewal (gateway.md §5)",
               file=sys.stderr)
         sys.exit(4)
+    spent_keys = [key, day_key]
 else:
     key = f"consult:{today}:{partner}"
     vals, tripped = gw_store.counters_check_incr(
@@ -178,26 +231,21 @@ else:
               f"({consult_max}) reached for {partner} - "
               f"failure_class=quota_limited (quota.md)", file=sys.stderr)
         sys.exit(4)
+    spent_keys = [key]
 
-# --- backend ------------------------------------------------------
-impl_dir = os.environ.get("PARTNER_IMPL_DIR")
-conf_path = os.path.expanduser("~/.config/canon/mcp_config.json")
-if not impl_dir and os.path.isfile(conf_path):
-    conf = json.load(open(conf_path, encoding="utf-8"))
-    srv = (conf.get("mcpServers") or conf).get(partner) or {}
-    argv = srv.get("args") or []
-    if argv:
-        impl_dir = os.path.dirname(argv[0])
-if not impl_dir or not os.path.isdir(impl_dir):
-    print(f"partner_call: cannot resolve partner impl dir for "
-          f"'{partner}' (set PARTNER_IMPL_DIR)", file=sys.stderr)
-    sys.exit(2)
-sys.path.insert(0, impl_dir)
-os.environ["PARTNER_ID"] = partner
-os.environ.setdefault("PARTNER_CONFIG",
-                      os.path.join(impl_dir, "config.json"))
-
-from core.server import PartnerMCPServer  # noqa: E402
+def _refund():
+    # A call that never reached a partner answer (timeout, backend
+    # error) must not consume irreplaceable budget - return the
+    # increments in one short transaction. A refund failure must
+    # never mask the original error.
+    try:
+        for k in spent_keys:
+            con.execute(
+                "UPDATE counters SET value = MAX(value - 1, 0) "
+                "WHERE key = ?", (k,))
+        con.commit()
+    except Exception:
+        pass
 
 ts = datetime.datetime.now(datetime.timezone.utc)
 # Every external call carries an explicit deadline (RULES.md) - a
@@ -210,8 +258,14 @@ signal.alarm(call_timeout)
 try:
     result = PartnerMCPServer(partner_id=partner).call_tool(tool, call_args)
 except TimeoutError as e:
+    _refund()
     print(f"partner_call: REFUSED - {e} - "
           f"failure_class=upstream_timeout", file=sys.stderr)
+    sys.exit(4)
+except Exception as e:
+    _refund()
+    print(f"partner_call: backend call failed: {e} - "
+          f"failure_class=upstream_error", file=sys.stderr)
     sys.exit(4)
 finally:
     signal.alarm(0)

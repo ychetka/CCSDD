@@ -96,16 +96,32 @@ if [ -n "$BASELINE_CMD" ]; then
     # --ignore-scripts, then a fresh venv. An env-setup failure is a
     # distinct error - not a test failure and never silently skipped.
     ENV_RC=0
+    TIMEOUT_BIN=$(command -v timeout || command -v gtimeout || true)
     # The env adapter comes from the deployed control plane
     # ($CANON_DIR), never from $TOP - inside a PR worktree the
     # worktree copy is agent-controlled.
     if [ -x "$CANON_DIR/baseline_env.sh" ]; then
       bash "$CANON_DIR/baseline_env.sh" "$WT" >/dev/null 2>&1 || ENV_RC=$?
     elif [ -f "$WT/package.json" ]; then
-      (cd "$WT" && npm ci --silent --ignore-scripts) >/dev/null 2>&1 || ENV_RC=$?
-    elif [ -f "$WT/pyproject.toml" ] || [ -f "$WT/setup.py" ]; then
-      python3 -m venv "$WT/.venv" >/dev/null 2>&1 \
-        && "$WT/.venv/bin/pip" install -q -e "$WT" >/dev/null 2>&1 || ENV_RC=$?
+      (cd "$WT" && ${TIMEOUT_BIN:+$TIMEOUT_BIN 300} \
+        npm ci --silent --ignore-scripts) >/dev/null 2>&1 || ENV_RC=$?
+    elif [ -f "$WT/pyproject.toml" ] || [ -f "$WT/setup.py" ] \
+         || ls "$WT"/requirements*.txt >/dev/null 2>&1; then
+      # Python repos: venv + requirements (dev deps included) beats a
+      # bare `pip install -e .`, which fails outright on projects
+      # whose packaging needs a backend the venv does not ship.
+      # Every network step is bounded by the same timeout binary.
+      python3 -m venv "$WT/.venv" >/dev/null 2>&1 || ENV_RC=$?
+      if [ "$ENV_RC" = "0" ]; then
+        REQ=$(ls "$WT"/requirements*.txt 2>/dev/null | head -n1 || true)
+        if [ -n "$REQ" ]; then
+          (cd "$WT" && ${TIMEOUT_BIN:+$TIMEOUT_BIN 300} \
+            "$WT/.venv/bin/pip" install -q -r "$REQ") >/dev/null 2>&1 || ENV_RC=$?
+        else
+          (cd "$WT" && ${TIMEOUT_BIN:+$TIMEOUT_BIN 300} \
+            "$WT/.venv/bin/pip" install -q -e .) >/dev/null 2>&1 || ENV_RC=$?
+        fi
+      fi
     fi
     if [ "$BASE_UNRESOLVED" = "1" ]; then
       BASELINE_JSON="{\"error\":\"baseline_unresolvable\",\"detail\":\"no merge-base resolved; baseline would equal HEAD - refusing to certify the branch as its own baseline\"}"
@@ -154,3 +170,14 @@ payload["digest"] = hashlib.sha256(
     json.dumps(payload, sort_keys=True).encode()).hexdigest()
 print(json.dumps(payload))
 PY
+PY_RC=$?
+
+# A failed baseline is a FAILED CHECK, not a signed pass: the JSON is
+# still emitted above for the audit trail, but the process exit code
+# must refuse to read as green.
+# ("status":"skipped" carries exit:0 and stays a 0.)
+[ "$PY_RC" != "0" ] && exit "$PY_RC"
+case "$BASELINE_JSON" in
+  *'"error"'*|*'"exit":'[1-9]*) exit 1 ;;
+esac
+exit 0

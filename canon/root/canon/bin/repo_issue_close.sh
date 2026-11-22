@@ -35,7 +35,7 @@ print(json.dumps({"status":"error","failure_class":"gate_blocked","violations":v
   ARGS+=(--comment "$COMMENT")
 fi
 
-OUT=$(gh "${ARGS[@]}" 2>&1) || {
+OUT=$("$GH" "${ARGS[@]}" 2>&1) || {
   python3 -c 'import json,sys;print(json.dumps({"status":"error","failure_class":"upstream_error","message":sys.argv[1]}))' "$OUT"
   exit 1
 }

@@ -387,7 +387,11 @@ if os.path.isfile(aj):
         actors = json.load(open(aj, encoding="utf-8"))
         roles = {"orchestrator","director","executor","code_writer",
                  "designer","judge","reviewer","resolver","repository","git",
-                 "reader","hygiene","partner"}
+                 "reader","hygiene","partner",
+                 # the seven review-panel domain reviewers (policy.json)
+                 "reviewer_design","reviewer_docs","reviewer_fidelity",
+                 "reviewer_product","reviewer_quality","reviewer_security",
+                 "reviewer_tester"}
         lst = actors.get("actors") if isinstance(actors, dict) else actors
         if not isinstance(lst, list):
             raise ValueError("actors must be a list")
@@ -513,6 +517,36 @@ esac
 fi
 
 if gh auth status >/dev/null 2>&1; then ok "gh auth"; else fail "gh not authenticated"; fi
+
+# Runtime adapter integrity: the Devin adapter wires .devin/* ->
+# canon/ plus a .windsurfrules symlink and a compiled
+# .devin/config.json. A swapped symlink or a deleted compiled file
+# silently un-wires the rules the runtime actually reads - verify
+# the glue whenever .devin exists at all. A workspace that never
+# applied the devin adapter has no .devin dir and is simply skipped.
+WS_DIR="$(cd -P "$CANON_DIR/.." && pwd)"
+ADAPT_FAIL=""
+if [ -d "$WS_DIR/.devin" ]; then
+  for n in agents bin specs; do
+    if ! { [ -L "$WS_DIR/.devin/$n" ] \
+           && [ "$(readlink "$WS_DIR/.devin/$n")" = "../canon/$n" ]; }; then
+      ADAPT_FAIL="$ADAPT_FAIL .devin/$n"
+    fi
+  done
+  [ -f "$WS_DIR/.devin/config.json" ] \
+    || ADAPT_FAIL="$ADAPT_FAIL .devin/config.json"
+  if [ -L "$WS_DIR/.windsurfrules" ]; then
+    [ "$(readlink "$WS_DIR/.windsurfrules")" = "canon/RULES.md" ] \
+      || ADAPT_FAIL="$ADAPT_FAIL .windsurfrules(target)"
+  else
+    ADAPT_FAIL="$ADAPT_FAIL .windsurfrules(missing/not-a-symlink)"
+  fi
+fi
+if [ -z "$ADAPT_FAIL" ]; then
+  ok "runtime adapter glue"
+else
+  fail "runtime adapter glue broken:$ADAPT_FAIL - re-run adapters/devin.sh"
+fi
 
 # canary check: canon/RULES.md must end with the canary token declared
 # by the deployed canon stamp (canon/canon_manifest.json "canary") -
