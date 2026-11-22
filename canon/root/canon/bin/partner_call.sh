@@ -32,10 +32,8 @@
 # PARTNER_IMPL_DIR env.
 set -euo pipefail
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
-JOURNAL="$CANON_DIR/partner_journal"
-COUNTERS="$CANON_DIR/gateway_counters.json"
+GATEWAY_DB="$CANON_DIR/gateway.db"
 POLICY="$CANON_DIR/config/policy.json"
-mkdir -p "$JOURNAL"
 
 PARTNER=""; TOOL=""; ARGS_JSON=""; ARGS_FILE=""; AUDIT_KEY=""; REQ_CLASS=""; ROUND=""
 while [ $# -gt 0 ]; do
@@ -56,16 +54,19 @@ fi
 [ -n "$PARTNER" ] && [ -n "$TOOL" ] && [ -n "$ARGS_JSON$ARGS_FILE" ] || {
   echo "partner_call: --partner, --tool and (--args|--args-file) are required" >&2; exit 2; }
 
-JOURNAL="$JOURNAL" COUNTERS="$COUNTERS" POLICY="$POLICY" \
+GATEWAY_DB="$GATEWAY_DB" POLICY="$POLICY" \
+  CANON_DIR="$CANON_DIR" \
   PARTNERS_CFG="$CANON_DIR/config/partners.json" \
   PARTNER="$PARTNER" TOOL="$TOOL" \
   ARGS_JSON="$ARGS_JSON" ARGS_FILE="$ARGS_FILE" \
   AUDIT_KEY="$AUDIT_KEY" REQ_CLASS="$REQ_CLASS" ROUND="$ROUND" \
   python3 - <<'PY'
-import datetime, fcntl, hashlib, json, os, re, signal, sys
+import datetime, hashlib, json, os, re, signal, sys
 
-journal_dir = os.environ["JOURNAL"]
-counters_path = os.environ["COUNTERS"]
+sys.path.insert(0, os.path.join(os.environ["CANON_DIR"], "bin"))
+import gw_store
+
+db_path = os.environ["GATEWAY_DB"]
 partner, tool = os.environ["PARTNER"], os.environ["TOOL"]
 args_file = os.environ.get("ARGS_FILE")
 args_raw = open(args_file, encoding="utf-8").read() \
@@ -153,58 +154,38 @@ consult_max = min(consult_max,
                   int(_gw.get("consult_daily_max_per_partner", 50)))
 audit_daily = int(_gw.get("audit_daily_max_total", 100))
 today = datetime.date.today().isoformat()
-# flock: concurrent calls must not lose counter increments.
-lock_f = open(counters_path + ".lock", "a")
-fcntl.flock(lock_f, fcntl.LOCK_EX)
-if os.path.exists(counters_path):
-    try:
-        counters = json.load(open(counters_path, encoding="utf-8"))
-        if not isinstance(counters, dict):
-            raise ValueError("not an object")
-    except Exception as e:
-        # Fail CLOSED: a corrupted quota file must not silently reset
-        # every counter - that is a quota bypass without touching
-        # policy. Refuse until a human repairs the state.
-        print(f"partner_call: REFUSED - gateway counters file is "
-              f"unreadable ({e}) - fail closed, repair "
-              f"{counters_path}", file=sys.stderr)
-        sys.exit(4)
-else:
-    counters = {}
+# SQLite/WAL store: quota check+increment is ONE transaction -
+# concurrent calls can never lose or double-spend an increment,
+# and the transaction commits BEFORE the backend call below (a
+# transaction is never held open across the network).
+con = gw_store.connect(db_path)
 if call_class == "audit":
     # Global daily backstop bounds audit-key spraying: the per-key
     # budget only helps if keys cannot be minted freely.
     day_key = f"audit_day:{today}"
-    if int(counters.get(day_key, 0)) >= audit_daily:
+    key = f"audit:{audit_key}"
+    vals, tripped = gw_store.counters_check_incr(
+        con, [(key, audit_max), (day_key, audit_daily)])
+    if tripped == day_key:
         print(f"partner_call: REFUSED - global daily audit limit "
               f"({audit_daily}) reached - "
               f"failure_class=quota_limited", file=sys.stderr)
         sys.exit(4)
-    key = f"audit:{audit_key}"
-    n = int(counters.get(key, 0))
-    if n >= audit_max:
+    if tripped is not None:
         print(f"partner_call: REFUSED - audit iteration limit "
               f"({audit_max}) reached for key '{audit_key}' - "
               f"escalation path, no auto-renewal (gateway.md §5)",
               file=sys.stderr)
         sys.exit(4)
-    counters[key] = n + 1
-    counters[day_key] = int(counters.get(day_key, 0)) + 1
 else:
     key = f"consult:{today}:{partner}"
-    n = int(counters.get(key, 0))
-    if n >= consult_max:
+    vals, tripped = gw_store.counters_check_incr(
+        con, [(key, consult_max)])
+    if tripped is not None:
         print(f"partner_call: REFUSED - consult daily limit "
               f"({consult_max}) reached for {partner} - "
               f"failure_class=quota_limited (quota.md)", file=sys.stderr)
         sys.exit(4)
-    counters[key] = n + 1
-tmp = counters_path + ".tmp"
-with open(tmp, "w") as f:
-    json.dump(counters, f, indent=2)
-os.replace(tmp, counters_path)
-fcntl.flock(lock_f, fcntl.LOCK_UN)
-lock_f.close()
 
 # --- backend ------------------------------------------------------
 impl_dir = os.environ.get("PARTNER_IMPL_DIR")
@@ -244,6 +225,8 @@ finally:
     signal.alarm(0)
 
 # --- journal BEFORE returning ------------------------------------
+# Append-only journal row in the WAL store - the raw verdict exists
+# in the journal even when the caller dies right after the answer.
 entry = {
     "ts": ts.isoformat(),
     "partner": partner,
@@ -254,17 +237,12 @@ entry = {
     "request_args": call_args,
     "response": result,
 }
-# Journal filename: the partner id is caller-supplied - strip anything
-# but a safe basename charset so '--partner ../x' cannot write outside
-# partner_journal/.
-safe_partner = re.sub(r"[^A-Za-z0-9_-]", "_", partner)
-name = f"{ts.strftime('%Y%m%dT%H%M%S')}-{safe_partner}-{os.getpid()}.json"
-with open(os.path.join(journal_dir, name), "w", encoding="utf-8") as f:
-    json.dump(entry, f, ensure_ascii=False, indent=2)
+gw_store.journal_append(con, entry)
+jid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
 
 out = result if isinstance(result, str) else json.dumps(
     result, ensure_ascii=False, indent=2)
 print(out)
 print(f"[gateway] class={call_class} partner={partner} "
-      f"journal={name}", file=sys.stderr)
+      f"journal_row={jid}", file=sys.stderr)
 PY

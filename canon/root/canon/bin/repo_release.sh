@@ -34,6 +34,18 @@ TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-
   json_error upstream_error "not a git repo"
 cd -P "$TOP" || json_error upstream_error "cannot cd to repo top"
 
+# Repository-agent credential for repository mutations (merge.gh_bin
+# -> review.gh_bin -> gh), never the reviewer identity.
+GH=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os,re
+try:
+    pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
+    gb = ((pj.get("merge") or {}).get("gh_bin")) \
+         or ((pj.get("review") or {}).get("gh_bin")) or "gh"
+    print(gb if isinstance(gb, str) and re.fullmatch(r"[A-Za-z0-9_-]+", gb) else "")
+except Exception:
+    print("gh")' 2>/dev/null)
+[ -n "$GH" ] || { echo "merge.gh_bin in project.json is not a bare binary basename" >&2; exit 2; }
+
 BUMP="" NOTES="" DRY=0 BASE=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -60,7 +72,7 @@ REMOTE=$(git remote -v | awk '$2 ~ /github\.com/ {print $1; exit}')
 # (repo_merge.sh does); without it defaultBranchRef is the only
 # sane default - but a merge into a non-default base must never
 # silently release onto the default branch.
-[ -n "$BASE" ] || BASE=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || echo main)
+[ -n "$BASE" ] || BASE=$("$GH" repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || echo main)
 [[ "$BASE" =~ ^[A-Za-z0-9._/-]+$ ]] || json_error malformed_input "unexpected base ref name: $BASE"
 git fetch "$REMOTE" "+refs/heads/$BASE:refs/remotes/$REMOTE/$BASE" --tags >/dev/null 2>&1 || \
   json_error upstream_error "fetch of base/tags failed - refusing to guess next version"
@@ -70,7 +82,7 @@ SHA=$(git rev-parse "$REMOTE/$BASE" 2>/dev/null) || \
 
 # --- publish helper: tag + GitHub release on an existing sha ---
 # Shared by the normal path and the resume path; idempotent for a
-# partially published release (tag pushed but gh release failed, or
+# partially published release (tag pushed but "$GH" release failed, or
 # vice versa). A failed tag push removes the local tag so a retry is
 # not poisoned by a stale local ref.
 publish_tag_release() {
@@ -88,13 +100,13 @@ publish_tag_release() {
     git tag -d "$tag" >/dev/null 2>&1 || true
     printf '{"status":"error","failure_class":"upstream_error","message":"tag %s push failed - push it manually on %s"}' "$tag" "$sha"
     return 13; }
-  if ! gh release view "$tag" >/dev/null 2>&1; then
+  if ! "$GH" release view "$tag" >/dev/null 2>&1; then
     if [ -n "$NOTES" ]; then
-      gh release create "$tag" --notes "$NOTES" >/dev/null 2>&1
+      "$GH" release create "$tag" --notes "$NOTES" >/dev/null 2>&1
     else
-      gh release create "$tag" --generate-notes >/dev/null 2>&1
+      "$GH" release create "$tag" --generate-notes >/dev/null 2>&1
     fi || {
-      printf '{"status":"error","failure_class":"upstream_error","message":"tag pushed but gh release create failed - create release for %s manually"}' "$tag"
+      printf '{"status":"error","failure_class":"upstream_error","message":"tag pushed but "$GH" release create failed - create release for %s manually"}' "$tag"
       return 14; }
   fi
   TAG="$tag" SHA_V="$sha" NOTE_V="${note:-}" python3 -c 'import json,os
@@ -386,7 +398,7 @@ else
   # content STILL matches the release we just generated - a stale PR
   # from an earlier attempt carries the wrong base state or misses
   # newer fragments, and merging it would tag the wrong tree.
-  EXISTING_PR=$(gh pr list --base "$BASE" --state open \
+  EXISTING_PR=$("$GH" pr list --base "$BASE" --state open \
     --json headRefName,headRefOid,url --jq '.[] | select(.headRefName | startswith("release/'"$TAG"'")) | .headRefName + " " + .headRefOid + " " + .url' 2>/dev/null | head -n1)
   if [ -n "$EXISTING_PR" ]; then
     EBR="${EXISTING_PR%% *}"
@@ -422,7 +434,7 @@ else
     git push "$REMOTE" "HEAD:$RBR" >/dev/null 2>&1 || \
       json_error permission_denied "release commit push rejected on $BASE and release branch - apply the release commit manually"
   fi
-  PR_URL=$(gh pr create --base "$BASE" --head "$RBR" \
+  PR_URL=$("$GH" pr create --base "$BASE" --head "$RBR" \
     --title "release: $TAG" \
     --body "Release-on-Merge commit for $TAG (version file + CHANGELOG fold + fragment consumption). Merging this lands the release commit; the next repo_release.sh run tags $TAG on the resulting head." 2>/dev/null || true)
   if [ -n "$PR_URL" ]; then
@@ -430,7 +442,7 @@ else
     # resume path detects it; auto-merge completes it unattended
     # once protection allows. A failed auto-merge arm is reported,
     # not hidden.
-    AM_OUT=$(gh pr merge "$PR_URL" --auto --squash 2>&1)
+    AM_OUT=$("$GH" pr merge "$PR_URL" --auto --squash 2>&1)
     AM_RC=$?
     AUTO_FLAG=""
     [ $AM_RC -ne 0 ] && AUTO_FLAG=",\"auto_merge_error\":$(python3 -c 'import json,sys;print(json.dumps(sys.argv[1][:300]))' "$AM_OUT")"

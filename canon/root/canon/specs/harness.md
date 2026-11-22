@@ -185,6 +185,18 @@ An immutable record of a human decision that affects a gate
 - Fields: verdict, hash of the artifact/revision the decision
   applies to, verbatim supporting material, decider role,
   timestamp.
+- Mechanism (product gates): `canon/bin/human_sign.sh` — a TOTP
+  second factor (Google Authenticator). The secret lives at
+  `~/.config/ccsdd/human_totp_secret` (provisioned once by
+  `human_sign.sh init`, mode 600, outside the workspace); `sign`
+  prompts for the live 6-digit code and writes
+  `{verdict, artifact_hash, code, ts}` to
+  `canon/human_signoffs/<branch>.json`; the product gates run
+  `human_sign.sh verify` against the exact head SHA. A bare TOTP
+  code is an approval factor, not an asymmetric signature — it
+  binds {this artifact, this verdict, this timestep} and cannot
+  be replayed onto another artifact; it does not claim
+  non-repudiation.
 - Written into the instance STATE (managed mode) or into the cycle
   artifact journal (direct mode) — never passed as text through an
   LLM intermediary.
@@ -289,7 +301,7 @@ missing_changes_entry | version_not_bumped | version_source_missing |
 version_drift | conflict | contract_gap | contract_ambiguity |
 unverifiable | scope_conflict | quota_limited | incomplete_read |
 not_found | manual_gate | epic_incomplete | missing_issue_field |
-issue_mismatch | stale_input | verify_escalated | verify_failed |
+issue_mismatch | stale_input | plan_drift | verify_escalated | verify_failed |
 release_failed | baseline_unresolvable | env_setup_failed | unknown`
 
 ### cycle_log.jsonl
@@ -403,10 +415,14 @@ Principles:
   the director at PR assembly (the director is the only spawn owner
   in the instance), but there is no conflict of interest: verdict
   independence is ensured by the separate reviewer account declared
-  in `project.json` (`review.reviewer_logins`, `review.gh_bin`) and
-  by direct review publication via `repo_pr_review.sh` — the
+  in `project.json` (`review.reviewer_logins`,
+  `review.reviewer_profiles` — per-identity `{gh_bin, model_family}`
+  entries; `review.gh_bin` remains the default profile) and by
+  direct review publication via `repo_pr_review.sh` — the
   director can neither edit the verdict, nor filter its
-  publication, nor approve its own PR.
+  publication, nor approve its own PR. Merges run under the
+  repository-agent credential (`merge.gh_bin`), never under a
+  reviewer identity — least privilege, no self-approve channel.
 - **Mid-turn inject — closed empirically (2026-11-11)**:
   `session/prompt` on a busy instance is rejected by the host
   immediately ("a turn is already running") — it is neither queued
@@ -437,8 +453,13 @@ The version policy is fixed at roadmap approval, not at merge
   `failure_class=missing_issue_field`/`issue_mismatch` otherwise.
   Optional `manual_gate: true` on an
   item with `manual_gate` in the roadmap: `repo_merge.sh` blocks
-  the merge (`status=blocked`, `failure_class=manual_gate`) — the
-  item waits for the developer
+  the merge (`status=blocked`, `failure_class=manual_gate`) until
+  the developer signs the exact head SHA with the TOTP second
+  factor: `human_sign.sh sign --verdict approve
+  --artifact <head_sha> --out canon/human_signoffs/<branch>.json`
+  — the gate mechanically verifies the envelope
+  (`human_sign.sh verify`); no envelope or a stale/mismatched one
+  keeps the PR blocked
   (`failure_class=missing_changes_entry`/`malformed_input`
   otherwise). The version file on the branch is NOT bumped. A merge
   without a fragment is gated by `repo_merge.sh`.
@@ -503,6 +524,15 @@ The version policy is fixed at roadmap approval, not at merge
 
 ## 4. Item lifecycle
 
+0. **Repository bootstrap (deployment)**: `canon/bin/setup_repo.sh`
+   is run once by the deployer (or the repository agent) per target
+   repository: it applies canonical branch protection on the base
+   branch (PR required, stale-review dismissal, no force pushes)
+   and deploys `.github/workflows/release.yml` — the serialized
+   `release-main` concurrency group that finalizes tags/releases
+   for merged `release/v*` PRs server-side, so two merges can never
+   race the version/tag order. The script resolves the repo from
+   `git remote`, requires gh credentials, and is idempotent.
 1. The arch committee designs the roadmap (items, types,
    dependencies, contracts, stack/FE-BE, G/W/T, risk flags, Design
    Dissent) > developer approval. For a repository without CI the
@@ -584,12 +614,23 @@ The version policy is fixed at roadmap approval, not at merge
       (§6), which refines the contract (a new sign-off hash). The
       item does not proceed in implementation while a gap is
       unresolved.
-   d. Executor (code_writer): scope plan > tests from G/W/T + code >
+   d. Executor (code_writer): works inside the item's worktree —
+      the git agent opens it via `canon/bin/item_worktree.sh open
+      --branch issue_<N>-<slug>` BEFORE the item starts (parallel
+      executors never share a tree or index); the worktree lives at
+      <repo-parent>/.worktrees/<branch> and is removed together
+      with the local branch by `item_worktree.sh close` once the
+      item is merged or abandoned — remote branches/PRs remain the
+      audit trail. Flow: scope plan > tests from G/W/T + code >
       green native run (project lint+tests+typecheck) > re-grounding
       (git status/diff --stat against the scope plan) > report in
       the profile format (RESULT/GATES/DECISIONS/OPEN). A report
       without literal run statuses is not accepted.
-   e. The item judge verifies (p.5). Rework loops until verdict.
+   e. The item judge verifies (p.5) — against the candidate COMMIT
+      in the item worktree, not a dirty tree: the git agent commits
+      the candidate state first, so untracked files can never hide
+      from the diff and every verdict/envelope binds an exact SHA.
+      Rework loops until verdict.
    f. A line in harness_log.jsonl via `canon/bin/harness_log.sh
       append`.
 5. Deviations: non-contractual — inside a declared
@@ -735,7 +776,14 @@ developer. No sub-rungs.
 
 - Rounds 1-2: normal executor-judge loop.
 - No agreement after round 2: resolver subagent (the last automatic
-  attempt, NOT a counter reset).
+  attempt, NOT a counter reset). The resolver is a read-only,
+  single-shot arbiter (`canon/agents/resolver.md`): it verifies the
+  dispute package's integrity, rules each finding against the
+  frozen contract (`SUSTAIN_WRITER`/`SUSTAIN_JUDGE`/
+  `AMBIGUOUS_OR_CONFLICT`) and rolls up fail-closed —
+  `UPHOLD_WRITER` | `UPHOLD_JUDGE` | `ESCALATE_ARCH`. It may run at
+  most once per item cycle and its ceiling is the arch committee,
+  never the human directly.
 - Resolver failed to converge or round 3 expired: stop +
   classification:
   - repeating class of objections — wrong approach: upgrade
@@ -893,6 +941,19 @@ On trigger:
 3. Move the step to `waiting_quota` until `reset_at`. The task does
    NOT fail, the retry budget is NOT consumed, lease recovery does
    not spawn a second executor.
+   - **Managed mode** (a `bridge` daemon exists): park via
+     `bridge quota-park` — the daemon owns the wait window and
+     probes.
+   - **Standalone mode** (no `bridge`): the instance cannot wait —
+     local timers/sleep are forbidden. Write the park record to
+     `canon/quota_park.json`
+     (`{task, step, reset_at, checkpoint, raw_error}`), move the
+     step to `waiting_quota`, report `reset_at` to the human and
+     END the turn cleanly. On the next wake/turn the instance
+     checks `canon/quota_park.json` first: before `reset_at` it
+     stays parked (report and end again); after `reset_at` — one
+     control probe, then resume the blocked step or re-park on a
+     fresh `reset_at`.
 4. Until `reset_at` wake messages into the instance are suppressed.
 5. After `reset_at` — one control probe (a model preflight ping
    inside the instance before resuming the step):

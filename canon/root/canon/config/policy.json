@@ -8,7 +8,30 @@
     ],
     "allow": [
       "canon/bin/"
-    ]
+    ],
+    "roles": {
+      "_comment": "Capability matrix. deny/allow above is GLOBAL: it binds every actor incl. subagents. Bare git/gh stay denied for ALL roles - git ops go only through canon/bin wrappers (ship_*/git_ro.sh) run by the git agent, gh ops only through repo_*.sh wrappers run by the repository agent. 'tools' below mirrors each profile's allowed-tools frontmatter; 'exec_extra' lists non-wrapper commands the role legitimately runs inside its worktree (project-native checks - NOT git/gh, which are never permitted).",
+      "root":        {"tools": ["read","grep","glob","exec","mcp"],
+                      "exec_extra": []},
+      "code_writer": {"tools": ["read","grep","glob","exec","edit"],
+                      "exec_extra": ["<project lint/tests/typecheck per manifests>"]},
+      "judge":       {"tools": ["read","grep","glob","exec"],
+                      "exec_extra": ["<project lint/tests/typecheck on the candidate worktree>"]},
+      "reviewer":    {"tools": ["read","grep","glob","exec"],
+                      "exec_extra": ["canon/bin/repo_pr_review.sh - NEVER native PR code, no checkout with credentials"]},
+      "resolver":    {"tools": ["read","grep","glob"],
+                      "exec_extra": []},
+      "designer":    {"tools": ["read","grep","glob"],
+                      "exec_extra": []},
+      "reader":      {"tools": ["read","grep","glob","exec"],
+                      "exec_extra": ["canon/bin/reader_digest.sh, read-only pagers/cat"]},
+      "git":         {"tools": ["read","grep","glob","exec"],
+                      "exec_extra": ["canon/bin/ship_*.sh", "canon/bin/git_ro.sh"]},
+      "repository":  {"tools": ["read","grep","glob","exec"],
+                      "exec_extra": ["canon/bin/repo_*.sh"]},
+      "hygiene":     {"tools": [],
+                      "exec_extra": ["deterministic canon/bin/hygiene_check.sh inside wrappers - not an agent"]}
+    }
   },
   "gateway": {
     "audit_max_per_key": 20,

@@ -47,11 +47,12 @@ trap cleanup EXIT INT TERM
 GH=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os,re
 try:
     pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
-    gb = ((pj.get("review") or {}).get("gh_bin")) or "gh"
+    gb = ((pj.get("merge") or {}).get("gh_bin")) \
+         or ((pj.get("review") or {}).get("gh_bin")) or "gh"
     print(gb if isinstance(gb, str) and re.fullmatch(r"[A-Za-z0-9_-]+", gb) else "")
 except Exception:
     print("gh")' 2>/dev/null)
-[ -n "$GH" ] || json_error malformed_input "review.gh_bin in project.json is not a bare binary basename"
+[ -n "$GH" ] || json_error malformed_input "merge.gh_bin in project.json is not a bare binary basename"
 command -v "$GH" >/dev/null 2>&1 || json_error upstream_error "github cli '$GH' not found on PATH"
 
 # Fetch PR metadata once; stdout/stderr kept separate so a warning on
@@ -573,19 +574,32 @@ print(json.dumps({"status": "blocked", "failure_class": "missing_changes_entry",
 fi
 
 # manual_gate: a fragment declaring manual_gate: true means this PR
-# waits for the developer - the objective gate must not merge it.
+# waits for the developer. The legal path is a human signoff
+# envelope: `human_sign.sh sign --verdict approve
+# --artifact <head_sha> --out canon/human_signoffs/<branch>.json`
+# - the TOTP-bound envelope must verify against the exact head the
+# gate would merge. No envelope or a stale/mismatched one = blocked.
 MANUAL_GATE=$(printf '%s' "$ENTRY" | python3 -c 'import json,sys
 try: print("yes" if (json.load(sys.stdin).get("flags") or {}).get("manual_gate") else "no")
 except Exception: print("no")')
 if [ "$MANUAL_GATE" = "yes" ]; then
-  ENTRY="$ENTRY" python3 -c 'import json,os
+  ENVELOPE_OK="no"
+  ENV_FILE="$CANON_DIR/human_signoffs/${HEAD_BRANCH}.json"
+  if [ -f "$ENV_FILE" ] \
+      && "$CANON_DIR/bin/human_sign.sh" verify --envelope "$ENV_FILE" \
+           --artifact "$EXPECTED" --verdict approve >/dev/null 2>&1; then
+    ENVELOPE_OK="yes"
+  fi
+  if [ "$ENVELOPE_OK" != "yes" ]; then
+    ENTRY="$ENTRY" ENV_FILE="$ENV_FILE" EXPECTED="$EXPECTED" python3 -c 'import json,os
 raw = os.environ.get("ENTRY", "")
 try: report = json.loads(raw)
 except Exception: report = {}
 print(json.dumps({"status": "blocked", "failure_class": "manual_gate",
-                  "message": "fragment declares manual_gate: true - developer decision required",
+                  "message": "fragment declares manual_gate: true - developer approval required. Sign with: human_sign.sh sign --verdict approve --artifact %s --out %s" % (os.environ.get("EXPECTED",""), os.environ.get("ENV_FILE","")),
                   "gate_report": {"changes_entry": report}}))'
-  exit 1
+    exit 1
+  fi
 fi
 
 CI_BOOTSTRAP=$(printf '%s' "$ENTRY" | python3 -c 'import json,sys

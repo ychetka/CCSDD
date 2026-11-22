@@ -198,10 +198,12 @@ RUNTIME_OK = {
     "canon/actors.json", "canon/cycle_log.jsonl",
     "canon/harness_log.jsonl", "canon/scope_whitelist.txt",
     "canon/migration_ok", "canon/migration_rollforward.md",
-    "canon/gateway_counters.json", "canon/roadmap.md",
+    "canon/gateway.db", "canon/gateway.db-wal", "canon/gateway.db-shm",
+    "canon/gateway_counters.json", "canon/gateway_counters.json.migrated",
+    "canon/roadmap.md", "canon/quota_park.json",
     "canon/release_history.jsonl",
 }
-RUNTIME_DIRS = ("canon/partner_journal/", "canon/kb/")
+RUNTIME_DIRS = ("canon/partner_journal/", "canon/human_signoffs/", "canon/kb/")
 pinned = m.get("adapters_sha256") or {}
 extra, drifted_hooks = [], []
 listed = {f for f in files}

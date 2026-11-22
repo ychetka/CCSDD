@@ -21,9 +21,15 @@ GH_BIN="${GH_BIN:-gh}"
 ALLOWED_GH=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os,re
 try:
     pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
-    alt = ((pj.get("review") or {}).get("gh_bin")) or ""
-    alt = alt if re.fullmatch(r"[A-Za-z0-9_-]+", alt) else ""
-    print("gh " + alt)
+    rev = pj.get("review") or {}
+    bins = ["gh", rev.get("gh_bin") or ""]
+    # reviewer_profiles: per-identity reviewer accounts - each
+    # declares its own gh binary (separate tokens); risk:high items
+    # require approvals from distinct model families.
+    for prof in (rev.get("reviewer_profiles") or {}).values():
+        if isinstance(prof, dict):
+            bins.append(prof.get("gh_bin") or "")
+    print(" ".join(b for b in bins if re.fullmatch(r"[A-Za-z0-9_-]+", b or "")))
 except Exception:
     print("gh")' 2>/dev/null)
 case "$GH_BIN" in

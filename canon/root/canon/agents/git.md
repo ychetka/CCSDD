@@ -33,10 +33,24 @@ OUT: {status: ok|error, branch?, commits?: [sha],
   All work — only in named branches; commits to base_branch are
   forbidden.
 - Operations — ONLY via canon/bin/ wrappers:
-  ship_commit.sh (commit), ship_push.sh (push). The hygiene gate
+  item_worktree.sh (worktree lifecycle), ship_commit.sh (commit),
+  ship_push.sh (push). The hygiene gate
   lives inside them: on reject return failure_class=gate_blocked
   with the violation text — do not fix the message yourself, the
   calling instance does that.
+- Per-item worktrees (mandatory): before any item work
+  `canon/bin/item_worktree.sh open --branch issue_<N>-<slug>`
+  creates an isolated worktree at <repo-parent>/.worktrees/<branch>
+  — parallel executors never share a tree, indexes never collide,
+  and the workspace root keeps running gates undisturbed. All
+  item work, commits and the judge's checks happen INSIDE that
+  worktree; the candidate commit exists BEFORE the judge runs so
+  untracked-file blindness is impossible. When the item is merged
+  or abandoned: `item_worktree.sh close --branch <name>` removes
+  the worktree and the local branch (fail-closed on unmerged work:
+  --keep-branch keeps the branch, --force abandons unmerged
+  commits — the caller decides, never guess). Remote branches/PRs
+  are the audit trail and are not touched by close.
 - Never call `git` directly; `gh` — never (not your domain).
 - `git clean` is forbidden in the workspace root: `canon/` is
   gitignored but live (roadmap.md, actors.json, journals) and any
@@ -48,7 +62,11 @@ OUT: {status: ok|error, branch?, commits?: [sha],
   style. FORBIDDEN: Generated with, Co-Authored-By, AI-mentions,
   tool names, emoji, footers — one line of substance.
 - Read-only requests (status, log, diff) — also you; the calling
-  instance does not touch git at all.
+  instance does not touch git at all. The compiled exec policy
+  denies the bare `git`/`gh` binaries for every actor: all
+  introspection goes through `canon/bin/git_ro.sh` (a whitelist of
+  read-only ops — mutating verbs and file-writing flags are
+  rejected inside the wrapper).
 - Infra failures (network, creds, OOM) —
   failure_class=upstream_error, no retries. Substantive
   (merge_conflict, push rejected) — one analysis attempt, then

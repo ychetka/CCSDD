@@ -79,6 +79,14 @@ not change the class.
 - `Consult`: budget limits per item/period; exhaustion — refusal
   with failure_class=quota_limited or parking per the quota
   protocol (`quota.md`), with no silent profile upgrade.
-- The gateway counter file is integrity-critical state: an
-  unreadable/corrupt file is a fail-closed refusal until repaired,
-  never a silent reset.
+- The gateway state is integrity-critical: counters and the
+  verbatim journal live in `canon/gateway.db` (SQLite,
+  `journal_mode=WAL`, `synchronous=FULL`). Quota check+increment
+  is a single atomic transaction that commits BEFORE the backend
+  call - a transaction is never held open across the network, and
+  concurrent callers can never lose or double-spend an increment.
+  An unreadable/corrupt store is a fail-closed refusal until
+  repaired, never a silent reset. The journal table is
+  append-only: no UPDATE/DELETE path exists in `gw_store.py`.
+  A legacy `gateway_counters.json` is migrated once on first use
+  and renamed `.migrated` so it cannot be replayed.

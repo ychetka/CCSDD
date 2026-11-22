@@ -22,18 +22,21 @@ json_error() {
 PR="${1:-}"
 [[ "$PR" =~ ^[0-9]+$ ]] || json_error malformed_input "pr_number must be a positive integer"
 
-# GitHub CLI resolution: review.gh_bin from the deployed project.json
-# may name an alternate basename (wrapper binary); anything else -
-# paths, undeclared names - would run an arbitrary binary under the
-# merge credentials.
+# GitHub CLI resolution: merges run under the repository-agent
+# credential, NOT the reviewer identity - separation of powers.
+# project.json `merge.gh_bin` names that binary (fallback:
+# review.gh_bin, then plain `gh`). Anything else - paths,
+# undeclared names - would run an arbitrary binary under the merge
+# credentials.
 GH=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os,re
 try:
     pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
-    gb = ((pj.get("review") or {}).get("gh_bin")) or "gh"
+    gb = ((pj.get("merge") or {}).get("gh_bin")) \
+         or ((pj.get("review") or {}).get("gh_bin")) or "gh"
     print(gb if isinstance(gb, str) and re.fullmatch(r"[A-Za-z0-9_-]+", gb) else "")
 except Exception:
     print("gh")' 2>/dev/null)
-[ -n "$GH" ] || json_error malformed_input "review.gh_bin in project.json is not a bare binary basename"
+[ -n "$GH" ] || json_error malformed_input "merge.gh_bin in project.json is not a bare binary basename"
 command -v "$GH" >/dev/null 2>&1 || json_error upstream_error "github cli '$GH' not found on PATH"
 
 INFO_ERR=$(mktemp)

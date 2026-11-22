@@ -8,6 +8,18 @@ CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
 cd "$TOP"
 
+# Repository-agent credential for repository mutations (merge.gh_bin
+# -> review.gh_bin -> gh), never the reviewer identity.
+GH=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os,re
+try:
+    pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
+    gb = ((pj.get("merge") or {}).get("gh_bin")) \
+         or ((pj.get("review") or {}).get("gh_bin")) or "gh"
+    print(gb if isinstance(gb, str) and re.fullmatch(r"[A-Za-z0-9_-]+", gb) else "")
+except Exception:
+    print("gh")' 2>/dev/null)
+[ -n "$GH" ] || { echo "merge.gh_bin in project.json is not a bare binary basename" >&2; exit 2; }
+
 BRANCH=""; BASE=""; ISSUE=""; TITLE=""; BODY=""
 while [ $# -gt 0 ]; do
   [ $# -ge 2 ] || { echo "missing value for $1" >&2; exit 2; }
@@ -19,7 +31,7 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$BRANCH" ] && [ -n "$TITLE" ] || {
   echo '{"status":"error","failure_class":"malformed_input","message":"--branch and --title required"}'; exit 2; }
-[ -n "$BASE" ] || BASE=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || echo main)
+[ -n "$BASE" ] || BASE=$("$GH" repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || echo main)
 [[ "$BASE" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || {
   echo '{"status":"error","failure_class":"malformed_input","message":"unsafe --base ref"}'; exit 2; }
 if [ -n "$ISSUE" ]; then
@@ -79,7 +91,7 @@ print(json.dumps({"status":"error","failure_class":"gate_blocked","violations":v
   exit 2
 fi
 
-URL=$(gh pr create --head "$BRANCH" --base "$BASE" --title "$TITLE" --body "$BODY" 2>&1) || {
+URL=$("$GH" pr create --head "$BRANCH" --base "$BASE" --title "$TITLE" --body "$BODY" 2>&1) || {
   python3 -c 'import json,sys;print(json.dumps({"status":"error","failure_class":"upstream_error","message":sys.argv[1]}))' "$URL"
   exit 1
 }

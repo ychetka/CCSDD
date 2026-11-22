@@ -187,7 +187,7 @@ if [ "$CMD" = "append" ]; then
       version_not_bumped|version_source_missing|version_drift|conflict|\
       contract_gap|contract_ambiguity|unverifiable|scope_conflict|\
       quota_limited|incomplete_read|not_found|manual_gate|\
-      epic_incomplete|missing_issue_field|issue_mismatch|stale_input|\
+      epic_incomplete|missing_issue_field|issue_mismatch|stale_input|plan_drift|\
       verify_escalated|verify_failed|release_failed|\
       baseline_unresolvable|env_setup_failed|unknown) ;; *) FC=unknown;; esac
   fi

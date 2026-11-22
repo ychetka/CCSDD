@@ -569,21 +569,58 @@ def existed_at_base(rel, anchor):
     # duplicate-suffixed anchor must resolve at base too.
     return anchor.lower() in collect_anchors(strip_fenced(r.stdout))
 
+def norm_target(t):
+    file_part, _, anchor = t.partition("#")
+    return os.path.normpath(file_part), anchor
+
+def spec_impact_lines(body):
+    m = re.search(r"(?im)^#+\s*spec impact\s*$", body)
+    if not m:
+        return []
+    sec = body[m.end():]
+    nxt = re.search(r"(?m)^#", sec)
+    if nxt:
+        sec = sec[:nxt.start()]
+    return re.findall(
+        r"(?im)^\s*(?:-\s*)?(adds|modifies|removes)\s*:\s*(.+)$", sec)
+
+# Anchors a PR introduces itself: every `adds:` target declared by
+# any fragment of the delta. An epic merges task by task - task 1
+# `adds: spec.md#req-1`, task 2 `modifies:`/`removes:` it before the
+# epic reaches main. `existed_at_base` alone would block that valid
+# sequence; a delta-introduced target counts as existing for
+# modifies/removes checks (net effect vs base: adds / nothing).
+introduced = []          # list of (norm_file, anchor_or_None)
+for rel in frags:
+    path = os.path.join(top, rel)
+    if not os.path.isfile(path):
+        continue
+    body = open(path, encoding="utf-8", errors="replace").read()
+    for kind, targets in spec_impact_lines(body):
+        if kind != "adds":
+            continue
+        for t in re.split(r"[,\s]+", targets.strip()):
+            t = t.strip().strip("`")
+            if not t or t.lower() in ("none", "-", "n/a"):
+                continue
+            fp, anch = norm_target(t)
+            introduced.append((fp, anch or None))
+
+def introduced_in_delta(norm_fp, anchor):
+    for fp, anch in introduced:
+        if fp == norm_fp and (anch is None or anch == anchor):
+            return True
+    return False
+
 for rel in frags:
     path = os.path.join(top, rel)
     if not os.path.isfile(path):
         continue
     body = open(path, encoding="utf-8", errors="replace").read()
     name = os.path.basename(path)
-    m = re.search(r"(?im)^#+\s*spec impact\s*$", body)
-    if not m:
+    lines = spec_impact_lines(body)
+    if not lines:
         continue
-    sec = body[m.end():]
-    nxt = re.search(r"(?m)^#", sec)
-    if nxt:
-        sec = sec[:nxt.start()]
-    lines = re.findall(
-        r"(?im)^\s*(?:-\s*)?(adds|modifies|removes)\s*:\s*(.+)$", sec)
     for kind, targets in lines:
         for t in re.split(r"[,\s]+", targets.strip()):
             t = t.strip().strip("`")
@@ -610,16 +647,20 @@ for rel in frags:
                 elif not anchor_resolves(p, anchor):
                     bad.append(f"{name}: {kind} anchor '#{anchor}' "
                                f"does not resolve in {file_part}")
-                elif kind == "modifies" and not existed_at_base(norm_fp, anchor):
+                elif kind == "modifies" and not existed_at_base(norm_fp, anchor) \
+                        and not introduced_in_delta(norm_fp, anchor):
                     bad.append(f"{name}: modifies anchor '#{anchor}' "
-                               f"never existed at base in {norm_fp}")
+                               f"never existed at base and is not "
+                               f"delta-introduced in {norm_fp}")
             if kind == "removes":
                 still = (anchor_resolves(p, anchor) if anchor
                          else os.path.exists(p))
                 if still:
                     bad.append(f"{name}: removes target still present: {t}")
-                elif not existed_at_base(norm_fp, anchor):
-                    bad.append(f"{name}: removes target never existed at base: {t}")
+                elif not existed_at_base(norm_fp, anchor) \
+                        and not introduced_in_delta(norm_fp, anchor):
+                    bad.append(f"{name}: removes target never existed at base "
+                               f"and is not delta-introduced: {t}")
 for b in bad:
     print(b)
 sys.exit(1 if bad else 0)

@@ -1,0 +1,39 @@
+# Canonical CCSDD release workflow - deployed into the target repo
+# by canon/bin/setup_repo.sh.
+#
+# Release-on-Merge serialization: every merged release/v* PR
+# finalizes the tag+release HERE, serialized by the concurrency
+# group - two merges can never race the version/tag order.
+name: release
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: tag and release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.pull_request.head.ref }}"
+          TAG="${TAG#release/}"
+          echo "finalizing release $TAG"
+          git config user.name "ccsdd-release[bot]"
+          git config user.email "ccsdd-release[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "release $TAG"
+          git push origin "$TAG"
+          gh release create "$TAG" --generate-notes

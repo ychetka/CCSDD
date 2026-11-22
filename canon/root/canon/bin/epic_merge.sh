@@ -44,11 +44,12 @@ esac
 GH=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os,re
 try:
     pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
-    gb = ((pj.get("review") or {}).get("gh_bin")) or "gh"
+    gb = ((pj.get("merge") or {}).get("gh_bin")) \
+         or ((pj.get("review") or {}).get("gh_bin")) or "gh"
     print(gb if isinstance(gb, str) and re.fullmatch(r"[A-Za-z0-9_-]+", gb) else "")
 except Exception:
     print("gh")' 2>/dev/null)
-[ -n "$GH" ] || json_error malformed_input "review.gh_bin in project.json is not a bare binary basename"
+[ -n "$GH" ] || json_error malformed_input "merge.gh_bin in project.json is not a bare binary basename"
 command -v "$GH" >/dev/null 2>&1 || json_error upstream_error "github cli '$GH' not found on PATH"
 
 INFO_ERR=$(mktemp)
@@ -110,6 +111,15 @@ PY
 TASKS_ERR=$(TASKS="$TASKS" python3 -c 'import json,os;print(json.loads(os.environ["TASKS"]).get("error") or "")')
 if [ -n "$TASKS_ERR" ]; then
   json_blocked epic_incomplete "$TASKS_ERR"
+fi
+
+# Frozen-plan integrity: every roadmap item carrying a recorded
+# frozen_hash must still hash to it (canonicalization: mutable
+# fields status/pr/issue/frozen_hash are stripped before sha256 -
+# see bin/roadmap_hash.sh). Drift = the plan was edited after
+# freeze; the epic must not merge on a mutated contract.
+if ! "$CANON_DIR/bin/roadmap_hash.sh" --verify; then
+  json_blocked plan_drift "canon/roadmap.md frozen_hash mismatch - the frozen plan was edited; re-freeze through the arch committee"
 fi
 
 # Objective evidence per task: fragment with `issue: M` in the

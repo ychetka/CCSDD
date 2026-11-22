@@ -141,8 +141,22 @@ class PartnerMCPServer:
 PY
 
 PC="$WS/canon/bin/partner_call.sh"
-PJ="$WS/canon/partner_journal"
-CNTR="$WS/canon/gateway_counters.json"
+GDB="$WS/canon/gateway.db"
+gwdb() { python3 - "$GDB" "$1" <<'PYEOF'
+import sqlite3, sys
+con = sqlite3.connect(sys.argv[1], timeout=10)
+con.execute("PRAGMA journal_mode=WAL")
+con.execute("CREATE TABLE IF NOT EXISTS counters(key TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0)")
+con.execute("CREATE TABLE IF NOT EXISTS journal(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, partner TEXT, tool TEXT, call_class TEXT, round INTEGER, audit_key TEXT, request TEXT, response TEXT)")
+q = sys.argv[2]
+if q.lstrip().upper().startswith("SELECT"):
+    for row in con.execute(q):
+        print(" ".join(str(c) for c in row))
+else:
+    con.execute(q)
+con.commit()
+PYEOF
+}
 export PARTNER_IMPL_DIR="$IMPL"
 
 PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool t \
@@ -152,19 +166,20 @@ expect G1-secret-refused 3 $? "REFUSED"
 
 # Policy default audit_max_per_key=20. Seed counter at the limit, then
 # try to raise it via env: must still refuse at 20.
-echo '{"audit:k":20}' > "$CNTR"
+rm -f "$GDB" "$GDB-wal" "$GDB-shm"
+gwdb "INSERT INTO counters VALUES('audit:k',20)"
 GATEWAY_AUDIT_MAX=9999 PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool t \
   --audit-key k --class audit --args '{}' >"$SCRATCH/out" 2>&1
 expect G2-env-cannot-raise 4 $? "iteration limit"
 
 # Tightening is allowed: seed below policy but at env limit.
-echo '{"audit:k":5}' > "$CNTR"
+gwdb "INSERT INTO counters VALUES('audit:k',5) ON CONFLICT(key) DO UPDATE SET value=5"
 GATEWAY_AUDIT_MAX=5 PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool t \
   --audit-key k --class audit --args '{}' >"$SCRATCH/out" 2>&1
 expect G3-env-tightens 4 $? "iteration limit"
 
 # Consult daily limit via env tighten: one call passes, next refused.
-rm -f "$CNTR"
+rm -f "$GDB" "$GDB-wal" "$GDB-shm"
 GATEWAY_CONSULT_DAILY_MAX=1 PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool t \
   --args '{}' >"$SCRATCH/out" 2>&1
 expect G4a-first-consult-ok 0 $?
@@ -173,14 +188,14 @@ GATEWAY_CONSULT_DAILY_MAX=1 PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool
 expect G4b-second-refused 4 $? "quota_limited"
 
 # Concurrency: 10 parallel audit calls under the policy limit must all
-# be counted exactly (flock on the counter file).
-rm -f "$CNTR"
+# be counted exactly (one atomic transaction per increment).
+rm -f "$GDB" "$GDB-wal" "$GDB-shm"
 for i in $(seq 1 10); do
   PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool t \
     --audit-key conc --class audit --args '{}' >/dev/null 2>&1 &
 done
 wait
-N=$(python3 -c 'import json;print(json.load(open("'$CNTR'"))["audit:conc"])')
+N=$(gwdb "SELECT value FROM counters WHERE key='audit:conc'")
 [ "$N" = "10" ] && { echo "PASS G5-flock-counted"; pass=$((pass+1)); } \
   || { echo "FAIL G5-flock-counted: counter=$N, expected 10"; fail=$((fail+1)); }
 
@@ -203,11 +218,11 @@ d["gateway"]["call_timeout_seconds"] = 300
 json.dump(d, open(p, "w"), indent=1)
 PY
 
-# Journal: a successful call must leave a journal entry.
-BEFORE=$(ls "$PJ" 2>/dev/null | wc -l)
+# Journal: a successful call must leave an append-only journal row.
+BEFORE=$(gwdb "SELECT count(*) FROM journal")
 PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool t \
   --audit-key j --class audit --args '{}' >"$SCRATCH/out" 2>&1
-AFTER=$(ls "$PJ" 2>/dev/null | wc -l)
+AFTER=$(gwdb "SELECT count(*) FROM journal")
 [ "$AFTER" -gt "$BEFORE" ] && { echo "PASS G7-journaled"; pass=$((pass+1)); } \
   || { echo "FAIL G7-journaled"; fail=$((fail+1)); }
 
@@ -712,21 +727,22 @@ printf '{"headRefOid":"%s","headRefName":"epic_issue_15-mix","baseRefName":"main
 expect M11g-epic-open-task 1 $? "not CLOSED"
 
 # ---------- G8/G9: counter integrity + audit-key derivation --------
-echo 'not json' > "$CNTR"
+# corrupt legacy counters file: one-shot migration must fail closed
+echo 'not json' > "$WS/canon/gateway_counters.json"
 PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool t \
   --audit-key k --class audit --args '{}' >"$SCRATCH/out" 2>&1
 expect G8-corrupt-counters 4 $? "unreadable"
 
-rm -f "$CNTR"
+rm -f "$GDB" "$GDB-wal" "$GDB-shm" "$WS/canon/gateway_counters.json"*
 PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool t \
   --class audit --args '{"a":1}' >/dev/null 2>&1
 PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool t \
   --class audit --args '{"a":1}' >/dev/null 2>&1
 PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool t \
   --class audit --args '{"b":2}' >/dev/null 2>&1
-python3 - "$CNTR" <<'PY'
-import json, sys
-c = json.load(open(sys.argv[1]))
+python3 - "$GDB" <<'PY'
+import sqlite3, sys
+c = dict(sqlite3.connect(sys.argv[1]).execute("SELECT key, value FROM counters"))
 auto = {k: v for k, v in c.items() if k.startswith("audit:auto:")}
 day = [v for k, v in c.items() if k.startswith("audit_day:")]
 assert len(auto) == 2, f"expected 2 distinct auto keys, got {auto}"
@@ -739,16 +755,18 @@ PY
 
 # Global daily cap: seed the day counter at the policy ceiling ->
 # refused even with a fresh audit key.
-python3 - "$CNTR" <<'PY'
-import datetime, json, sys
-c = json.load(open(sys.argv[1]))
-c[f"audit_day:{datetime.date.today().isoformat()}"] = 100
-json.dump(c, open(sys.argv[1], "w"))
+python3 - "$GDB" <<'PY'
+import datetime, sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+con.execute("INSERT INTO counters VALUES(?,100) "
+            "ON CONFLICT(key) DO UPDATE SET value=100",
+            (f"audit_day:{datetime.date.today().isoformat()}",))
+con.commit()
 PY
 PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool t \
   --class audit --args '{"fresh":true}' >"$SCRATCH/out" 2>&1
 expect G10-daily-cap 4 $? "quota_limited"
-rm -f "$CNTR"
+rm -f "$GDB" "$GDB-wal" "$GDB-shm"
 
 # ---------- CP: canon_pub sweep guard + schema ---------------------
 # A foreign non-empty --canon-root must be refused BEFORE the stale

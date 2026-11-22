@@ -110,12 +110,15 @@ may extend them.
   agent task with a list of items, not N separate calls.
 - A subagent that crashed or returned a rate limit with a reset
   time is not restarted immediately and does not wait inside its
-  own turn: the task is parked via `bridge quota-park --reset-at`
-  with agent_id and a resume point in --checkpoint; after the
-  daemon's probe — `run_subagent resume=<agent_id>` (same
-  transcript); repeated quota — re-park on the new reset_at;
-  if resume is impossible — a fresh agent from the checkpoint
-  (harness.md 9.3a).
+  own turn: managed mode parks the task via
+  `bridge quota-park --reset-at` with agent_id and a resume point
+  in --checkpoint; after the daemon's probe —
+  `run_subagent resume=<agent_id>` (same transcript); repeated
+  quota — re-park on the new reset_at; if resume is impossible —
+  a fresh agent from the checkpoint (harness.md 9.3a). Without a
+  bridge (standalone) the park record goes to
+  `canon/quota_park.json` and the turn ends with a `reset_at`
+  report to the human — no timers or sleeps.
 
 ## Communication with the orchestrator (managed mode)
 

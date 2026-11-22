@@ -208,9 +208,18 @@ retelling it:
   was not introduced by these edits. Red caused by the edits and
   recorded as "pre-existing" — [CRITICAL].
 * **Native checks**: with doubtful or missing `GATES` evidence,
-  re-run the safe native checks (lint, typecheck, tests per the
-  project manifests) locally on the exact PR head — commands and
-  exit codes quoted by the authors are not evidence by themselves.
+  rely on the isolated CI run (GitHub Actions check results on the
+  exact PR head) — commands and exit codes quoted by the authors
+  are not evidence by themselves. NEVER execute code from the PR
+  branch in your own environment: `pytest`/`npm test`/`Makefile`
+  run the author's arbitrary code (`conftest.py`, lifecycle
+  scripts) inside your shell, where the reviewer credential lives
+  — a stolen token publishes a forged APPROVE. If CI evidence is
+  absent or suspicious, mark the finding and stop — do not rerun
+  code, do not check out the branch into a shell that holds
+  `REVIEWER_GH`; a rerun may only be delegated to an isolated
+  runner with no GitHub credentials and no network beyond the
+  package registry.
 * **AC_MAPPING**: every item criterion must have a real test in
   the diff that checks it. A mapping to a nonexistent/inapplicable
   test — [WARNING] or higher.
