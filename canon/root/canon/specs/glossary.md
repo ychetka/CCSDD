@@ -135,6 +135,18 @@ the partner is stateless and does not know our definitions.
 - **Frozen contract** — the item's acceptance criteria fixed by
   hash BEFORE the executor starts; change — only through
   invalidation and escalation.
+- **Epic** — a roadmap item (`type: epic`, `issue: <N>`,
+  `tasks: [M,...]`) decomposed into task items before
+  implementation. The epic lives on its `epic_issue_<N>-<slug>`
+  branch; each task is a full item on `issue_<M>-<slug>` merging
+  into the epic branch (reviewer + checks, no human gate, no
+  release — the task's issue is closed on landing); the
+  epic → default-branch merge is gated by `epic_merge.sh`
+  (completeness: every declared task shipped + closed) and IS the
+  release boundary.
+- **Branch convention** — `issue_<N>-<slug>` (task/item),
+  `epic_issue_<N>-<slug>` (epic), `release/v<X.Y.Z>` (RoM release
+  branch); a version is never carried in a branch name.
 - **Mandatory interrogation** — the exec-committee artifact before
   code starts: a structured record of assumptions and ambiguities;
   ambiguities climb the escalation ladder.

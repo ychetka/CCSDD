@@ -49,6 +49,15 @@ for tok in $ISSUE_NUMS; do
   esac
   [ "$tok" = "0" ] && { echo "FAIL: ISSUE_NUMS token '0' is not a valid issue number"; exit 1; }
 done
+# FRAG_ISSUES: same charset contract - fragment-only allowed set.
+FRAG_ISSUES=$(printf '%s' "${FRAG_ISSUES:-}" | tr ',' ' ')
+for tok in $FRAG_ISSUES; do
+  [ -z "$tok" ] && continue
+  case "$tok" in
+    *[!0-9]*|'') echo "FAIL: FRAG_ISSUES token '$tok' is not a positive integer"; exit 1 ;;
+  esac
+  [ "$tok" = "0" ] && { echo "FAIL: FRAG_ISSUES token '0' is not a valid issue number"; exit 1; }
+done
 # VERIFY_BRANCH: ref-name charset only - it becomes git input below.
 VERIFY_BRANCH="${VERIFY_BRANCH:-}"
 if [ -n "$VERIFY_BRANCH" ]; then
@@ -95,6 +104,10 @@ fi
 # several items may close several issues: extra numbers come from
 # env ISSUE_NUMS (space/comma separated) - every one must exist and
 # be linked in the PR body, the branch-name issue included.
+# env FRAG_ISSUES (same format) - extra numbers allowed in the
+# .changes fragment's 'issue:' field only (e.g. an epic PR carries
+# task fragments named after the task issues); no existence or
+# Closes-link requirement is attached to FRAG_ISSUES entries.
 ISSUE_LIST=""
 if [ -n "$ISSUE_N" ]; then
   # Branch zero-pads the number (issue_044) but GitHub numbers have no
@@ -105,6 +118,12 @@ for extra in ${ISSUE_NUMS:-}; do
   [ -z "$extra" ] && continue
   extra=$((10#$extra))   # normalize leading zeros for dedupe
   case " $ISSUE_LIST " in *" $extra "*) ;; *) ISSUE_LIST="$ISSUE_LIST $extra";; esac
+done
+FRAG_LIST=""
+for extra in ${FRAG_ISSUES:-}; do
+  [ -z "$extra" ] && continue
+  extra=$((10#$extra))
+  case " $FRAG_LIST " in *" $extra "*) ;; *) FRAG_LIST="$FRAG_LIST $extra";; esac
 done
 # Fetch PR metadata whenever an explicit VERIFY_PR or any issue is
 # in play: VERIFY_BRANCH is bound to the PR's real headRefName so a
@@ -404,7 +423,7 @@ if compgen -G "$TOP/.changes/*.md" >/dev/null 2>&1; then
   #     owns anchor resolution, or an adapter-only repo can merge
   #     fragments missing required metadata. Fields are read from the
   #     leading frontmatter zone only.
-  FIELD_BAD=$(TOP="$TOP" PENDING_FRAGS="$PENDING_FRAGS" ISSUE_LIST="$ISSUE_LIST" python3 - <<'PY'
+  FIELD_BAD=$(TOP="$TOP" PENDING_FRAGS="$PENDING_FRAGS" ISSUE_LIST="$ISSUE_LIST $FRAG_LIST" python3 - <<'PY'
 import os, re
 top = os.environ["TOP"]
 frags = [l.strip() for l in os.environ.get("PENDING_FRAGS","").splitlines() if l.strip()]

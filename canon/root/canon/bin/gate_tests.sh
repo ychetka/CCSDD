@@ -590,6 +590,27 @@ EOF
 "$DS" --contract "$SCRATCH/contract_full.md" --spec "$SCRATCH/spec_nodec.md" >"$SCRATCH/out" 2>&1
 expect T49f-undecided-axis 1 $? "control_placement"
 
+# --- T50: branch-name gate accepts epic_issue_, rejects malformed --
+VC="$CANON_DIR/bin/verify_constraints.sh"
+(cd "$SCRATCH/repo" && VERIFY_BRANCH=epic_issue_x-bad \
+   bash "$VC") >"$SCRATCH/out" 2>&1
+expect T50a-malformed-epic-letter 1 $? "branch 'epic_issue_x-bad' !="
+(cd "$SCRATCH/repo" && VERIFY_BRANCH=epicissue_9-x \
+   bash "$VC") >"$SCRATCH/out" 2>&1
+expect T50b-malformed-epic-nosep 1 $? "branch 'epicissue_9-x' !="
+(cd "$SCRATCH/repo" && VERIFY_BRANCH=epic_9-x \
+   bash "$VC") >"$SCRATCH/out" 2>&1
+expect T50c-malformed-epic-noissue 1 $? "branch 'epic_9-x' !="
+# positive: a well-formed epic branch must PASS the branch check
+# (later gates may still fail without gh/remotes - the branch line
+# is what we assert).
+(cd "$SCRATCH/repo" && VERIFY_BRANCH=epic_issue_9-feature \
+   bash "$VC") >"$SCRATCH/out" 2>&1
+expect T50d-epic-branch-ok 1 $? "PASS: branch epic_issue_9-feature"
+(cd "$SCRATCH/repo" && VERIFY_BRANCH=epic_issue_9- \
+   bash "$VC") >"$SCRATCH/out" 2>&1
+expect T50e-malformed-epic-noslug 1 $? "branch 'epic_issue_9-' !="
+
 echo "---"
 echo "gate_tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

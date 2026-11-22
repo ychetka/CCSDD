@@ -295,7 +295,21 @@ PY
       create) printf '%s\n' "$*" >> "$S/release_calls"; RAW='"created"' ;;
       *) RAW='[]' ;;
     esac ;;
-  issue) RAW='{"number":1,"state":"open"}' ;;
+  issue)
+    case "${2:-}" in
+      view)
+        # per-number state map: $S/issues.json {"<num>":{"state":"..."}};
+        # unknown numbers default to OPEN (existence never fails).
+        RAW=$(python3 -c 'import json,os,sys
+n = sys.argv[2]
+st = {}
+p = os.path.join(sys.argv[1], "issues.json")
+if os.path.exists(p):
+    st = json.load(open(p))
+d = st.get(str(n)) or st.get(int(n)) or {}
+print(json.dumps({"number": int(n), "state": d.get("state", "open")}))' "$S" "${3:-0}") ;;
+      *) RAW='{"number":1,"state":"open"}' ;;
+    esac ;;
   *) echo "fakegh: unhandled $*" >&2; exit 1 ;;
 esac
 if [ -n "$JQ" ]; then
@@ -592,6 +606,9 @@ expect M10b-missing-issue 1 $? "missing_issue_field"
 # A merge into a NON-default base (task branch into the epic branch)
 # is integration work: it merges, but Release-on-Merge does not run -
 # no bump, no tag.
+# canon/roadmap.md is a deployed working doc (canon/ is gitignored
+# in the workspace) - the completeness gate reads the live copy.
+printf '## Item: feature\n- id: feature\n- type: epic\n- issue: 9\n- tasks: [10]\n\n## Item: pay\n- id: pay\n- type: epic\n- issue: 12\n- tasks: [13, 14]\n\n## Item: mix\n- id: mix\n- type: epic\n- issue: 15\n- tasks: [16]\n' > "$WS/canon/roadmap.md"
 (cd "$WS" && git checkout -q -b epic_issue_9-feature main \
   && git push -q origin epic_issue_9-feature \
   && git checkout -q -b issue_10-auth epic_issue_9-feature \
@@ -621,8 +638,8 @@ grep -q 'non_default_base' "$SCRATCH/out" \
 # M11d: the epic branch itself (epic_issue_9-feature) merges into
 # the default branch and RELEASES - carrying the task fragment
 # (issue: 10) which is legal because the epic PR body references
-# both #9 and #10: the epic merge is the moment the task's work
-# ships, so the epic PR legitimately closes the task issue as well.
+# both #9 and #10 - the task issue enters the fragments' allowed
+# set via FRAG_ISSUES ("includes #10" is a mention, not a close).
 # The epic is first rebased onto the advanced
 # origin/main - the version_drift gate blocks a stale epic head
 # (base moved to 1.2.3 via M9's release while the epic carries
@@ -632,7 +649,11 @@ grep -q 'non_default_base' "$SCRATCH/out" \
   && git rebase -q origin/main \
   && git push -q --force-with-lease origin epic_issue_9-feature)
 EPICSHA=$(cd "$WS" && git rev-parse epic_issue_9-feature)
-printf '{"headRefOid":"%s","headRefName":"epic_issue_9-feature","baseRefName":"main","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"closes #9\\ncloses #10","reviewRequests":[]}' "$EPICSHA" > "$GHSTATE/pr_view.json"
+# Convention: the task issue is CLOSED by the repository agent once
+# the task lands on the epic branch - the epic completeness gate
+# requires CLOSED state for every declared task.
+printf '{"10":{"state":"CLOSED"}}' > "$GHSTATE/issues.json"
+printf '{"headRefOid":"%s","headRefName":"epic_issue_9-feature","baseRefName":"main","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"closes #9\\nincludes #10","reviewRequests":[]}' "$EPICSHA" > "$GHSTATE/pr_view.json"
 python3 - "$GHSTATE/reviews.json" "$EPICSHA" <<'PY'
 import json, sys
 json.dump([{"user": {"login": "alice"}, "id": 12, "state": "APPROVED",
@@ -643,6 +664,52 @@ PY
        canon/bin/repo_merge.sh 9 "$EPICSHA" squash) >"$SCRATCH/out" 2>&1
 rc=$?; [ $rc -ne 0 ] && cat "$SCRATCH/out" >&2
 expect M11d-epic-releases 0 $rc '"status": "merged"'
+
+# M11e: a body that REFERENCES an issue without closing it must not
+# require a 'Closes #N' link for the mention - FRAG_ISSUES feeds the
+# fragment allowed set only, ISSUE_NUMS keeps the close contract.
+(cd "$WS" && git fetch -q origin \
+  && git checkout -q -b issue_46-mention origin/main \
+  && mkdir -p .changes \
+  && printf 'bump: patch\nuser_visible: true\nissue: 46\n\ny\n\n## Spec impact\n- none\n' > .changes/y.md \
+  && git add -A && git commit -qm "y" \
+  && git push -q origin issue_46-mention)
+MENTSHA=$(cd "$WS" && git rev-parse issue_46-mention)
+printf '{"headRefOid":"%s","headRefName":"issue_46-mention","baseRefName":"main","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"closes #46\\nsee also discussion in #20","reviewRequests":[]}' "$MENTSHA" > "$GHSTATE/pr_view.json"
+python3 - "$GHSTATE/reviews.json" "$MENTSHA" <<'PY'
+import json, sys
+json.dump([{"user": {"login": "alice"}, "id": 13, "state": "APPROVED",
+            "commit_id": sys.argv[2], "submitted_at": "2026-01-01T00:00:00Z"}],
+          open(sys.argv[1], "w"))
+PY
+(cd "$WS" && env FAKEGH_REPO="$WS" FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
+       canon/bin/repo_merge.sh 46 "$MENTSHA" squash) >"$SCRATCH/out" 2>&1
+expect M11e-unclosed-mention-ok 0 $? '"status": "merged"'
+
+# M11f: epic completeness gate - a declared task that was never
+# shipped (no fragment on the epic branch) blocks the epic merge
+# with epic_incomplete before any merge mechanics run.
+(cd "$WS" && git fetch -q origin \
+  && git checkout -q -b epic_issue_12-pay origin/main \
+  && git push -q origin epic_issue_12-pay)
+PAYSHA=$(cd "$WS" && git rev-parse epic_issue_12-pay)
+printf '{"headRefOid":"%s","headRefName":"epic_issue_12-pay","baseRefName":"main","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"closes #12","reviewRequests":[]}' "$PAYSHA" > "$GHSTATE/pr_view.json"
+(cd "$WS" && env FAKEGH_REPO="$WS" FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
+       canon/bin/repo_merge.sh 12 "$PAYSHA" squash) >"$SCRATCH/out" 2>&1
+expect M11f-epic-incomplete 1 $? "epic_incomplete"
+# and a task that shipped but whose issue was never closed also
+# blocks: completeness is fragment AND tracker state.
+(cd "$WS" && git fetch -q origin \
+  && git checkout -q -b epic_issue_15-mix origin/main \
+  && mkdir -p .changes \
+  && printf 'bump: patch\nuser_visible: true\nissue: 16\n\nz\n\n## Spec impact\n- none\n' > .changes/z.md \
+  && git add -A && git commit -qm "epic + task fragment" \
+  && git push -q origin epic_issue_15-mix)
+MIXSHA=$(cd "$WS" && git rev-parse epic_issue_15-mix)
+printf '{"headRefOid":"%s","headRefName":"epic_issue_15-mix","baseRefName":"main","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"closes #15","reviewRequests":[]}' "$MIXSHA" > "$GHSTATE/pr_view.json"
+(cd "$WS" && env FAKEGH_REPO="$WS" FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
+       canon/bin/repo_merge.sh 15 "$MIXSHA" squash) >"$SCRATCH/out" 2>&1
+expect M11g-epic-open-task 1 $? "not CLOSED"
 
 # ---------- G8/G9: counter integrity + audit-key derivation --------
 echo 'not json' > "$CNTR"

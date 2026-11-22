@@ -65,6 +65,9 @@ branch_delete: IN {branch} -> OUT {branch, status}
   by the primary issue, and when running `verify_constraints.sh`
   export `ISSUE_NUMS` with all branch issues (space-separated) —
   each must exist and be linked in the PR body (`Closes #M`).
+- When a task PR merges into its epic branch, the task's issue is
+  CLOSED via `repo_issue_close.sh` — the epic completeness gate
+  counts only shipped+closed tasks.
 - A `.changes/<slug>.md` fragment on a PR must carry
   `manual_gate: true` when the roadmap item has `manual_gate` —
   copy the field as-is, do not strip it. `manual_gate` blocks the
@@ -83,7 +86,12 @@ branch_delete: IN {branch} -> OUT {branch, status}
   See the Release-on-Merge bullet below: the version on the branch
   is NOT bumped; the bump arrives from the `.changes` fragment and
   is written by the release commit on base.
-- Merge is allowed ONLY via repo_merge.sh. A merge found on main
+- Merge is allowed ONLY via repo_merge.sh — the dispatcher routes
+  epic_issue_<N>-<slug> heads to epic_merge.sh (epic completeness:
+  the roadmap item declaring `issue: N`/`type: epic`/`tasks: [...]`
+  must have every task shipped as a fragment AND closed in the
+  tracker) and all other heads to issue_merge.sh. A merge found
+  on main
   without a matching version tag (a human merge via the UI
   bypassing the agent path) = an incident: escalate instance ->
   orchestrator, release work stops until the drift is fixed. Do

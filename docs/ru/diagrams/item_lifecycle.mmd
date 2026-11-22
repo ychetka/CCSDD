@@ -32,7 +32,7 @@ flowchart LR
     INTG["интеграционный прогон"]
     RVW{"🔍 вердикт ревьюера<br/>только удалённое хранилище"}
     GIT["🔀 git-агент<br/>коммит кандидата (sha)"]
-    MG{"merge-гейт<br/>изолир. копия + expected_sha<br/>+ APPROVE ревьюеров + зелёные проверки<br/>+ фрагмент issue: ↔ PR"}
+    MG{"merge-гейт<br/>изолир. копия + expected_sha<br/>+ APPROVE ревьюеров + зелёные проверки<br/>+ фрагмент issue: ↔ PR<br/>+ epic: все задачи закрыты"}
     REL["релиз: merge в default<br/>версия из .changes + тег<br/>(manual_gate ждёт 👨‍💻 аппрува)"]
     INTG --> RVW -->|APPROVED| GIT --> MG --> REL
   end

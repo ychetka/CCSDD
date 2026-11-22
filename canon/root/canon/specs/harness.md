@@ -447,13 +447,30 @@ The version policy is fixed at roadmap approval, not at merge
   task is its own item with its own `issue_<M>-<slug>` branch and
   merges into the epic branch through the same objective
   `repo_merge.sh` gate — reviewer approvals + required checks, no
-  human gate. A merge into a NON-default base is integration, not
+  human gate. When a task lands on the epic branch the
+  repository-agent CLOSES its issue (`repo_issue_close.sh`) — a
+  task is done when its fragment is on the epic branch AND its
+  issue is closed. A merge into a NON-default base is integration,
+  not
   publication: `repo_merge.sh` merges it but skips Release-on-Merge
   (`release.status=skipped`, `reason=non_default_base`) — no version
   bump, no tag. Task fragments accumulate on the epic branch and are
   consumed by the epic's release. The epic's own merge into the
   default branch is the release boundary — and the point where a
   `manual_gate` item waits for the developer's approval.
+- **Merge-gate dispatch**: `repo_merge.sh` routes by the head
+  branch — `epic_issue_<N>-<slug>` heads go through
+  `epic_merge.sh` (which adds the EPIC COMPLETENESS GATE before
+  delegating), every other head through `issue_merge.sh` (the
+  common objective pipeline; calling it on an epic head directly
+  is blocked).
+- **Epic completeness gate** (`epic_merge.sh`): the epic's
+  `canon/roadmap.md` item — matched by `issue: <N>` — must declare
+  `type: epic` and `tasks: [<issue numbers>]`. Every declared task
+  must be shipped (a `.changes` fragment with `issue: M` in the
+  base...head diff) AND closed in the tracker. Missing roadmap
+  item/fields or pending tasks → `status=blocked`,
+  `failure_class=epic_incomplete`; an epic never merges partial.
 - **Release**: after a merge into the DEFAULT branch
   `repo_release.sh` computes
   `next = bump(max(latest v* tag, version source on base))` by the
@@ -608,9 +625,11 @@ The version policy is fixed at roadmap approval, not at merge
    includes the "blood signature": canonical
    `verify_constraints.sh` + `verify_worktree.sh` run on a detached
    worktree of the PR tree with `VERIFY_BRANCH`/`VERIFY_PR`/
-   `ISSUE_NUMS` (the PR number and all issues from the body —
-   otherwise on the detached head the `Closes #N` check is silently
-   skipped). There is NO separate
+   `ISSUE_NUMS` (the body's close/fix/resolve refs — each must
+   exist and be Closes-linked, otherwise on the detached head the
+   check is silently skipped) and `FRAG_ISSUES` (every `#N` in the
+   body — the allowed set for the fragments' `issue:` field, so an
+   epic PR can carry task fragments). There is NO separate
    human gate on release: under RoM the mechanical merge itself
    writes the release commit, tags `v<next>` and publishes the
    GitHub Release; a publication failure is returned as

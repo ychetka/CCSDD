@@ -277,6 +277,15 @@ interrogation → code+tests → judge rounds ≤3 → reviewer → GIT commit �
 HYG → merge gate (isolated copy + expected_sha + reviewer verdicts +
 green checks; manual_gate fragment → 👨‍💻) → release`
 
+A roadmap item MAY be an **epic** decomposed into task items: the
+epic lives on `epic_issue_<N>-<slug>`, each task runs the full item
+cycle on `issue_<M>-<slug>` and merges into the epic branch —
+reviewer bots + checks, no human gate, no version bump (the task's
+issue is closed on landing). The epic → default-branch merge is
+gated by `epic_merge` — every task declared in the roadmap must be
+shipped (fragment) and closed — consumes the accumulated task
+fragments and IS the release boundary.
+
 Escalation ladder: question → level committee → architecture committee
 → human (terminal). Bounded rework loops stop the cycle instead of
 thrashing.

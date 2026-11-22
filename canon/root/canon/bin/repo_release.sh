@@ -8,7 +8,8 @@
 #        [--base <branch>] [--dry-run]
 #
 # RoM model (ruling 2026-11-19, supersedes reserved-version):
-#   * branches do NOT carry a version bump (issue_<N>-<slug>);
+#   * branches do NOT carry a version bump (issue_<N>-<slug> /
+#     epic_issue_<N>-<slug>);
 #   * next = bump(max(latest v* tag merged into base, version source
 #     at base head));
 #   * bump comes from the pending fragments' `bump:` fields (max

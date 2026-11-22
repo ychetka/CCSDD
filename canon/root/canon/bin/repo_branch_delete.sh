@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# repo_branch_delete.sh - delete an issue_<N>-<slug> branch locally
+# repo_branch_delete.sh - delete an issue_<N>-<slug> /
+# epic_issue_<N>-<slug> branch locally
 # and on the github remote. Base branches and non-convention names
 # are refused unless --force is given (records the override reason).
 # Usage: repo_branch_delete.sh <branch> [--remote-only|--local-only] [--force]

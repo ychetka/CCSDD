@@ -9,7 +9,8 @@ lifecycle and field semantics.
 
 - id: <stable slug, referenced by depends_on and .changes fragments>
 - type: contract | test | infra | implementation | exploration |
-  docs | refactor
+  docs | refactor | epic        # epic = decomposed into task items
+                                # (epic_issue_<N>-<slug> branch)
 - status: draft | judged | signed_off | in_progress | done |
   blocked | escalated
 - depends_on: [<item slugs>]            # empty list if none
@@ -20,6 +21,15 @@ lifecycle and field semantics.
   # boundaries get mandatory review escalation (harness.md)
 - frozen_hash: <sha256 of item text>    # filled at criteria freeze
 - pr: <PR number once assembled>        # optional
+- issue: <tracker issue number>         # epic items: REQUIRED —
+                                        # binds epic_issue_<N>-<slug>
+                                        # to this item in epic_merge
+- tasks: [<issue numbers>]              # epic items only: the task
+                                        # issues composing the epic;
+                                        # epic_merge gates that each
+                                        # is shipped (.changes
+                                        # fragment on the epic branch)
+                                        # and CLOSED in the tracker
 ```
 
 ### Acceptance criteria (G/W/T)
