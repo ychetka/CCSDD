@@ -80,8 +80,8 @@ for rel in frags:
     body = open(path, encoding="utf-8", errors="replace").read()
     name = os.path.basename(path)
     flds = front_fields(body)
-    if flds.get("bump") not in ("patch","minor","major","none"):
-        bad.append(f"{name}: missing/invalid 'bump: patch|minor|major|none'")
+    if flds.get("bump") not in ("patch","minor","major"):
+        bad.append(f"{name}: missing/invalid 'bump: patch|minor|major'")
     if flds.get("user_visible") not in ("true","false"):
         bad.append(f"{name}: missing 'user_visible: true|false'")
     iss = flds.get("issue","")

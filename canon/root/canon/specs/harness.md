@@ -458,15 +458,12 @@ The version policy is fixed at roadmap approval, not at merge
   `epic_issue_<N>-<slug>` for an epic branch (no version in the
   name); a
   mandatory `.changes/<slug>.md` fragment with fields
-  `bump: patch|minor|major|none`, `user_visible:`, `issue:` — on the
-  branch BEFORE the PR merge. `bump: none` is the merge-without-
-  release contract (internal tasks, contract drafts, refactors with
-  no user-visible delta): the merge lands, no version/tag/release
-  is cut, and the skip is journaled to `canon/cycle_log.jsonl` +
-  `canon/release_history.jsonl` (`merge_no_release` event) so a
-  forgotten `none` is a visible audit event. A `none` fragment
-  stays pending in `.changes/` and is folded by the next real
-  release's consumption. The fragment's `issue:` is verified
+  `bump: patch|minor|major`, `user_visible:`, `issue:` — on the
+  branch BEFORE the PR merge. Every merge to the base branch
+  releases (developer ruling 2026-11-17); drafts, experiments, and
+  exploration that must not ship live on their own branches
+  outside the merge path — there is no merge-without-release
+  value. The fragment's `issue:` is verified
   mechanically: it must name an issue the PR is about — the
   `issue_<N>`/`epic_issue_<N>` of the head branch or any `#N`
   referenced by the PR body (an epic PR legitimately carries task

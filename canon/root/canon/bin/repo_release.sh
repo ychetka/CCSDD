@@ -241,20 +241,7 @@ if [ -z "$BUMP" ] && [ -z "$FRAGS" ]; then
   exit 0
 fi
 if [ -z "$BUMP" ]; then
-  # Distinguish "all bump:none" from "typo'd bump": the former is a
-  # contract (merge without release), the latter must fail loudly.
-  ALL_NONE=$(FRAG_META="$FRAG_META" python3 - <<'PY'
-import json, os
-meta = json.loads(os.environ["FRAG_META"])
-vals = [ (f.get("bump") or "") for f in meta.values() ]
-print("yes" if vals and all(v == "none" for v in vals) else "no")
-PY
-)
-  if [ "$ALL_NONE" = "yes" ]; then
-    echo '{"status":"nothing_releasable","message":"pending fragments all declare bump:none - merge without release by contract"}'
-    exit 0
-  fi
-  json_error malformed_input "pending fragments carry no valid bump: field (patch|minor|major|none) and no --bump override given"
+  json_error malformed_input "pending fragments carry no valid bump: field (patch|minor|major) and no --bump override given"
 fi
 
 NEXT=$(BASE_VER="$BASE_VER" BUMP="$BUMP" python3 - <<'PY'

@@ -404,7 +404,7 @@ if [ -n "$ISSUE_N" ] && [ -n "$BASE" ]; then
     [ -n "$EXEMPT" ] \
       && pass "no .changes fragment - exempt via $EXEMPT" \
       || fail "no .changes fragment on branch" \
-              "add .changes/<slug>.md with bump:/user_visible:/issue: (bump: none for a merge without release), or use the documented no-changes-entry PR label path"
+              "add .changes/<slug>.md with bump:/user_visible:/issue: (bump: patch|minor|major), or use the documented no-changes-entry PR label path"
   fi
 fi
 

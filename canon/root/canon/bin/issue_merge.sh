@@ -425,7 +425,6 @@ def front_fields(body):
 
 SEV = {"patch":0,"minor":1,"major":2}
 bumps, bad, manual_gate, ci_bootstrap = [], [], False, False
-none_bumps = 0
 iss_missing, iss_bad, frag_issues = [], [], {}
 for f in frags:
     body = subprocess.run(["git","-C",top,"show",head+":"+f],
@@ -434,8 +433,6 @@ for f in frags:
     b = flds.get("bump","")
     if b in SEV:
         bumps.append(b)
-    elif b == "none":
-        none_bumps += 1   # merge without release - documented contract
     else:
         bad.append(f)
     iss = (flds.get("issue") or "").lstrip("#").strip()
@@ -461,12 +458,12 @@ allowed.update(re.findall(r"#(\d+)", d.get("body") or ""))
 if allowed:
     iss_bad = [f for f, i in frag_issues.items() if i not in allowed]
 
-flags = {"bumps": bumps, "none_bumps": none_bumps,
+flags = {"bumps": bumps,
          "manual_gate": manual_gate,
          "ci_bootstrap": ci_bootstrap}
 if bad:
     entry = {"status":"blocked","failure_class":"malformed_input",
-             "message":"changes fragment(s) lack a valid 'bump: patch|minor|major|none' field",
+             "message":"changes fragment(s) lack a valid 'bump: patch|minor|major' field",
              "fragments": bad}
 elif iss_missing:
     entry = {"status":"blocked","failure_class":"missing_issue_field",
@@ -511,7 +508,7 @@ frags = [f.strip() for f in names.stdout.splitlines()
          if f.strip().startswith(".changes/") and f.strip().endswith(".md")
          and not f.strip().endswith("/README.md")]
 manual_gate = ci_bootstrap = False
-bumps, none_bumps = [], 0
+bumps = []
 def _fields(body):
     fields = {}
     lines = body.splitlines()
@@ -535,9 +532,7 @@ for f in frags:
     ci_bootstrap = ci_bootstrap or fields.get("ci_bootstrap") == "true"
     if fields.get("bump") in ("patch","minor","major"):
         bumps.append(fields["bump"])
-    elif fields.get("bump") == "none":
-        none_bumps += 1
-print(json.dumps({"bumps": bumps, "none_bumps": none_bumps,
+print(json.dumps({"bumps": bumps,
                   "manual_gate": manual_gate,
                   "ci_bootstrap": ci_bootstrap}))
 PY
@@ -550,7 +545,6 @@ try:
     fs = json.loads(os.environ["FLAGS_SCAN"])
     old = entry.get("flags") or {}
     merged = {"bumps": sorted(set(old.get("bumps") or []) | set(fs.get("bumps") or [])),
-              "none_bumps": int(old.get("none_bumps") or 0) + int(fs.get("none_bumps") or 0),
               "manual_gate": bool(old.get("manual_gate")) or bool(fs.get("manual_gate")),
               "ci_bootstrap": bool(old.get("ci_bootstrap")) or bool(fs.get("ci_bootstrap"))}
     entry["flags"] = merged
@@ -924,29 +918,7 @@ REL_ARGS=()
 case "$ENTRY_VIA" in
   label|changelog) REL_ARGS=(--bump patch) ;;
 esac
-# bump:none contract: when the PR's fragments declare only 'none'
-# the merge is complete as-is - no version bump, no tag, no release.
-# The skip is written to the cycle log so a forgotten 'none' is a
-# visible audit event, not a silent omission.
-NONE_ONLY=$(printf '%s' "$ENTRY" | python3 -c 'import json,sys
-try:
-    e = json.load(sys.stdin)
-    f = e.get("flags") or {}
-    print("yes" if (f.get("none_bumps") or 0) > 0 and not (f.get("bumps") or []) else "no")
-except Exception: print("no")')
-if [ "$NONE_ONLY" = "yes" ]; then
-  RELEASE='{"status":"skipped","reason":"bump_none"}'
-  "$CANON_DIR/bin/cycle_log.sh" append --item "merge_${HEAD_BRANCH}" \
-    --actor "issue_merge" --action merge_no_release \
-    --expected "release per fragments" \
-    --result "skipped: all fragments declare bump:none" \
-    --status closed --verdict ok --failure-class "" >/dev/null 2>&1 || true
-  # release_history keeps a row too: 'no release' decisions are part
-  # of the release audit trail, not just the cycle journal.
-  printf '{"ts":"%s","event":"merge_no_release","reason":"bump_none","branch":"%s","head":"%s"}\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$HEAD_BRANCH" "$EXPECTED" \
-    >> "$CANON_DIR/release_history.jsonl" 2>/dev/null || true
-elif [ -n "$DEFAULT_BRANCH" ] && [ "$BASE" != "$DEFAULT_BRANCH" ]; then
+if [ -n "$DEFAULT_BRANCH" ] && [ "$BASE" != "$DEFAULT_BRANCH" ]; then
   RELEASE='{"status":"skipped","reason":"non_default_base","base":"'"$BASE"'"}'
 elif ! git fetch "$REMOTE" "+refs/heads/$BASE:refs/remotes/$REMOTE/$BASE" --tags >/dev/null 2>&1; then
   RELEASE='{"status":"error","failure_class":"upstream_error","reason":"fetch_failed"}'
