@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Review-panel aggregator. Reads the domain verdict signals (ccsdd/<domain>) on the PR head via panel_verdict.sh, synthesizes blockers and publishes the single formal PR review (APPROVE/REQUEST_CHANGES) on behalf of the reviewer account. Invoke once per review round, after all active domains reached a terminal signal.
-model: swe-2
+model: tier:heavy
 allowed-tools:
   - read
   - grep

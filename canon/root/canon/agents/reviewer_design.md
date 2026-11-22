@@ -1,7 +1,7 @@
 ---
 name: reviewer_design
 description: Review-panel domain `design` - systemic architecture, concurrency/tx invariants, compatibility and structural integrity of the integrated delta.
-model: swe-2
+model: tier:heavy
 allowed-tools:
   - read
   - grep

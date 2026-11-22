@@ -16,7 +16,7 @@ fails=0
 
 # --- 1. markdown relative links + anchors ---
 LINK_BAD=$(TOP="$TOP" python3 - <<'PY'
-import os, re
+import os, re, urllib.parse
 top = os.environ["TOP"]
 bad = []
 md_files = []
@@ -56,6 +56,10 @@ for p in md_files:
         if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", url) or url.startswith("//"):
             continue  # external scheme or protocol-relative - skip
         file_part, _, anch = url.partition("#")
+        # percent-decode both sides - non-ASCII anchors are commonly
+        # written URL-encoded in links but plain unicode in headers
+        file_part = urllib.parse.unquote(file_part)
+        anch = urllib.parse.unquote(anch)
         target = os.path.normpath(os.path.join(os.path.dirname(p), file_part)) if file_part else p
         if file_part and not os.path.exists(target):
             bad.append(f"{rel}: broken link -> {url}")
@@ -88,7 +92,12 @@ for name in ("README.md",):
             rel = os.path.relpath(p, top)
             if ".git/" in rel: continue
             for i, l in enumerate(open(p, encoding="utf-8", errors="replace"), 1):
-                m = re.search(r"canon[^0-9]{0,20}v?(\d+\.\d+\.\d+)", l, re.I)
+                # only lines that DECLARE the canon version count -
+                # prose mentioning an old release ("fixed in canon
+                # 1.1.0") is not a version declaration
+                if not re.search(r"canon[\s_-]*version|canon-v\d", l, re.I):
+                    continue
+                m = re.search(r"v?(\d+\.\d+\.\d+)", l)
                 if m and m.group(1) != want:
                     bad.append(f"{rel}:{i}: canon version {m.group(1)} != manifest {want}")
 for b in bad:

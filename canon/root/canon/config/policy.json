@@ -70,12 +70,9 @@
         "tools": [
           "read",
           "grep",
-          "glob",
-          "exec"
+          "glob"
         ],
-        "exec_extra": [
-          "canon/bin/git_ro.sh - read-only repo introspection only"
-        ]
+        "exec_extra": []
       },
       "designer": {
         "tools": [

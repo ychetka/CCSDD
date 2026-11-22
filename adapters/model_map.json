@@ -1,0 +1,19 @@
+{
+  "_comment": "Runtime-side mapping from the canonical model tiers used in canon/agents/*.md frontmatter (`model: tier:<name>`) to vendor model identifiers. The canon itself is vendor-neutral; each runtime adapter resolves tiers here when spawning agent instances.",
+  "tiers": {
+    "tier:heavy": {
+      "description": "Frontier reasoning model - planning, adjudication, review, writing",
+      "devin": "swe-2",
+      "claude": "claude-opus-4-5",
+      "codex": "gpt-5.2-codex",
+      "generic": "default"
+    },
+    "tier:medium": {
+      "description": "Cheaper/capable model - mechanical transforms, reading, repo chores",
+      "devin": "swe-2-medium",
+      "claude": "claude-sonnet-4-5",
+      "codex": "gpt-5.2-codex-mini",
+      "generic": "default"
+    }
+  }
+}

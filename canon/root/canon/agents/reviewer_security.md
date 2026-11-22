@@ -1,7 +1,7 @@
 ---
 name: reviewer_security
 description: Review-panel domain `security` - open-world threat modeling, privilege boundaries and harness/CI integrity of the integrated PR delta.
-model: swe-2
+model: tier:heavy
 allowed-tools:
   - read
   - grep

@@ -444,6 +444,31 @@ if [ -n "$ISSUE_N" ] && [ -n "$BASE" ]; then
   fi
 fi
 
+# 6c. G/W/T scenario coverage (harness §7): every [ITEM-N.GWT-M]
+#     scenario id committed in the branch's tracked artifacts
+#     (.changes fragments, docs/specs requirements) must appear
+#     verbatim in a committed test name. An uncovered id is a
+#     missing test.
+if [ -n "$ISSUE_N" ] && [ -n "$BASE" ]; then
+  GWT_IDS=$(git -c core.quotepath=false diff --name-only "$BASE"...HEAD 2>/dev/null \
+            | grep -E '^(\.changes/[^/]+\.md|docs/.*\.md)$' \
+            | while read -r f; do git show "HEAD:$f" 2>/dev/null; done \
+            | grep -oE 'ITEM-[0-9]+\.GWT-[0-9]+' | sort -u || true)
+  if [ -n "$GWT_IDS" ]; then
+    MISSING=""
+    for id in $GWT_IDS; do
+      git -C "$TOP" grep -lF "$id" HEAD -- '*test*' '*.spec.*' >/dev/null 2>&1 \
+        || MISSING="$MISSING $id"
+    done
+    [ -z "$MISSING" ] \
+      && pass "G/W/T scenario ids covered by committed tests" \
+      || fail "G/W/T scenario ids missing from tests:$MISSING" \
+              "add a test whose name carries each scenario id verbatim (harness §7)"
+  else
+    echo "SKIP: no G/W/T scenario ids in committed artifacts"
+  fi
+fi
+
 # 7. Spec impact anchors + fragment fields (issue #107): delegated
 #    to canon/bin/spec_anchor_check.sh - the same check powers the
 #    `specs` review-panel floor via gate_run.sh. Env inputs are

@@ -1,7 +1,7 @@
 ---
 name: reviewer_tester
 description: Review-panel domain `tester` - semantic test adequacy of the delta: behavior-to-test mapping, assertion strength, edge/negative paths, regression integrity.
-model: swe-2
+model: tier:heavy
 allowed-tools:
   - read
   - grep

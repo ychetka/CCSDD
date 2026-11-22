@@ -1,7 +1,7 @@
 ---
 name: reviewer_quality
 description: Review-panel domain `quality` - intra-unit correctness, resource lifecycle, error mechanics, observability and readability of the PR delta.
-model: swe-2
+model: tier:heavy
 allowed-tools:
   - read
   - grep

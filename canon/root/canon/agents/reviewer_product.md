@@ -1,7 +1,7 @@
 ---
 name: reviewer_product
 description: Review-panel domain `product` - end-to-end functional intent, cross-item UX coherence and user-visible completeness vs the issue's ask. Advisory (required: false) by default.
-model: swe-2
+model: tier:heavy
 allowed-tools:
   - read
   - grep

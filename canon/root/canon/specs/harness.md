@@ -520,6 +520,11 @@ The version policy is fixed at roadmap approval, not at merge
   base...head diff) AND closed in the tracker. Missing roadmap
   item/fields or pending tasks → `status=blocked`,
   `failure_class=epic_incomplete`; an epic never merges partial.
+  `tasks:` lists shippable task items ONLY — an `exploration` item
+  is wired to the epic through `depends_on`, never through
+  `tasks:` (explorations produce answers, not release fragments;
+  putting one in `tasks:` deadlocks the gate on a fragment that
+  can never exist).
 - **Release**: after a merge into the DEFAULT branch
   `repo_release.sh` computes
   `next = bump(max(latest v* tag, version source on base))` by the
@@ -1075,7 +1080,7 @@ attempts. Do not poke a `busy` or quota-blocked instance again.
 
 ## 10. What is excluded (cut deliberately)
 
-Mutation testing, CRAP/cognitive metrics, a separate LLM-gate in
+Mutation testing, a separate LLM-gate in
 CI, DDD-tiered review, ephemeral environments, mandatory
 C4/sequence diagrams, Enrich/Research phases as separate stages,
 a pre-commit hook on FROZEN contracts, a ban on root reading code,

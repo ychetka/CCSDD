@@ -110,6 +110,14 @@ publish_tag_release() {
       printf '{"status":"error","failure_class":"upstream_error","message":"tag pushed but "$GH" release create failed - create release for %s manually"}' "$tag"
       return 14; }
   fi
+  # Release journal (harness.md §3 "Release history"): a durable
+  # JSONL record of every publication - version, tag, sha, merger
+  # identity, UTC time. Approval envelopes and review verdicts live
+  # in cycle_log/gate_runs; this row is the audit anchor for them.
+  MERGER=$("$GH" api user --jq '.login' 2>/dev/null || basename "$GH")
+  printf '{"version":"%s","tag":"%s","sha":"%s","merger":"%s","utc":"%s"}\n' \
+    "${tag#v}" "$tag" "$sha" "$MERGER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    >> "$CANON_DIR/release_history.jsonl" 2>/dev/null || true
   TAG="$tag" SHA_V="$sha" NOTE_V="${note:-}" python3 -c 'import json,os
 print(json.dumps({"status":"released","tag":os.environ["TAG"],"sha":os.environ["SHA_V"],
                   **({"note":os.environ["NOTE_V"]} if os.environ["NOTE_V"] else {})}))'

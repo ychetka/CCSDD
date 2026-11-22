@@ -264,7 +264,7 @@ hardening for workspace-anchored items and is outside this drop.
 👷 CW executor ──► code+tests inside whitelist, pre-code interrogation
 🎨 DSG designer ──► conditional: closes contract's delegated axes → impl spec
 ⚖️ JDG judge ──► verdict vs frozen contract only
-🔍 RVW reviewer ──► remote-storage-only review, unfiltered by ROOT
+🔍 RVW review panel ──► domain floors + verdict signals, aggregator-only PR review, unfiltered by ROOT
 🤝 RES resolver ──► bounded disagreement rounds → stop/escalation
 🔀 GIT / 🏁 RA / 🧹 HYG ──► candidate commit → hygiene → merge gate → release
 📖 RD reader ──► file attestation {path, sha256, ranges, anchor}
@@ -278,7 +278,7 @@ Diagrams: [item lifecycle](diagrams/item_lifecycle.svg) ·
 
 `plan → 👨‍💻roadmap approve → issues → (optional §2a batch contracts) →
 contract: draft→judged→👨‍💻sign-off(sha) → pre-consult → spawn → pre-code
-interrogation → code+tests → judge rounds ≤3 → reviewer → GIT commit →
+interrogation → code+tests → judge rounds ≤3 → review panel → GIT commit →
 HYG → merge gate (isolated copy + expected_sha + reviewer verdicts +
 green checks; manual_gate fragment → 👨‍💻) → release`
 

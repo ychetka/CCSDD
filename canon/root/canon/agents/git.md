@@ -1,7 +1,7 @@
 ---
 name: git
 description: Performs the calling instance's local git operations via canon/bin wrappers (ship_commit/ship_push): issue_<N>-<slug>/epic_issue_<N>-<slug> branches, commits, pushes, read-only status/log/diff. Direct git by the calling instance is forbidden — all git operations are delegated to this agent.
-model: swe-2-medium
+model: tier:medium
 allowed-tools:
   - read
   - grep

@@ -91,9 +91,13 @@ the re-read row or abandoned, never forced.
 ### Requirement: clear-rearm-probe is one atomic transaction
 
 When `quota_reset_at` passes, the daemon quota pass SHALL clear the
-park, re-arm the lease for a full window and enqueue/send exactly
-one control probe to the instance INSIDE the same transaction - a
-cleared park without a delivered probe must not be observable.
+park, re-arm the lease for a full window and commit exactly one
+control-probe OUTBOX row inside the same transaction - a cleared
+park without a committed probe intent must not be observable. The
+probe is then delivered AFTER the commit by reading the outbox
+(transactional-outbox): a network call is never issued while a DB
+transaction is still open, so a hung transport cannot hold the
+park's row locks hostage.
 Probe delivery paces on a dedicated pacing budget independent of
 the ordinary wake cooldown - a instance whose undrained mail keeps
 the wake cooldown armed SHALL still receive its control probe.

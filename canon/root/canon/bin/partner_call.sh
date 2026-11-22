@@ -6,6 +6,7 @@
 #   partner_call.sh --partner <id> --tool <name>
 #     (--args '<json>' | --args-file <path>)
 #     [--audit-key <key>] [--class consult|audit] [--round <n>]
+#     [--item <id>]
 #
 # --args-file reads the same JSON object from disk - large audit
 # packages exceed the kernel's single-argument limit.

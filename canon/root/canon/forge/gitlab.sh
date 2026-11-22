@@ -85,10 +85,18 @@ if [ "$OP" = "finding_post" ]; then
     case "$1" in --pr) PR=$2;; --body-file) BF=$2;; *) usage;; esac; shift 2
   done
   [ -n "$PR" ] && [ -f "$BF" ] || usage
+  # The note body travels as a request-body FILE (--input), not argv
+  # interpolation of $(cat) - a large/multi-line body survives intact
+  # and never hits the argument-size ceiling.
+  BODY_JSON=$(mktemp)
+  BF="$BF" BODY_JSON="$BODY_JSON" python3 -c 'import json,os
+json.dump({"body": open(os.environ["BF"], encoding="utf-8").read()},
+          open(os.environ["BODY_JSON"], "w", encoding="utf-8"))'
   "$API_BIN" api -X POST "projects/:id/merge_requests/$PR/notes" \
-    --form "body=$(cat "$BF")" --jq '.id' 2>/dev/null | python3 -c 'import json,sys
+    --input "$BODY_JSON" --jq '.id' 2>/dev/null | python3 -c 'import json,sys
 i = sys.stdin.read().strip()
 print(json.dumps({"url": ("note:" + i) if i else ""}))'
+  rm -f "$BODY_JSON"
   exit 0
 fi
 

@@ -141,18 +141,35 @@ root. Its first move is to read `canon/RULES.md` (last line must be
   No enforcement layer — discipline is held by commit gates.
 - Adapters do not compete: one project may carry several glues.
   Your own adapter = a script `adapters/<name>.sh` taking `<workspace>`.
+- Agent profiles declare a vendor-neutral model tier
+  (`model: tier:heavy|tier:medium`); `adapters/model_map.json` maps
+  each tier to a runtime-specific model id, so the canon carries no
+  vendor names.
 
 ## Human gates (your role in the cycle)
 
 - `👨‍💻` roadmap approval; per-item contract sign-off (sha-bound
   envelope; optional batch elaboration of the first N contracts,
   `harness.md` §2a); escalation and PLAN_DELTA decisions. The merge
-  itself is objective — reviewer APPROVEs + green checks +
+  itself is objective — domain APPROVE signals + green checks +
   `expected_sha`; an explicit human stop is opt-in via
   `manual_gate: true` in a `.changes` fragment.
-- Canon releases go only through `canon/bin/canon_pub.sh` with a
-  signed envelope (HMAC key `CANON_HUMAN_KEY` or
-  `~/.config/canon/human_key`).
+- Human sign-offs are SSH signatures issued by
+  `canon/bin/human_sign.sh`: `init` registers your existing public
+  key in `allowed_signers` (no private key ever enters the
+  workspace), `sign --verdict approve --artifact <sha> --out -`
+  prints a compact `CCSDD-SIGNOFF-1|...` line you can paste into the
+  agent chat or save under `canon/human_signoffs/`; `verify` checks
+  signature, artifact binding, 7-day freshness and nonce replay —
+  all offline. Remote humans can sign on their laptop and paste the
+  line; `consume` burns the nonce only after the merge lands.
+- `canon/bin/setup_repo.sh` applies the repo-side control plane:
+  branch protection (preserving existing required checks), the
+  `.changes` fragment layout, and prints the expected
+  `review.gh_bin`/`merge.gh_bin` split plus the token scopes the
+  reviewer identity needs.
+- Canon releases go only through `canon/bin/canon_pub.sh`, gated by
+  the same SSH-signature envelope verified via `human_sign.sh`.
 
 ## Tests
 

@@ -1,7 +1,7 @@
 ---
 name: judge
 description: Independently verifies a code_writer report on a roadmap item: re-reads the contract and the diff, checks AC_MAPPING, scope against the whitelist, and itself re-runs the project's native checks on the exact working-tree state. Invoke after every executor report — input is the item package + the writer's report, output is a verdict.
-model: swe-2
+model: tier:heavy
 allowed-tools:
   - read
   - grep

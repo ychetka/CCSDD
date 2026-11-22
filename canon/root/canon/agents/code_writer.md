@@ -1,7 +1,7 @@
 ---
 name: code_writer
 description: Implements one roadmap item against its contract: writes code and tests, runs the project's native lint+tests+typecheck to green, returns a verifiable report to the item judge. Invoke for implementation items — input is a context package (roadmap item + contract + G/W/T), output is changes plus a provable report.
-model: swe-2
+model: tier:heavy
 allowed-tools:
   - read
   - grep

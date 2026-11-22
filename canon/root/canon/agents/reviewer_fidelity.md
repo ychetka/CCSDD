@@ -1,7 +1,7 @@
 ---
 name: reviewer_fidelity
 description: Review-panel domain `fidelity` - conformance of the integrated delta to the designer's impl spec and delegated-axis boundaries.
-model: swe-2
+model: tier:heavy
 allowed-tools:
   - read
   - grep

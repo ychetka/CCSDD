@@ -1,7 +1,7 @@
 ---
 name: repository
 description: The agent instance's single publication point to GitHub/repository: PRs, issues, checks, merges via repo_merge.sh, releases, reviews — all through canon/bin/repo_*.sh wrappers with the hygiene gate. Direct gh/API calls bypassing the wrappers are forbidden.
-model: swe-2-medium
+model: tier:medium
 allowed-tools:
   - read
   - grep

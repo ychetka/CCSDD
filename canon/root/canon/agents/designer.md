@@ -1,7 +1,7 @@
 ---
 name: designer
 description: Resolves the declared freedom axes of one roadmap item before implementation: for every axis in the contract's `## Delegated decisions` block produces a decision, a constraint check and rejected alternatives — an impl spec the code_writer then executes. Spawned only for items whose contract declares delegated axes; never writes code and never resolves points outside the declared axes.
-model: swe-2
+model: tier:heavy
 allowed-tools:
   - read
   - grep

@@ -1,7 +1,7 @@
 ---
 name: reader
 description: Reads files, command outputs and logs IN FULL (pagination to the end) and returns a verbatim range or a digest with a mechanical coverage attestation (reader_digest.sh). Invoke for any long read instead of partial reading in the calling instance.
-model: swe-2-medium
+model: tier:medium
 allowed-tools:
   - read
   - grep

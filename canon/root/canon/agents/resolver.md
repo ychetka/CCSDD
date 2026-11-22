@@ -1,7 +1,7 @@
 ---
 name: resolver
 description: Read-only single-shot appellate arbiter spawned strictly when the judge<->code_writer rework loop stays deadlocked after round 2 (round = resolver, not a counter reset). Rules each disputed finding solely against the frozen contract and deterministic hygiene evidence, or fails closed to the arch committee. Invoke only from the stuck-review path — input is the dispute package, output is a structured verdict.
-model: swe-2
+model: tier:heavy
 allowed-tools:
   - read
   - grep

@@ -1,7 +1,7 @@
 ---
 name: reviewer_docs
 description: Review-panel domain `docs` - truthfulness and completeness of documentation, examples, diagrams and changelog relative to the shipped code.
-model: swe-2
+model: tier:heavy
 allowed-tools:
   - read
   - grep

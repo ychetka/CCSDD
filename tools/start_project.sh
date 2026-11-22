@@ -266,16 +266,16 @@ for pat in m.get("gitignore", []):
     for f in r.stdout.split("\0"):
         if f:
             untracked.append(f)
-# Pre-existing tracked files that the deploy will evict from the
-# index (the working copy is NOT touched) must be announced - a
-# project file silently disappearing from git tracking is a
-# surprising side effect.
-preexisting = [f for f in untracked
-               if os.path.basename(f) in ("AGENTS.md", "CLAUDE.md")]
-if preexisting:
-    print("canon NOTICE: these tracked files will be untracked "
-          "(kept on disk, covered by canon .gitignore): "
-          + ", ".join(preexisting))
+# Pre-existing tracked AGENTS.md/CLAUDE.md are FOREIGN project
+# files - the generic adapter only appends a marked canon block,
+# it does not own them. Keep them tracked; untracking a project's
+# own entry file is a surprising side effect.
+foreign = [f for f in untracked
+           if os.path.basename(f) in ("AGENTS.md", "CLAUDE.md")]
+if foreign:
+    untracked = [f for f in untracked if f not in foreign]
+    print("canon NOTICE: tracked entry files preserved (canon block "
+          "is additive): " + ", ".join(foreign))
 staged = git("diff", "--cached", "--name-only").stdout.split()
 if staged:
     print("canon WARN: index has staged changes - untrack deferred "

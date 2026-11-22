@@ -46,5 +46,9 @@ self-contained (docs + diagrams).
 - Mermaid `.mmd` sources are authoritative; `.svg` are generated.
   Render: `mmdc -i <mmd> -o <svg>` then `python3 <repo>/svg_legend.py <svg>`
   (injects the table legend below the diagram; idempotent).
+  `svg_legend.py` is an external toolchain script — it lives outside
+  the product package at the repository root and is NOT part of the
+  deployable canon.
   / Исходники `.mmd` первичны; `.svg` генерируются: `mmdc` +
-  `svg_legend.py` (табличная легенда под диаграммой).
+  `svg_legend.py` (табличная легенда под диаграммой; внешний
+  тулчейн-скрипт в корне репозитория, не входит в деплой-пакет).
