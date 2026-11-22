@@ -1,7 +1,7 @@
 {
   "canary": "GENERATED_AT_DEPLOY",
   "canon_home": "canon/root",
-  "canon_version": "1.2.1",
+  "canon_version": "1.2.2",
   "description": "CCSDD neutral canon: deployed into a project as canon/ dir. Runtime glue (adapters/*) is generated per-target at deploy time. canary is generated per-repo at deploy time.",
   "files": [
     "canon/RULES.md",
