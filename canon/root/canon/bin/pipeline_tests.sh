@@ -80,6 +80,59 @@ expect D1a-deploy 0 $? "DEPLOY OK"
 (cd "$WS" && canon/bin/check_setup.sh) >"$SCRATCH/out" 2>&1
 expect D1b-check-setup 0 $? "SETUP OK"
 
+# The file-backed test forge makes panel signals storable locally -
+# panel verdicts can be seeded without a real forge backend.
+python3 - "$WS/canon/project.json" <<'PY'
+import json, sys
+p = sys.argv[1]; d = json.load(open(p))
+d["forge"] = "test"
+d["review"] = {"reviewer_logins": ["panel-test"]}
+json.dump(d, open(p, "w"), indent=2)
+PY
+
+# panel_seed <sha> - attest every registry floor for <sha> in a throwaway
+# worktree (clean tree, HEAD bound), then post green domain signals via
+# the test forge. Mirrors what a real panel produces before merge.
+panel_seed() {
+  local sha=$1 chk d
+  # The panel identity must be an accepted review login at gate time
+  # (earlier tests rewrite review.reviewer_logins to their fixtures).
+  python3 - "$WS/canon/project.json" <<'PY'
+import json, sys
+p = sys.argv[1]; d = json.load(open(p))
+d["forge"] = "test"
+rev = d.setdefault("review", {})
+l = rev.setdefault("reviewer_logins", [])
+"panel-test" in l or l.append("panel-test")
+json.dump(d, open(p, "w"), indent=2)
+PY
+  (cd "$WS" && git worktree add -q --force "$SCRATCH/pwt" "$sha" 2>/dev/null)
+  for chk in spec_anchor_check docs_check security_check quality_check \
+             fidelity_check test_suite; do
+    (cd "$SCRATCH/pwt" && bash "$WS/canon/bin/gate_run.sh" run \
+       --check "$chk" --candidate "$sha") >/dev/null 2>&1
+  done
+  for d in docs security quality design tester fidelity product; do
+    printf '{"domain":"%s","head":"%s","summary":"seed","receipt":["x"],"findings":[]}' \
+      "$d" "$sha" > "$SCRATCH/vd.json"
+    (cd "$WS" && bash canon/bin/panel_verdict.sh set --pr 1 \
+       --sha "$sha" --record "$SCRATCH/vd.json") >/dev/null 2>&1
+  done
+  (cd "$WS" && git worktree remove --force "$SCRATCH/pwt" 2>/dev/null)
+  # The panel identity is also the aggregator's approval account: the
+  # merge review-gate requires its APPROVED review on this head.
+  python3 - "$GHSTATE/reviews.json" "$sha" <<'PY'
+import json, sys
+p = sys.argv[1]
+try: rs = json.load(open(p))
+except Exception: rs = []
+rs.append({"user": {"login": "panel-test"}, "id": 1000 + len(rs),
+           "state": "APPROVED", "commit_id": sys.argv[2],
+           "submitted_at": "2026-01-01T00:00:00Z"})
+json.dump(rs, open(p, "w"))
+PY
+}
+
 echo bad > "$WS/canon/bin/evil.sh"
 (cd "$WS" && canon/bin/check_setup.sh) >"$SCRATCH/out" 2>&1
 expect D2-extra-bin-file 1 $?
@@ -582,6 +635,7 @@ json.dump([{"user": {"login": "alice"}, "id": 9, "state": "APPROVED",
           open(sys.argv[1], "w"))
 PY
 : > "$GHSTATE/merge_calls"
+panel_seed "$FULLSHA"
 (cd "$WS" && env FAKEGH_REPO="$WS" FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
        canon/bin/repo_merge.sh 43 "$FULLSHA" squash) >"$SCRATCH/out" 2>&1
 expect M9a-merge-ok 0 $? '"status": "merged"'
@@ -640,6 +694,7 @@ json.dump([{"user": {"login": "alice"}, "id": 11, "state": "APPROVED",
           open(sys.argv[1], "w"))
 PY
 TAGS_BEFORE=$(cd "$WS" && git tag | wc -l)
+panel_seed "$TASKSHA"
 (cd "$WS" && env FAKEGH_REPO="$WS" FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
        canon/bin/repo_merge.sh 10 "$TASKSHA" squash) >"$SCRATCH/out" 2>&1
 expect M11a-epic-merge-ok 0 $? '"status": "merged"'
@@ -675,6 +730,7 @@ json.dump([{"user": {"login": "alice"}, "id": 12, "state": "APPROVED",
             "commit_id": sys.argv[2], "submitted_at": "2026-01-01T00:00:00Z"}],
           open(sys.argv[1], "w"))
 PY
+panel_seed "$EPICSHA"
 (cd "$WS" && env FAKEGH_REPO="$WS" FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
        canon/bin/repo_merge.sh 9 "$EPICSHA" squash) >"$SCRATCH/out" 2>&1
 rc=$?; [ $rc -ne 0 ] && cat "$SCRATCH/out" >&2
@@ -697,6 +753,7 @@ json.dump([{"user": {"login": "alice"}, "id": 13, "state": "APPROVED",
             "commit_id": sys.argv[2], "submitted_at": "2026-01-01T00:00:00Z"}],
           open(sys.argv[1], "w"))
 PY
+panel_seed "$MENTSHA"
 (cd "$WS" && env FAKEGH_REPO="$WS" FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
        canon/bin/repo_merge.sh 46 "$MENTSHA" squash) >"$SCRATCH/out" 2>&1
 expect M11e-unclosed-mention-ok 0 $? '"status": "merged"'

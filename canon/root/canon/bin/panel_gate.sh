@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+# panel_gate.sh - review-panel merge gate (specs/review_panel.md).
+# Called by issue_merge.sh after the blood-sign verify, with the
+# candidate checked out at --worktree (detached at --sha).
+#
+#   panel_gate.sh --sha <sha40> --worktree <wt> --info-file <pr.json>
+#
+# Verifies, fail-closed, in this order:
+#   1. Every registry entry with a gate_check must have a GREEN
+#      attestation at --sha. Canon scripts (static analysis only -
+#      they read files, never execute project code) are RUN here in
+#      the merge context via gate_run; project commands
+#      (gate_checks.* argv - they execute PR code) are only VERIFIED
+#      against the journal: they must have been attested earlier by
+#      the pipeline inside the credential-free candidate worktree.
+#      The floor requirement is unconditional - an advisory LLM
+#      domain never disables its mechanical floor.
+#   2. Every REQUIRED llm/hybrid domain has its `ccsdd/<domain>`
+#      signal == success on --sha, created by a configured review
+#      identity (project.json review.reviewer_logins /
+#      reviewer_profiles[*].login).
+#   3. project.json `external_checks` (DAST and other forge-side CI
+#      names) appear green in the PR statusCheckRollup.
+# Exit 0 clean / exit 1 blocked (JSON report on stdout).
+set -uo pipefail
+CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+PJ="$CANON_DIR/project.json"
+REG="$CANON_DIR/config/review_panel.json"
+FORGE_DIR="$CANON_DIR/forge"
+
+json_out() { python3 -c 'import json,sys;print(json.dumps(json.loads(sys.argv[1])))' "$1"; }
+
+SHA=""; WT=""; INFO_FILE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --sha) SHA=$2;; --worktree) WT=$2;; --info-file) INFO_FILE=$2;; *) shift;;
+  esac; shift 2
+done
+[[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { json_out '{"status":"error","failure_class":"malformed_input","message":"--sha must be 40-hex"}'; exit 1; }
+[ -d "$WT" ] || { json_out '{"status":"error","failure_class":"malformed_input","message":"--worktree missing"}'; exit 1; }
+[ -f "$REG" ] || { json_out '{"status":"blocked","failure_class":"missing_panel_registry","message":"canon/config/review_panel.json absent"}'; exit 1; }
+
+FORGE=$(PJ="$PJ" python3 -c 'import json,os
+try: print(json.load(open(os.environ["PJ"])).get("forge") or "github")
+except Exception: print("github")' 2>/dev/null)
+ADAPTER="$FORGE_DIR/$FORGE.sh"
+[ -f "$ADAPTER" ] || { json_out "{\"status\":\"error\",\"failure_class\":\"malformed_input\",\"message\":\"no forge adapter $FORGE.sh\"}"; exit 1; }
+
+# Read identity for signal_get: merge binary fallback review/gh.
+API_BIN=$(PJ="$PJ" python3 -c 'import json,os
+try:
+    pj = json.load(open(os.environ["PJ"]))
+    print(((pj.get("merge") or {}).get("gh_bin")) or ((pj.get("review") or {}).get("gh_bin")) or "gh")
+except Exception: print("gh")' 2>/dev/null)
+export API_BIN CANON_DIR
+
+# --- 1. mechanical floors ---
+# canon scripts: safe to run here (file reads only). project argv:
+# code execution - verify the journal, never run under merge creds.
+BB=$(PJ="$PJ" python3 -c 'import json,os
+try: print(json.load(open(os.environ["PJ"])).get("base_branch") or "main")
+except Exception: print("main")' 2>/dev/null)
+BREF=""
+for r in "origin/$BB" "$BB"; do
+  git rev-parse --verify --quiet "$r" >/dev/null 2>&1 && { BREF=$r; break; }
+done
+FLOOR_FAIL=""
+while IFS= read -r chk; do
+  [ -z "$chk" ] && continue
+  if [ -n "$BREF" ] && git cat-file -e "$BREF:canon/bin/$chk.sh" 2>/dev/null; then
+    (cd "$WT" && bash "$CANON_DIR/bin/gate_run.sh" run --check "$chk" --candidate "$SHA") >/dev/null 2>&1
+  fi
+  # canon floor just ran (or a project floor was attested earlier):
+  # the journal is the verdict either way.
+  bash "$CANON_DIR/bin/gate_run.sh" verify --check "$chk" --candidate "$SHA" >/dev/null 2>&1 \
+    || FLOOR_FAIL="$FLOOR_FAIL $chk"
+done < <(REG="$REG" python3 -c 'import json,os
+d = json.load(open(os.environ["REG"]))
+for name, e in (d.get("domains") or {}).items():
+    if e.get("gate_check"): print(e["gate_check"])' | sort -u)
+
+# --- 2. domain signals on --sha ---
+SIG_JSON=$(bash "$ADAPTER" signal_get --sha "$SHA" 2>/dev/null || echo '{"signals":[]}')
+PANEL_REPORT=$(SIG_JSON="$SIG_JSON" REG="$REG" PJ="$PJ" SHA="$SHA" FLOOR_FAIL="$FLOOR_FAIL" INFO_FILE="$INFO_FILE" python3 - <<'PY'
+import json, os
+reg = json.load(open(os.environ["REG"]))
+domains = reg.get("domains") or {}
+prefix = reg.get("signal_prefix", "ccsdd/")
+try:
+    pj = json.load(open(os.environ["PJ"]))
+except Exception:
+    pj = {}
+rev = pj.get("review") or {}
+logins = {l.lower() for l in (rev.get("reviewer_logins") or [])}
+for prof in (rev.get("reviewer_profiles") or {}).values():
+    if isinstance(prof, dict) and prof.get("login"):
+        logins.add(prof["login"].lower())
+sha = os.environ["SHA"]
+sigs = {}
+try:
+    for s in (json.loads(os.environ["SIG_JSON"]).get("signals") or []):
+        sigs[s.get("domain")] = s
+except Exception:
+    sigs = {}
+
+missing, bad_creator, failed = [], [], []
+for name, e in domains.items():
+    if e.get("class") == "ci" or not e.get("required", True):
+        continue
+    s = sigs.get(name)
+    if s is None:
+        missing.append(name); continue
+    if s.get("state") != "success":
+        failed.append(f"{name}:{s.get('state')}")
+    cr = (s.get("creator") or "").lower()
+    if logins and cr not in logins:
+        bad_creator.append(f"{name}:{cr or '?'}")
+advisory_missing = [n for n, e in domains.items()
+                    if e.get("class") != "ci" and not e.get("required", True)
+                    and n not in sigs]
+
+# 3. external checks (DAST & friends) green in the rollup
+ext_missing, ext_bad = [], []
+ext = pj.get("external_checks") or []
+if ext and os.environ.get("INFO_FILE"):
+    try:
+        info = json.load(open(os.environ["INFO_FILE"]))
+        rollup = info.get("statusCheckRollup") or []
+    except Exception:
+        rollup = []
+    def names(c):
+        return {c.get("name") or "", c.get("context") or ""} - {""}
+    def green(c):
+        return (c.get("conclusion") or c.get("state") or "") in ("SUCCESS", "success")
+    for req in ext:
+        hits = [c for c in rollup
+                if any(req == n or n.endswith(" / " + req) for n in names(c))]
+        if not hits: ext_missing.append(req)
+        elif not all(green(c) for c in hits): ext_bad.append(req)
+
+floor_fail = os.environ.get("FLOOR_FAIL","").split()
+ok = not (missing or failed or bad_creator or floor_fail or ext_missing or ext_bad)
+fc = None
+if not ok:
+    if missing: fc = "missing_review_domain"
+    elif bad_creator: fc = "bad_creator"
+    elif failed or floor_fail: fc = "gate_blocked"
+    else: fc = "external_check_failed"
+print(json.dumps({
+    "ok": ok, "failure_class": fc,
+    "missing_domains": missing, "failed_domains": failed,
+    "bad_creator": bad_creator, "floor_failures": floor_fail,
+    "advisory_absent": advisory_missing,
+    "external_missing": ext_missing, "external_failing": ext_bad,
+    "signals_seen": {k: {"state": v.get("state"), "creator": v.get("creator")}
+                     for k, v in sigs.items()}}))
+PY
+)
+echo "$PANEL_REPORT"
+OK=$(printf '%s' "$PANEL_REPORT" | python3 -c 'import json,sys
+try: print("yes" if json.load(sys.stdin)["ok"] else "no")
+except Exception: print("no")')
+[ "$OK" = "yes" ] && exit 0 || exit 1

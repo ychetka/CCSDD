@@ -55,13 +55,21 @@ allowed = required | {
     "director",                   # {background_executors: int}
     "actors",                     # actor-registry bootstrap overrides
     "partners",                   # {role: {partner_id, model}} bindings
+    "forge",                      # panel verdict transport adapter name
+    "base_branch",                # trusted base for gate_run scripts
+    "gate_checks",                # {name: argv[]} project floor cmds
+    "external_checks",            # DAST etc: rollup names required green
+    "merge",                      # {gh_bin} merge-gate identity
+    "security",                   # {forbidden_patterns: [...]}
 }
 types = {"protected_paths": list, "cyrillic_paths": list,
          "ignored_instances": list, "repos": list,
          "version": dict, "review": dict, "director": dict,
          "actors": dict, "partners": dict,
+         "gate_checks": dict, "external_checks": list,
+         "merge": dict, "security": dict,
          "repo": str, "text_language": str, "repo_language": str,
-         "role": str,
+         "role": str, "forge": str, "base_branch": str,
          "migration_dry_run_cmd": str, "instances_bridge_dir": str,
          "canonical_harness_dir": str, "bound_instance": str,
          "workspace": str, "project_name": str, "task_tracker": str}
@@ -112,6 +120,35 @@ if isinstance(r, dict):
         gb = r["gh_bin"]
         if not isinstance(gb, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", gb or ""):
             errs.append("review.gh_bin must be a bare binary basename (no path separators)")
+    if "api_bin" in r:
+        ab = r["api_bin"]
+        if not isinstance(ab, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", ab or ""):
+            errs.append("review.api_bin must be a bare binary basename (no path separators)")
+    if "panel" in r:
+        pn = r["panel"]
+        if not isinstance(pn, list) or not all(isinstance(x, str) for x in pn):
+            errs.append("review.panel must be an array of domain names")
+m = cfg.get("merge")
+if isinstance(m, dict) and "gh_bin" in m:
+    gb = m["gh_bin"]
+    if not isinstance(gb, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", gb or ""):
+        errs.append("merge.gh_bin must be a bare binary basename (no path separators)")
+fr = cfg.get("forge")
+if isinstance(fr, str) and not re.fullmatch(r"[a-z][a-z0-9_]*", fr):
+    errs.append("forge must be a lowercase adapter name")
+gc = cfg.get("gate_checks")
+if isinstance(gc, dict):
+    for name, argv in gc.items():
+        if not re.fullmatch(r"[a-z][a-z0-9_]*", name or ""):
+            errs.append(f"gate_checks key {name!r} is not a valid check name")
+        if not isinstance(argv, list) or not argv \
+                or not all(isinstance(x, str) and x for x in argv):
+            errs.append(f"gate_checks.{name} must be a non-empty argv array")
+ec = cfg.get("external_checks")
+if isinstance(ec, list):
+    for n in ec:
+        if not isinstance(n, str) or not n.strip():
+            errs.append("external_checks entries must be non-empty strings")
 d = cfg.get("director")
 if isinstance(d, dict) and "background_executors" in d:
     be = d["background_executors"]
@@ -129,6 +166,67 @@ if errs:
     sys.exit(1)
 PY
   if [ $? -eq 0 ]; then ok "project.json schema"; else fails=$((fails+1)); fi
+fi
+
+# Review-panel registry: canon/config/review_panel.json must parse,
+# every domain declare a valid class, gate_check names resolve to a
+# canon script OR a project gate_checks argv, and llm/hybrid domains
+# must name an existing profile. review.panel (project override) may
+# only SUBSET the registry - widening the panel through project.json
+# would let a repo skip mandatory review.
+RP="$CANON_DIR/config/review_panel.json"
+if [ ! -f "$RP" ]; then
+  fail "missing canon/config/review_panel.json (review panel registry)"
+else
+CANON_DIR="$CANON_DIR" RP="$RP" PJ="$PJ" python3 - <<'PY'
+import json, os, re, sys
+canon_dir = os.environ["CANON_DIR"]
+errs = []
+try:
+    reg = json.load(open(os.environ["RP"]))
+    domains = reg.get("domains")
+    if not isinstance(domains, dict) or not domains:
+        raise ValueError("'domains' must be a non-empty object")
+except Exception as e:
+    print(f"SETUP FAIL: review_panel.json unreadable: {e}")
+    sys.exit(1)
+try:
+    pj = json.load(open(os.environ["PJ"]))
+except Exception:
+    pj = {}
+gate_checks = pj.get("gate_checks") or {}
+for name, e in domains.items():
+    if not re.fullmatch(r"[a-z][a-z0-9_]*", name or ""):
+        errs.append(f"domain name {name!r} invalid")
+    if not isinstance(e, dict):
+        errs.append(f"domain {name}: entry must be an object"); continue
+    cls = e.get("class")
+    if cls not in ("ci", "llm", "hybrid"):
+        errs.append(f"domain {name}: class must be ci|llm|hybrid")
+    if not isinstance(e.get("required", True), bool):
+        errs.append(f"domain {name}: required must be a bool")
+    gc = e.get("gate_check")
+    if gc is not None:
+        if not isinstance(gc, str) or not re.fullmatch(r"[a-z][a-z0-9_]*", gc):
+            errs.append(f"domain {name}: gate_check name invalid")
+        elif not (os.path.isfile(os.path.join(canon_dir, "bin", gc + ".sh"))
+                  or gc in gate_checks):
+            errs.append(f"domain {name}: gate_check '{gc}' resolves to nothing "
+                        f"(canon/bin/{gc}.sh absent, no gate_checks.{gc})")
+    if cls in ("llm", "hybrid") and e.get("required", True):
+        prof = e.get("profile") or f"reviewer_{name}"
+        if not os.path.isfile(os.path.join(canon_dir, "agents", prof + ".md")):
+            errs.append(f"domain {name}: profile canon/agents/{prof}.md missing")
+panel = (pj.get("review") or {}).get("panel")
+if isinstance(panel, list):
+    extra = [d for d in panel if d not in domains]
+    if extra:
+        errs.append(f"review.panel names unknown domains: {extra}")
+if errs:
+    for e in errs: print(f"SETUP FAIL: review_panel registry: {e}")
+    sys.exit(1)
+PY
+  [ $? -eq 0 ] && ok "review panel registry" || fails=$((fails+1))
 fi
 
 # Canon deploy stamp: canon/canon_manifest.json must exist (written by
@@ -202,6 +300,8 @@ RUNTIME_OK = {
     "canon/gateway_counters.json", "canon/gateway_counters.json.migrated",
     "canon/roadmap.md", "canon/quota_park.json",
     "canon/release_history.jsonl",
+    "canon/gate_runs.jsonl", "canon/gate_runs.jsonl.lock",
+    "canon/panel_signals_fixture.json", "canon/panel_comments_fixture.jsonl",
 }
 RUNTIME_DIRS = ("canon/partner_journal/", "canon/human_signoffs/", "canon/kb/")
 pinned = m.get("adapters_sha256") or {}

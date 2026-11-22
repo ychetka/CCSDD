@@ -189,6 +189,8 @@ if [ "$CMD" = "append" ]; then
       quota_limited|incomplete_read|not_found|manual_gate|\
       epic_incomplete|missing_issue_field|issue_mismatch|stale_input|plan_drift|\
       verify_escalated|verify_failed|release_failed|\
+      missing_review_domain|bad_creator|external_check_failed|panel_incomplete|\
+      missing_panel_registry|\
       baseline_unresolvable|env_setup_failed|unknown) ;; *) FC=unknown;; esac
   fi
   # failure_class is only meaningful on a failure/escalated verdict -

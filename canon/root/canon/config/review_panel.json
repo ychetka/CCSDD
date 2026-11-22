@@ -1,0 +1,61 @@
+{
+  "_comment": "Review panel registry (specs/review_panel.md). Domains: class ci = mechanical floor only; llm = agent verdict only; hybrid = mechanical floor + agent remainder. 'required' binds the merge gate on the LLM signal only - a declared gate_check is ALWAYS required at the merge gate regardless of 'required' (advisory LLM must never disable a mechanical floor). Signals are named <signal_prefix><domain> per head sha and must be created by the panel identity (project.json review.reviewer_logins). 'auto_pass_when_no_axes': the domain may publish success without an LLM spawn when its floor reports no applicable input.",
+  "signal_prefix": "ccsdd/",
+  "verdict_transport": "status",
+  "domains": {
+    "specs": {
+      "class": "ci",
+      "gate_check": "spec_anchor_check",
+      "required": true,
+      "floor": ".changes fragment fields + docs/specs anchor resolution"
+    },
+    "security": {
+      "class": "hybrid",
+      "gate_check": "security_check",
+      "required": true,
+      "profile": "reviewer_security",
+      "floor": "secret scan on the diff, forbidden APIs, dependency allowlist, project SAST command"
+    },
+    "quality": {
+      "class": "hybrid",
+      "gate_check": "quality_check",
+      "required": true,
+      "profile": "reviewer_quality",
+      "floor": "project lint command, complexity metrics (cyclomatic/cognitive/CRAP when a tool is present), duplication"
+    },
+    "design": {
+      "class": "llm",
+      "required": true,
+      "profile": "reviewer_design",
+      "floor": null
+    },
+    "tester": {
+      "class": "hybrid",
+      "gate_check": "test_suite",
+      "required": true,
+      "profile": "reviewer_tester",
+      "floor": "test compilation + pass/fail execution on the candidate"
+    },
+    "fidelity": {
+      "class": "hybrid",
+      "gate_check": "fidelity_check",
+      "required": true,
+      "profile": "reviewer_fidelity",
+      "auto_pass_when_no_axes": true,
+      "floor": "delegated design axes detection + impl-spec presence for declared axes"
+    },
+    "docs": {
+      "class": "hybrid",
+      "gate_check": "docs_check",
+      "required": true,
+      "profile": "reviewer_docs",
+      "floor": "version/manifest sync, markdown link + anchor integrity, mandatory sections"
+    },
+    "product": {
+      "class": "llm",
+      "required": false,
+      "profile": "reviewer_product",
+      "floor": null
+    }
+  }
+}

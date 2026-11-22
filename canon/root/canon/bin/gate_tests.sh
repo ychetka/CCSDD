@@ -611,6 +611,104 @@ expect T50d-epic-branch-ok 1 $? "PASS: branch epic_issue_9-feature"
    bash "$VC") >"$SCRATCH/out" 2>&1
 expect T50e-malformed-epic-noslug 1 $? "branch 'epic_issue_9-' !="
 
+# --- T51-T56: review panel mechanics (gate_run attestations,
+# panel_verdict signal derivation, panel_gate fail-closed) ---------
+PANEL_DIR="$SCRATCH/panel_repo"
+mkdir -p "$PANEL_DIR/canon/bin" "$PANEL_DIR/canon/forge" \
+         "$PANEL_DIR/canon/config" "$PANEL_DIR/docs/specs" "$PANEL_DIR/.changes"
+(cd "$PANEL_DIR" && git init -q -b main . && git config user.email t@t && git config user.name t)
+for f in gate_run panel_verdict panel_gate spec_anchor_check docs_check \
+         security_check quality_check fidelity_check test_suite hygiene_check; do
+  cp "$CANON_DIR/bin/$f.sh" "$PANEL_DIR/canon/bin/"
+done
+cp "$CANON_DIR/forge/test.sh" "$CANON_DIR/forge/github.sh" \
+   "$CANON_DIR/forge/gitlab.sh" "$PANEL_DIR/canon/forge/"
+cp "$CANON_DIR/config/review_panel.json" "$PANEL_DIR/canon/config/"
+chmod +x "$PANEL_DIR"/canon/bin/*.sh "$PANEL_DIR"/canon/forge/*.sh
+cat > "$PANEL_DIR/canon/project.json" <<'EOF'
+{"repo":"t/panel","text_language":"en","protected_paths":[],
+ "forge":"test","base_branch":"main",
+ "review":{"reviewer_logins":["panel-test"]}}
+EOF
+printf 'canon/gate_runs.jsonl\ncanon/gate_runs.jsonl.lock\ncanon/panel_*\n' \
+  > "$PANEL_DIR/.gitignore"
+printf '## Req A\nBody.\n' > "$PANEL_DIR/docs/specs/spec.md"
+(cd "$PANEL_DIR" && git add -A && git commit -qm init && \
+ git checkout -qb issue_1-t && echo x > a.txt && \
+ printf -- '---\nbump: patch\nuser_visible: "false"\nissue: 1\n---\n## Spec impact\n- adds: docs/specs/spec.md#req-a\n' \
+   > .changes/1-t.md && git add -A && git commit -qm work)
+PSHA=$(cd "$PANEL_DIR" && git rev-parse HEAD)
+GR="$PANEL_DIR/canon/bin/gate_run.sh"
+PV="$PANEL_DIR/canon/bin/panel_verdict.sh"
+PG="$PANEL_DIR/canon/bin/panel_gate.sh"
+
+# T51: floor run attests + status/verify round-trip
+(cd "$PANEL_DIR" && bash "$GR" run --check docs_check --candidate $PSHA) >"$SCRATCH/out" 2>&1
+expect T51a-floor-run 0 $?
+(cd "$PANEL_DIR" && bash "$GR" verify --check docs_check --candidate $PSHA) >"$SCRATCH/out" 2>&1
+expect T51b-floor-verify 0 $? "OK"
+# wrong sha -> HEAD binding refuses to attest
+(cd "$PANEL_DIR" && bash "$GR" run --check docs_check --candidate 0000000000000000000000000000000000000000) >"$SCRATCH/out" 2>&1
+expect T51c-head-binding 1 $? "!="
+
+# T52: verdict set derives state mechanically (CRITICAL -> failure)
+cat > "$SCRATCH/vsec.json" <<EOF
+{"domain":"security","head":"$PSHA","summary":"s","receipt":["a.txt"],
+ "findings":[{"severity":"CRITICAL","text":"x"}]}
+EOF
+(cd "$PANEL_DIR" && bash "$PV" set --pr 1 --sha $PSHA --record "$SCRATCH/vsec.json") >"$SCRATCH/out" 2>&1
+expect T52a-critical-failure 0 $? '"state": "failure"'
+cat > "$SCRATCH/vdocs.json" <<EOF
+{"domain":"docs","head":"$PSHA","summary":"s","receipt":["a.txt"],"findings":[]}
+EOF
+(cd "$PANEL_DIR" && bash "$PV" set --pr 1 --sha $PSHA --record "$SCRATCH/vdocs.json") >"$SCRATCH/out" 2>&1
+expect T52b-clean-success 0 $? '"state": "success"'
+# a record whose head disagrees with --sha is stale_input
+sed "s/\"head\":\"$PSHA\"/\"head\":\"0000000000000000000000000000000000000000\"/" \
+  "$SCRATCH/vdocs.json" > "$SCRATCH/vbad.json"
+(cd "$PANEL_DIR" && bash "$PV" set --pr 1 --sha $PSHA --record "$SCRATCH/vbad.json") >"$SCRATCH/out" 2>&1
+expect T52c-stale-head-record 2 $? "stale_input"
+# missing receipt is malformed_input
+cat > "$SCRATCH/vnr.json" <<EOF
+{"domain":"docs","head":"$PSHA","summary":"s","findings":[]}
+EOF
+(cd "$PANEL_DIR" && bash "$PV" set --pr 1 --sha $PSHA --record "$SCRATCH/vnr.json") >"$SCRATCH/out" 2>&1
+expect T52d-no-receipt 2 $? "receipt"
+
+# T53: panel gate fail-closed on missing domains, then passes
+(cd "$PANEL_DIR" && bash "$PG" --sha $PSHA --worktree . --info-file /dev/null) >"$SCRATCH/out" 2>&1
+expect T53a-missing-domains 1 $? "missing_review_domain"
+for d in quality design tester fidelity; do
+cat > "$SCRATCH/v_$d.json" <<EOF
+{"domain":"$d","head":"$PSHA","summary":"s","receipt":["a.txt"],"findings":[]}
+EOF
+(cd "$PANEL_DIR" && bash "$PV" set --pr 1 --sha $PSHA --record "$SCRATCH/v_$d.json" >/dev/null 2>&1)
+done
+# security still failing -> gate stays blocked
+(cd "$PANEL_DIR" && bash "$PG" --sha $PSHA --worktree . --info-file /dev/null) >"$SCRATCH/out" 2>&1
+expect T53b-failed-domain 1 $? "security:failure"
+cat > "$SCRATCH/vsec2.json" <<EOF
+{"domain":"security","head":"$PSHA","summary":"fixed","receipt":["a.txt"],"findings":[]}
+EOF
+(cd "$PANEL_DIR" && bash "$PV" set --pr 1 --sha $PSHA --record "$SCRATCH/vsec2.json" >/dev/null 2>&1)
+(cd "$PANEL_DIR" && bash "$PG" --sha $PSHA --worktree . --info-file /dev/null) >"$SCRATCH/out" 2>&1
+expect T53c-panel-green 0 $? '"ok": true'
+
+# T54: a different head sha invalidates everything (stale signals)
+(cd "$PANEL_DIR" && echo y >> a.txt && git add a.txt && git commit -qm bump)
+NSHA=$(cd "$PANEL_DIR" && git rev-parse HEAD)
+(cd "$PANEL_DIR" && bash "$PG" --sha $NSHA --worktree . --info-file /dev/null) >"$SCRATCH/out" 2>&1
+expect T54-stale-signals 1 $? "missing_review_domain"
+
+# T55: UNCERTAIN maps to failure (fail-closed), floor enforced for
+# hybrid domains: fidelity with a blocking floor cannot pass.
+cat > "$SCRATCH/vunc.json" <<EOF
+{"domain":"docs","head":"$NSHA","summary":"s","receipt":["a.txt"],
+ "findings":[{"severity":"UNCERTAIN","text":"cannot verify X"}]}
+EOF
+(cd "$PANEL_DIR" && bash "$PV" set --pr 1 --sha $NSHA --record "$SCRATCH/vunc.json") >"$SCRATCH/out" 2>&1
+expect T55-uncertain-failure 0 $? '"state": "failure"'
+
 echo "---"
 echo "gate_tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

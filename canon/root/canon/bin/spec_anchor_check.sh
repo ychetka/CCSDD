@@ -1,0 +1,284 @@
+#!/usr/bin/env bash
+# spec_anchor_check.sh - mechanical floor for the `specs` review
+# domain (review_panel.json). Extracted from verify_constraints.sh
+# check #7: .changes fragment fields + Spec impact anchor resolution.
+#
+# Env inputs (all optional, same semantics as verify_constraints.sh):
+#   BASE, BASE_REF - diff base for "pending" fragment detection and
+#                    base-existence of modifies/removes anchors
+#   ISSUE_LIST, FRAG_LIST - allowed issue numbers for the fragment
+#                    'issue:' field
+#   PENDING_FRAGS  - explicit fragment list override
+#   CANON_DIR      - honored when set (gate_run executes the base-ref
+#                    blob and exports the live canon dir)
+# Exit: 0 pass / 1 violations / 2 usage. Violations print on stdout.
+set -uo pipefail
+CANON_DIR="${CANON_DIR:-$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)}"
+TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 2; }
+cd -P "$TOP"
+BASE="${BASE:-}"; BASE_REF="${BASE_REF:-}"
+ISSUE_LIST="${ISSUE_LIST:-}"; FRAG_LIST="${FRAG_LIST:-}"
+
+if ! compgen -G "$TOP/.changes/*.md" >/dev/null 2>&1; then
+  echo "SKIP: no pending .changes entries"
+  exit 0
+fi
+
+if [ -z "${PENDING_FRAGS:-}" ]; then
+  PENDING_FRAGS=$( { [ -n "$BASE" ] && git -c core.quotepath=false diff --name-only --diff-filter=ACMR "$BASE"...HEAD 2>/dev/null; } \
+                   | grep -E '^\.changes/[^/]+\.md$' | grep -v '/README\.md$' || true)
+  [ -z "$PENDING_FRAGS" ] && PENDING_FRAGS=$(cd "$TOP" && ls .changes/*.md 2>/dev/null | grep -v 'README\.md$' || true)
+fi
+
+# A. Mandatory fragment fields (bump / user_visible / issue) and a
+#    non-empty '## Spec impact' (adds/modifies/removes lines or the
+#    bare '-' none-marker). CANONICAL contract - runs even when a repo
+#    adapter owns anchor resolution.
+FIELD_BAD=$(TOP="$TOP" PENDING_FRAGS="$PENDING_FRAGS" ISSUE_LIST="$ISSUE_LIST $FRAG_LIST" python3 - <<'PY'
+import os, re
+top = os.environ["TOP"]
+frags = [l.strip() for l in os.environ.get("PENDING_FRAGS","").splitlines() if l.strip()]
+issue_list = set(os.environ.get("ISSUE_LIST","").split())
+bad = []
+
+def front_fields(body):
+    # Leading YAML-ish zone only: an optional opening '---' fence, then
+    # key: value lines until a non-field line or the closing '---'.
+    fields = {}
+    lines = body.splitlines()
+    start = 1 if lines and lines[0].strip() == "---" else 0
+    for ln in lines[start:]:
+        s = ln.strip()
+        if not s:
+            continue
+        if s == "---":
+            break
+        m = re.match(r"^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$", s)
+        if not m:
+            break
+        fields[m.group(1).lower()] = m.group(2).strip().strip('"').strip("'")
+    return fields
+
+for rel in frags:
+    path = os.path.join(top, rel)
+    if not os.path.isfile(path):
+        continue
+    body = open(path, encoding="utf-8", errors="replace").read()
+    name = os.path.basename(path)
+    flds = front_fields(body)
+    if flds.get("bump") not in ("patch","minor","major"):
+        bad.append(f"{name}: missing/invalid 'bump: patch|minor|major'")
+    if flds.get("user_visible") not in ("true","false"):
+        bad.append(f"{name}: missing 'user_visible: true|false'")
+    iss = flds.get("issue","")
+    if not re.fullmatch(r"\d+(\s*,\s*\d+)*", iss or ""):
+        bad.append(f"{name}: missing 'issue: <N>'")
+    elif issue_list and not set(re.findall(r"\d+", iss)) & issue_list:
+        bad.append(f"{name}: 'issue:' {iss} does not match the branch/linked issues")
+    m = re.search(r"(?im)^#+\s*spec impact\s*$", body)
+    if not m:
+        bad.append(f"{name}: missing mandatory '## Spec impact' section")
+        continue
+    sec = body[m.end():]
+    nxt = re.search(r"(?m)^#", sec)
+    if nxt:
+        sec = sec[:nxt.start()]
+    has_lines = re.search(
+        r"(?im)^\s*(?:-\s*)?(adds|modifies|removes)\s*:\s*\S", sec)
+    if not has_lines and not re.search(
+            r"(?im)^\s*-\s*(none|n/a)?\s*$", sec):
+        bad.append(f"{name}: '## Spec impact' declares no "
+                   f"adds/modifies/removes lines and no '-' none-marker")
+for b in bad:
+    print(b)
+PY
+)
+if [ -n "$FIELD_BAD" ]; then
+  printf '%s\n' "$FIELD_BAD" | sed 's/^/  fragment: /'
+  echo "FAIL: changes fragment field validation"
+  exit 1
+fi
+
+# B. Anchor resolution - the repo adapter (if present and taken from
+#    the BASE ref, never the PR/worktree copy) first, then the
+#    canonical fallback below.
+ADAPTER_OUT=""
+ADAPTER_RC=127
+if [ -n "$BASE" ] && git cat-file -e "$BASE_REF:tools/check_spec_anchors.sh" 2>/dev/null; then
+  ADP=$(mktemp)
+  git show "$BASE_REF:tools/check_spec_anchors.sh" > "$ADP" 2>/dev/null
+  ADAPTER_OUT=$(cd "$TOP" && PENDING_FRAGS="$PENDING_FRAGS" bash "$ADP" 2>&1 | tail -n 5)
+  ADAPTER_RC=$?
+  rm -f "$ADP"
+elif [ -x "$CANON_DIR/tools/check_spec_anchors.sh" ]; then
+  ADAPTER_OUT=$(cd "$TOP" && PENDING_FRAGS="$PENDING_FRAGS" bash "$CANON_DIR/tools/check_spec_anchors.sh" 2>&1 | tail -n 5)
+  ADAPTER_RC=$?
+fi
+if [ $ADAPTER_RC -ne 127 ]; then
+  if [ $ADAPTER_RC -eq 0 ]; then
+    echo "PASS: spec anchors (repo adapter)"
+    exit 0
+  else
+    printf '%s\n' "$ADAPTER_OUT" | sed 's/^/  adapter: /'
+    echo "FAIL: Spec impact anchors do not resolve"
+    exit 1
+  fi
+fi
+
+# Canonical fallback (no repo adapter): every pending fragment's
+# Spec impact anchors are checked here - adds/modifies targets
+# must exist under docs/specs/ in the working tree after the
+# change; removes targets must be gone (file or anchor) and must
+# have existed at the base.
+TOP="$TOP" PENDING_FRAGS="$PENDING_FRAGS" BASE="$BASE" BASE_REF="$BASE_REF" python3 - <<'PY'
+import os, re, subprocess, sys
+top = os.environ["TOP"]
+base_ref = os.environ.get("BASE_REF") or ""
+frags = [l.strip() for l in os.environ.get("PENDING_FRAGS","").splitlines() if l.strip()]
+bad = []
+
+def gh_anchor(heading):
+    # GitHub-style anchor: lowercase, drop punctuation, spaces->dash.
+    return re.sub(r"[^\w\- ]", "", heading.strip().lower()).replace(" ", "-")
+
+def strip_fenced(body):
+    # headings inside ``` fenced blocks are not real anchors
+    return re.sub(r"```[\s\S]*?```", "", body)
+
+def collect_anchors(body):
+    # Full anchor set of a markdown body: GitHub-style heading slugs
+    # (with -1/-2 duplicate suffixes), <a name|id="x"> and {#id}.
+    anchors = set()
+    seen = {}
+    for l in body.splitlines():
+        if l.startswith("#"):
+            h = gh_anchor(l.lstrip("# ").strip())
+            n = seen.get(h, 0)
+            seen[h] = n + 1
+            anchors.add(h if n == 0 else "%s-%d" % (h, n))
+    anchors |= set(re.findall(r'(?:name|id)\s*=\s*["\']([^"\']+)["\']', body))
+    anchors |= set(re.findall(r"\{#([^}\s]+)\}", body))
+    return {a.lower() for a in anchors}
+
+def anchor_resolves(path, anchor):
+    if not os.path.isfile(path):
+        return False
+    body = strip_fenced(open(path, encoding="utf-8", errors="replace").read())
+    return anchor.lower() in collect_anchors(body)
+
+def existed_at_base(rel, anchor):
+    if not base_ref:
+        return True   # no base known - cannot prove; do not fail on this
+    r = subprocess.run(["git","show",base_ref+":"+rel],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return False
+    if not anchor:
+        return True
+    # Same collection rules as the worktree check - an {#id} or
+    # duplicate-suffixed anchor must resolve at base too.
+    return anchor.lower() in collect_anchors(strip_fenced(r.stdout))
+
+def norm_target(t):
+    file_part, _, anchor = t.partition("#")
+    return os.path.normpath(file_part), anchor
+
+def spec_impact_lines(body):
+    m = re.search(r"(?im)^#+\s*spec impact\s*$", body)
+    if not m:
+        return []
+    sec = body[m.end():]
+    nxt = re.search(r"(?m)^#", sec)
+    if nxt:
+        sec = sec[:nxt.start()]
+    return re.findall(
+        r"(?im)^\s*(?:-\s*)?(adds|modifies|removes)\s*:\s*(.+)$", sec)
+
+# Anchors a PR introduces itself: every `adds:` target declared by
+# any fragment of the delta. An epic merges task by task - task 1
+# `adds: spec.md#req-1`, task 2 `modifies:`/`removes:` it before the
+# epic reaches main. `existed_at_base` alone would block that valid
+# sequence; a delta-introduced target counts as existing for
+# modifies/removes checks (net effect vs base: adds / nothing).
+introduced = []          # list of (norm_file, anchor_or_None)
+for rel in frags:
+    path = os.path.join(top, rel)
+    if not os.path.isfile(path):
+        continue
+    body = open(path, encoding="utf-8", errors="replace").read()
+    for kind, targets in spec_impact_lines(body):
+        if kind != "adds":
+            continue
+        for t in re.split(r"[,\s]+", targets.strip()):
+            t = t.strip().strip("`")
+            if not t or t.lower() in ("none", "-", "n/a"):
+                continue
+            fp, anch = norm_target(t)
+            introduced.append((fp, anch or None))
+
+def introduced_in_delta(norm_fp, anchor):
+    for fp, anch in introduced:
+        if fp == norm_fp and (anch is None or anch == anchor):
+            return True
+    return False
+
+for rel in frags:
+    path = os.path.join(top, rel)
+    if not os.path.isfile(path):
+        continue
+    body = open(path, encoding="utf-8", errors="replace").read()
+    name = os.path.basename(path)
+    lines = spec_impact_lines(body)
+    if not lines:
+        continue
+    for kind, targets in lines:
+        for t in re.split(r"[,\s]+", targets.strip()):
+            t = t.strip().strip("`")
+            if not t or t.lower() in ("none", "-", "n/a"):
+                continue
+            file_part, _, anchor = t.partition("#")
+            # Spec anchors live under docs/specs/ by contract - and
+            # stay there after normalization: 'docs/specs/../x.md'
+            # must not reach outside via a text-level prefix match.
+            norm_fp = os.path.normpath(file_part)
+            if (not file_part.startswith("docs/specs/")
+                    or not norm_fp.startswith("docs/specs/")
+                    or os.path.isabs(file_part)):
+                bad.append(f"{name}: {kind} target outside docs/specs/: {t}")
+                continue
+            p = os.path.join(top, norm_fp)
+            if kind in ("adds", "modifies"):
+                if not os.path.isfile(p):
+                    bad.append(f"{name}: {kind} target missing: {t}")
+                elif os.path.isdir(p):
+                    bad.append(f"{name}: {kind} target is a directory: {t}")
+                elif not anchor:
+                    bad.append(f"{name}: {kind} needs an explicit '#anchor': {t}")
+                elif not anchor_resolves(p, anchor):
+                    bad.append(f"{name}: {kind} anchor '#{anchor}' "
+                               f"does not resolve in {file_part}")
+                elif kind == "modifies" and not existed_at_base(norm_fp, anchor) \
+                        and not introduced_in_delta(norm_fp, anchor):
+                    bad.append(f"{name}: modifies anchor '#{anchor}' "
+                               f"never existed at base and is not "
+                               f"delta-introduced in {norm_fp}")
+            if kind == "removes":
+                still = (anchor_resolves(p, anchor) if anchor
+                         else os.path.exists(p))
+                if still:
+                    bad.append(f"{name}: removes target still present: {t}")
+                elif not existed_at_base(norm_fp, anchor) \
+                        and not introduced_in_delta(norm_fp, anchor):
+                    bad.append(f"{name}: removes target never existed at base "
+                               f"and is not delta-introduced: {t}")
+for b in bad:
+    print(b)
+sys.exit(1 if bad else 0)
+PY
+RC=$?
+if [ $RC -eq 0 ]; then
+  echo "PASS: spec anchors (canonical fallback)"
+else
+  echo "FAIL: Spec impact anchors do not resolve"
+fi
+exit $RC

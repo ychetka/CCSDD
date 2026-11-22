@@ -18,7 +18,7 @@
       "judge":       {"tools": ["read","grep","glob","exec"],
                       "exec_extra": ["<project lint/tests/typecheck on the candidate worktree>"]},
       "reviewer":    {"tools": ["read","grep","glob","exec"],
-                      "exec_extra": ["canon/bin/repo_pr_review.sh - NEVER native PR code, no checkout with credentials"]},
+                      "exec_extra": ["canon/bin/repo_pr_review.sh - aggregator ONLY; canon/bin/panel_verdict.sh and canon/bin/gate_run.sh status for domain reviewers - NEVER native PR code, no gate_run run, no checkout with credentials"]},
       "resolver":    {"tools": ["read","grep","glob"],
                       "exec_extra": []},
       "designer":    {"tools": ["read","grep","glob"],

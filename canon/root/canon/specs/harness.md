@@ -113,8 +113,13 @@ assembler and partners stay stateless at every round:
 
 - Item judge — a subagent of the root instance, fresh bounded
   context, repo access.
-- Reviewer subagent (reviewer profile) — PR level, separate account,
-  publishes its verdict directly via repo_pr_review.sh.
+- Review PANEL (specs/review_panel.md) — PR level: per-domain
+  reviewers (reviewer_<domain> profiles over
+  agents/reviewer_protocol.md) publish named per-sha signals
+  `ccsdd/<domain>` via panel_verdict.sh; the aggregator
+  (reviewer profile, separate account) publishes the single
+  formal PR review via repo_pr_review.sh once every active domain
+  reaches a terminal signal.
 - Auto-review on MR — a repository bot triggered by push (project
   configuration, not canon).
 
@@ -302,7 +307,9 @@ version_drift | conflict | contract_gap | contract_ambiguity |
 unverifiable | scope_conflict | quota_limited | incomplete_read |
 not_found | manual_gate | epic_incomplete | missing_issue_field |
 issue_mismatch | stale_input | plan_drift | verify_escalated | verify_failed |
-release_failed | baseline_unresolvable | env_setup_failed | unknown`
+release_failed | missing_review_domain | bad_creator |
+external_check_failed | panel_incomplete | missing_panel_registry |
+baseline_unresolvable | env_setup_failed | unknown`
 
 ### cycle_log.jsonl
 
@@ -411,18 +418,22 @@ Principles:
 - **Lease != progress**: `bridge wait` extends the lease only while
   the executor is alive (a progress note with substance, not an
   empty ping).
-- **Review — external only**: the reviewer subagent is spawned by
-  the director at PR assembly (the director is the only spawn owner
-  in the instance), but there is no conflict of interest: verdict
-  independence is ensured by the separate reviewer account declared
-  in `project.json` (`review.reviewer_logins`,
-  `review.reviewer_profiles` — per-identity `{gh_bin, model_family}`
-  entries; `review.gh_bin` remains the default profile) and by
-  direct review publication via `repo_pr_review.sh` — the
-  director can neither edit the verdict, nor filter its
-  publication, nor approve its own PR. Merges run under the
-  repository-agent credential (`merge.gh_bin`), never under a
-  reviewer identity — least privilege, no self-approve channel.
+- **Review — external only**: the panel's domain reviewers are
+  spawned by the director at PR assembly (the director is the only
+  spawn owner in the instance), but there is no conflict of
+  interest: verdict independence is ensured by the separate
+  reviewer account declared in `project.json`
+  (`review.reviewer_logins`, `review.reviewer_profiles` —
+  per-identity `{gh_bin, model_family}` entries; `review.gh_bin`
+  remains the default profile) and by direct publication via
+  `panel_verdict.sh`/`repo_pr_review.sh` — the director can
+  neither edit a verdict, nor filter its publication, nor approve
+  its own PR. Domain reviewers never hold `repo_pr_review`: the
+  aggregator is the only formal-review publisher (one review
+  identity → parallel domain reviews would overwrite each other).
+  Merges run under the repository-agent credential
+  (`merge.gh_bin`), never under a reviewer identity — least
+  privilege, no self-approve channel.
 - **Mid-turn inject — closed empirically (2026-11-11)**:
   `session/prompt` on a busy instance is rejected by the host
   immediately ("a turn is already running") — it is neither queued

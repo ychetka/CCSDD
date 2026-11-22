@@ -861,6 +861,28 @@ print(json.dumps({"status":"blocked","failure_class":"verify_failed",
   exit 1
 fi
 
+# Review-panel gate (specs/review_panel.md): mechanical
+# floors attested/green on the head sha + every required llm/hybrid
+# domain signal `ccsdd/<domain>` == success created by the review
+# identity + external_checks green. The gate runs on the SAME
+# blood-sign worktree at the expected head.
+PANEL_OUT=$(bash "$CANON_DIR/bin/panel_gate.sh" --sha "$EXPECTED" \
+            --worktree "$WT" --info-file "$INFO_FILE" 2>&1)
+PANEL_RC=$?
+if [ $PANEL_RC -ne 0 ]; then
+  PANEL_OUT="$PANEL_OUT" python3 -c 'import json,os
+try:
+    r = json.loads(os.environ["PANEL_OUT"].strip().splitlines()[-1])
+except Exception:
+    r = {"status":"blocked","failure_class":"gate_blocked",
+         "message":"panel_gate.sh failed",
+         "raw": os.environ["PANEL_OUT"][-1500:]}
+fc = r.pop("failure_class", None) or "gate_blocked"
+r["status"] = "blocked"; r["failure_class"] = fc
+print(json.dumps({"status":"blocked","failure_class":fc,"gate_report":r}))'
+  exit 1
+fi
+
 # Pre-merge gates under Release-on-Merge (RoM ruling 2026-11-19):
 # a declared version source on the base is required fail-closed -
 # without it the release step could not compute the next version.

@@ -40,6 +40,13 @@ pr_review:    IN {pr_number, event: approve|request-changes|comment,
               review — a review on a stale head is not published; in
               json_file the caller-supplied commit_id must equal
               headRefOid)
+panel_verdict: IN {op: set|get, sha40, pr_number?, record_file?}
+              -> OUT {signal, state, sha} | {signals[]}
+              (review-panel domain signals `ccsdd/<domain>` on a head
+              sha via the forge adapter — canon/forge/<forge>.sh;
+              `set` derives the state MECHANICALLY from the verdict
+              record and refuses success when the domain's gate_run
+              floor is not green on that sha)
 branch_delete: IN {branch} -> OUT {branch, status}
 
 ## Rules

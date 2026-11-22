@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# docs_check.sh - mechanical floor for the `docs` review domain.
+#   1. Markdown link integrity: relative links and #anchors inside
+#      *.md files (docs/, README*) must resolve in the worktree.
+#   2. Canon version sync (only when canon/MANIFEST.json exists in
+#      the repo): every explicit 'canon' version mention in README*
+#      must equal manifest canon_version.
+#   3. project.json gate_checks.docs argv (repo-specific doc linter)
+#      runs last and propagates its exit code.
+# CANON_DIR env is honored (gate_run executes the base-ref blob).
+set -uo pipefail
+CANON_DIR="${CANON_DIR:-$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)}"
+TOP=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
+cd -P "$TOP"
+PJ="$CANON_DIR/project.json"
+fails=0
+
+# --- 1. markdown relative links + anchors ---
+LINK_BAD=$(TOP="$TOP" python3 - <<'PY'
+import os, re
+top = os.environ["TOP"]
+bad = []
+md_files = []
+for root, dirs, files in os.walk(top):
+    rel_root = os.path.relpath(root, top)
+    skip = {".git", "node_modules", "vendor", "dist", ".worktrees", ".venv", "__pycache__"}
+    dirs[:] = [d for d in dirs if d not in skip]
+    for f in files:
+        if f.endswith(".md"):
+            md_files.append(os.path.join(root, f))
+
+def gh_anchor(h):
+    return re.sub(r"[^\w\- ]", "", h.strip().lower()).replace(" ", "-")
+
+def anchors_of(path):
+    try:
+        body = open(path, encoding="utf-8", errors="replace").read()
+    except OSError:
+        return set()
+    body = re.sub(r"```[\s\S]*?```", "", body)
+    out, seen = set(), {}
+    for l in body.splitlines():
+        if l.startswith("#"):
+            h = gh_anchor(l.lstrip("# ").strip())
+            n = seen.get(h, 0); seen[h] = n + 1
+            out.add(h if n == 0 else f"{h}-{n}")
+    out |= {a.lower() for a in re.findall(r'(?:name|id)\s*=\s*["\']([^"\']+)["\']', body)}
+    return out
+
+link_re = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)\)")
+for p in md_files:
+    rel = os.path.relpath(p, top)
+    body = open(p, encoding="utf-8", errors="replace").read()
+    body = re.sub(r"```[\s\S]*?```", "", body)
+    for m in link_re.finditer(body):
+        url = m.group(1).strip("<>")
+        if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", url) or url.startswith("//"):
+            continue  # external scheme or protocol-relative - skip
+        file_part, _, anch = url.partition("#")
+        target = os.path.normpath(os.path.join(os.path.dirname(p), file_part)) if file_part else p
+        if file_part and not os.path.exists(target):
+            bad.append(f"{rel}: broken link -> {url}")
+            continue
+        if anch and anch.lower() not in anchors_of(target):
+            bad.append(f"{rel}: unresolved anchor -> {url}")
+for b in bad[:50]:
+    print(b)
+PY
+)
+if [ -n "$LINK_BAD" ]; then
+  printf '%s\n' "$LINK_BAD" | sed 's/^/  link: /'
+  echo "FAIL: markdown link integrity"; fails=$((fails+1))
+else
+  echo "PASS: markdown links/anchors resolve"
+fi
+
+# --- 2. canon version sync (canon repos only) ---
+if [ -f "$TOP/canon/MANIFEST.json" ]; then
+  VER_BAD=$(TOP="$TOP" python3 - <<'PY'
+import json, os, re
+top = os.environ["TOP"]
+want = json.load(open(os.path.join(top, "canon/MANIFEST.json")))["canon_version"]
+bad = []
+for name in ("README.md",):
+    for root, _, files in os.walk(top):
+        for f in files:
+            if f != name: continue
+            p = os.path.join(root, f)
+            rel = os.path.relpath(p, top)
+            if ".git/" in rel: continue
+            for i, l in enumerate(open(p, encoding="utf-8", errors="replace"), 1):
+                m = re.search(r"canon[^0-9]{0,20}v?(\d+\.\d+\.\d+)", l, re.I)
+                if m and m.group(1) != want:
+                    bad.append(f"{rel}:{i}: canon version {m.group(1)} != manifest {want}")
+for b in bad:
+    print(b)
+PY
+)
+  if [ -n "$VER_BAD" ]; then
+    printf '%s\n' "$VER_BAD" | sed 's/^/  version: /'
+    echo "FAIL: canon version drift in docs"; fails=$((fails+1))
+  else
+    echo "PASS: canon version in docs matches manifest"
+  fi
+fi
+
+# --- 3. project-declared docs linter ---
+DARGV=$(PJ="$PJ" python3 -c 'import json,os
+try:
+    v = (json.load(open(os.environ["PJ"])).get("gate_checks") or {}).get("docs")
+    print("\t".join(v) if isinstance(v, list) else "")
+except Exception: print("")' 2>/dev/null)
+if [ -n "$DARGV" ]; then
+  IFS=$'\t' read -r -a DV <<< "$DARGV"
+  if "${DV[@]}"; then echo "PASS: project docs linter"
+  else echo "FAIL: project docs linter ($DARGV)"; fails=$((fails+1)); fi
+fi
+
+[ $fails -eq 0 ] && { echo "DOCS_CHECK: PASS"; exit 0; }
+echo "DOCS_CHECK: $fails FAILURES"; exit 1

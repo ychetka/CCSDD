@@ -22,8 +22,10 @@ documents only.
 - Confirmations — only on explicit gates: roadmap/plan, PLAN_DELTA,
   escalations, CONTRACT_BREACH. The routine cycle
   (branch > commit > push > PR) needs no confirmations.
-- A PR merges on the objective gate: reviewer approve + green checks
-  + no manual_gate. Escalate on missing approve, red checks, or a
+- A PR merges on the objective gate: review-panel approval (every
+  required `ccsdd/<domain>` signal green on the head + aggregator
+  approve) + green checks + no manual_gate. Escalate on missing
+  approve, red checks, missing domain signals, or a
   branch-protection block.
 
 ## Invariants: system reliability (code)

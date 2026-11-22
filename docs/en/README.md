@@ -8,8 +8,8 @@ both committees verify — and discipline is held not by prompts but by
 mechanical gates, hash-pinned artifacts, and signed human decision
 envelopes.
 
-Two version axes, deliberately separate: **product release** `v0.0.9`
-(the repo tag on this package) and **canon version** `1.0.9`
+Two version axes, deliberately separate: **product release** `v0.1.0`
+(the repo tag on this package) and **canon version** `1.1.0`
 (`MANIFEST.json.canon_version`, released as `canon-v*` tags — the axis
 deploy/release fencing cares about). Product tags track the package;
 canon tags track the methodology payload.
@@ -35,6 +35,16 @@ Everything else (commit gates, canon integrity, gateway) is remote-free.
 - **Separation of duties (maker–checker)**: the writer cannot commit,
   the committer cannot merge, merges require every expected reviewer's
   APPROVE on the current head, reviewers sit outside both committees.
+- **Multi-domain review panel**: `canon/config/review_panel.json`
+  declares per-domain reviewers (specs, security, quality, design,
+  tester, fidelity, docs, product). Each domain pairs a mechanical
+  floor (attested by `gate_run.sh` into an append-only journal, bound
+  to the candidate SHA and the base-branch script hash) with an
+  agent verdict published as a named `ccsdd/<domain>` signal through
+  forge adapters (GitHub/GitLab/test). Only the aggregator may post
+  the formal PR review; merge gates verify every signal, every floor
+  attestation, and the final approval on the exact head — missing or
+  stale means blocked, never silent pass.
 - **GitOps delivery of the methodology itself**: MANIFEST.json +
   sha256 deploy, `canon-v*` release tags, drift detection by hash.
 - **Attestation instead of trust**: signed human decision envelopes
