@@ -94,7 +94,12 @@ trust.
    empty block is itself a signal to the judge. Every ambiguity that
    cannot be resolved by the most conservative contract reading —
    an escalation up the ladder (SPEC_CONFLICT), not a
-   self-interpretation.
+   self-interpretation. Map each undetermined point to a
+   `delegated_decisions` axis declared in the contract, or report
+   it as `OPEN: contract_gap(<question>)`: a gap — pre-code or
+   found mid-implementation — is never improvised into code; it
+   escalates to the arch committee and the item waits for the
+   refined contract.
 6. Write tests covering every G/W/T scenario, and the
    implementation.
 7. Run the native checks to green: lint + typecheck + tests. Fix

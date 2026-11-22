@@ -3,7 +3,7 @@
 Specification of the development cycle with AI orchestration. Version
 1.0, approved by the developer 2026-10-29. Design source:
 `ai_assisted_development_v1_0.md` (adapted for a solo developer after
-three rounds of consultations with quantum partners).
+three rounds of consultations with external partners).
 
 ## 1. Principles
 
@@ -46,16 +46,17 @@ Designs roadmap.md and the design of each item.
 
 - Root director (the main agent instance in the repository) — the
   author.
-- gh-copilot-partner, gemini-product — co-designers (smart/expensive
-  models). Calls go through the gateway, Consult profile
-  (`gateway.md`); design disputes taken to external arbitration —
-  Audit profile.
+- architect-partner, product-partner — co-designers (top-tier
+  models; canonical roles in `config/partners.json`, the concrete
+  model binding is a project setting). Calls go through the
+  gateway, Consult profile (`gateway.md`); design disputes taken
+  to external arbitration — ex-architect-partner, Audit profile.
 - The developer — arbiter and final approval.
 
 Co-author disputes: the author (root) picks a variant and logs it in
-the roadmap's `## Design Dissent` block (`chose A (Root/Copilot)
-over B (Gemini) because X`). The developer sees all disputes at
-approval and may override. No voting.
+the roadmap's `## Design Dissent` block (`chose A
+(Root/architect-partner) over B (product-partner) because X`). The
+developer sees all disputes at approval and may override. No voting.
 
 ### Executive committee
 
@@ -71,9 +72,28 @@ Implements one roadmap item.
   (pyproject.toml/package.json/Makefile) — the harness only calls
   the entrypoint; canon/ has no lint config of its own and must not
   have one.
-- gh-copilot-partner, gemini-product — consultant co-authors
-  (cheaper models; consultation before spawn and on demand, through
+- design-partner, product-partner — consultant co-authors
+  (workhorse tier; consultation before spawn and on demand, through
   the gateway, Consult profile).
+
+### Partner consultation protocol — conflict-directed rounds
+
+Consultation is NOT an open deliberation and never a
+partner-to-partner exchange — the director is the only packet
+assembler and partners stay stateless at every round:
+
+- Round 1 — blind: each consulted partner answers the SAME verbatim
+  packet independently; no partner sees another's answer.
+- Rounds 2..k (k ≤ 2 by default) — conflict-directed only: the
+  director extracts divergence points and sends each partner ONLY
+  the counterarguments against its own position or its own domain,
+  anonymized ("a colleague argues X, conflicting with your Y —
+  defend or concede"). A partner is never shown a consensus or a
+  majority framing — the round cannot wash out into
+  agreement-pressure.
+- Outcome: converged — the dissent is closed without reaching the
+  human; still divergent — `## Design Dissent` records the argued
+  positions verbatim for the arbiter.
 
 ### Reviewers (outside the committees)
 
@@ -132,6 +152,13 @@ public repositories). Available to subagents locally.
 - Changing a contract — a new contract item or PLAN_DELTA (what
   changes + which items are invalidated) for developer
   approve/reject. Never an executor edit on the fly.
+- A contract MAY carry a `## Delegated decisions` block (inside
+  the contract file — it freezes together with the sign-off
+  hash): an explicit list of freedom axes, each with its
+  constraint — `{axis, constraint}` (e.g. "control
+  position/size — must comply with the design system").
+  Everything the contract neither requires nor delegates is a
+  CONTRACT GAP, not freedom — see p.4c.
 
 ### Human decision envelope
 
@@ -242,9 +269,10 @@ etc.); `cycle_log.sh append --failure-class` validates against it:
 `gate_blocked | merge_conflict | ci_failed | permission_denied |
 stale_head | malformed_input | upstream_error |
 missing_changes_entry | version_not_bumped | version_source_missing |
-version_drift | conflict | quota_limited | incomplete_read |
-not_found | manual_gate | verify_escalated | verify_failed |
-release_failed | baseline_unresolvable | env_setup_failed | unknown`
+version_drift | conflict | contract_gap | quota_limited |
+incomplete_read | not_found | manual_gate | verify_escalated |
+verify_failed | release_failed | baseline_unresolvable |
+env_setup_failed | unknown`
 
 ### cycle_log.jsonl
 
@@ -307,7 +335,7 @@ one's `--registrar-token`; the departing one is unregistered).
   machine-readable marks — **strictly UTC**. Mixing zones in one
   field is forbidden.
 
-Retrospective: after 15-20 items the log goes to gemini-product for
+Retrospective: after 15-20 items the log goes to product-partner for
 bottleneck analysis — metrics appear then.
 
 ### The director-instance model (event-driven, approved 2026-11-11)
@@ -479,8 +507,15 @@ The version policy is fixed at roadmap approval, not at merge
       assumptions, ambiguities, readings of criteria. The
       interrogation is an exec-committee artifact, not a direct
       question to the human; an empty interrogation is itself a
-      signal to the judge. A found ambiguity climbs the escalation
-      ladder (§6) — committees resolve most before the human.
+      signal to the judge. Every undetermined point is mapped to
+      either a `delegated_decisions` axis declared in the contract
+      or a contract gap. A gap — found pre-code or discovered
+      mid-implementation — is NEVER resolved by improvisation: the
+      executor reports `OPEN: contract_gap(<question>)` and the
+      question climbs the escalation ladder to the arch committee
+      (§6), which refines the contract (a new sign-off hash). The
+      item does not proceed in implementation while a gap is
+      unresolved.
    d. Executor (code_writer): scope plan > tests from G/W/T + code >
       green native run (project lint+tests+typecheck) > re-grounding
       (git status/diff --stat against the scope plan) > report in
@@ -489,9 +524,12 @@ The version policy is fixed at roadmap approval, not at merge
    e. The item judge verifies (p.5). Rework loops until verdict.
    f. A line in harness_log.jsonl via `canon/bin/harness_log.sh
       append`.
-5. Deviations: non-contractual — the executor decides itself, the
-   report gives choice+alternatives; contractual — escalation
-   (PLAN_DELTA > approve/reject).
+5. Deviations: non-contractual — inside a declared
+   `delegated_decisions` axis or behavior-neutral — the executor
+   decides itself, the report gives choice+alternatives;
+   contractual — escalation (PLAN_DELTA > approve/reject); an
+   undetermined point outside the delegated axes is a contract gap
+   (p.4c), not a deviation.
 6. PR assembly (all branch items done; a branch may carry several
    items — it is named by the primary issue, and `repository-agent`
    exports `ISSUE_NUMS` with all branch issues for
@@ -615,8 +653,9 @@ recorded as a decision envelope (§3).
 
 The reviewer is right by default — the executor complies. Escalation
 trigger: executor disagreement OR the reviewer marked the objection
-`uncertain`. The question goes to BOTH partners at once. They
-agree — closed; they disagree — to the developer. No sub-rungs.
+`uncertain`. The question goes to all partners of the calling
+committee at once. They agree — closed; they disagree — to the
+developer. No sub-rungs.
 
 ### Stuck review
 
@@ -696,8 +735,9 @@ to the developer directly.
    instance's assignment is not obvious from the rules/context —
    clarify with
    the developer in one question.
-2. SKILLS AND TOOLS: check the harness — `partner_info` on both
-   partners, profiles in `canon/agents/`, skills in `canon/skills/`.
+2. SKILLS AND TOOLS: check the harness — `partner_info` on the
+   bound partners, profiles in `canon/agents/`, skills in
+   `canon/skills/`.
    If something critical is missing for the task — ask the
    developer what to substitute or where to get it. Silent
    substitutions are forbidden.

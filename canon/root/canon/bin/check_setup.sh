@@ -54,11 +54,12 @@ allowed = required | {
     "project_name",               # display name for fleet messages
     "director",                   # {background_executors: int}
     "actors",                     # actor-registry bootstrap overrides
+    "partners",                   # {role: {partner_id, model}} bindings
 }
 types = {"protected_paths": list, "cyrillic_paths": list,
          "ignored_instances": list, "repos": list,
          "version": dict, "review": dict, "director": dict,
-         "actors": dict,
+         "actors": dict, "partners": dict,
          "repo": str, "text_language": str, "repo_language": str,
          "role": str,
          "migration_dry_run_cmd": str, "instances_bridge_dir": str,

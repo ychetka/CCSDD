@@ -185,7 +185,7 @@ if [ "$CMD" = "append" ]; then
       gate_blocked|merge_conflict|ci_failed|permission_denied|stale_head|\
       malformed_input|upstream_error|missing_changes_entry|\
       version_not_bumped|version_source_missing|version_drift|conflict|\
-      quota_limited|incomplete_read|not_found|manual_gate|\
+      contract_gap|quota_limited|incomplete_read|not_found|manual_gate|\
       verify_escalated|verify_failed|release_failed|\
       baseline_unresolvable|env_setup_failed|unknown) ;; *) FC=unknown;; esac
   fi

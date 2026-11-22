@@ -103,8 +103,8 @@ on behalf of the project's reviewer account.
      one commit; cross-item coherence (branch items do not break
      each other). Without a package — these checks are skipped.
 7. Publish the result as ONE PR review from the project's reviewer
-   account with inline comments on specific code lines (the way
-   Copilot does). Compose `review.json` and submit THROUGH THE GATE
+   account with inline comments on specific code lines (the way an
+   auto-review bot does). Compose `review.json` and submit THROUGH THE GATE
    SCRIPT (hygiene + journal), not via the raw API:
    `GH_BIN="$REVIEWER_GH" canon/bin/repo_pr_review.sh --pr <N> --json-file review.json`
    A direct `$REVIEWER_GH api -X POST .../reviews` bypassing the

@@ -5,7 +5,7 @@
 #
 #   partner_call.sh --partner <id> --tool <name>
 #     (--args '<json>' | --args-file <path>)
-#     [--audit-key <key>] [--class consult|audit]
+#     [--audit-key <key>] [--class consult|audit] [--round <n>]
 #
 # --args-file reads the same JSON object from disk - large audit
 # packages exceed the kernel's single-argument limit.
@@ -37,16 +37,18 @@ COUNTERS="$CANON_DIR/gateway_counters.json"
 POLICY="$CANON_DIR/config/policy.json"
 mkdir -p "$JOURNAL"
 
-PARTNER=""; TOOL=""; ARGS_JSON=""; ARGS_FILE=""; AUDIT_KEY=""; REQ_CLASS=""
+PARTNER=""; TOOL=""; ARGS_JSON=""; ARGS_FILE=""; AUDIT_KEY=""; REQ_CLASS=""; ROUND=""
 while [ $# -gt 0 ]; do
-  [ $# -ge 2 ] || { echo "usage: partner_call.sh --partner <id> --tool <t> (--args '<json>' | --args-file <path>) [--audit-key <k>] [--class consult|audit]" >&2; exit 2; }
+  [ $# -ge 2 ] || { echo "usage: partner_call.sh --partner <id> --tool <t> (--args '<json>' | --args-file <path>) [--audit-key <k>] [--class consult|audit] [--round <n>]" >&2; exit 2; }
   case "$1" in
     --partner) PARTNER=$2;; --tool) TOOL=$2;;
     --args) ARGS_JSON=$2;; --args-file) ARGS_FILE=$2;;
     --audit-key) AUDIT_KEY=$2;; --class) REQ_CLASS=$2;;
+    --round) ROUND=$2;;
     *) echo "partner_call: unknown flag $1" >&2; exit 2;;
   esac; shift 2
 done
+case "$ROUND" in ""|*[!0-9]*) [ -z "$ROUND" ] || { echo "partner_call: --round must be a positive integer" >&2; exit 2; } ;; esac
 if [ -n "$ARGS_FILE" ]; then
   [ -z "$ARGS_JSON" ] || { echo "partner_call: --args and --args-file are exclusive" >&2; exit 2; }
   [ -f "$ARGS_FILE" ] || { echo "partner_call: args file missing: $ARGS_FILE" >&2; exit 2; }
@@ -57,7 +59,7 @@ fi
 JOURNAL="$JOURNAL" COUNTERS="$COUNTERS" POLICY="$POLICY" \
   PARTNER="$PARTNER" TOOL="$TOOL" \
   ARGS_JSON="$ARGS_JSON" ARGS_FILE="$ARGS_FILE" \
-  AUDIT_KEY="$AUDIT_KEY" REQ_CLASS="$REQ_CLASS" \
+  AUDIT_KEY="$AUDIT_KEY" REQ_CLASS="$REQ_CLASS" ROUND="$ROUND" \
   python3 - <<'PY'
 import datetime, fcntl, hashlib, json, os, re, signal, sys
 
@@ -68,6 +70,9 @@ args_file = os.environ.get("ARGS_FILE")
 args_raw = open(args_file, encoding="utf-8").read() \
     if args_file else os.environ["ARGS_JSON"]
 req_class = os.environ["REQ_CLASS"]
+call_round = os.environ.get("ROUND") or None
+if call_round is not None:
+    call_round = int(call_round)
 
 try:
     call_args = json.loads(args_raw)
@@ -233,6 +238,7 @@ entry = {
     "partner": partner,
     "tool": tool,
     "class": call_class,
+    "round": call_round,
     "audit_key": audit_key if call_class == "audit" else None,
     "request_args": call_args,
     "response": result,

@@ -98,7 +98,10 @@ findings go back to the executor.
    nonexistent API or a dubious package name — a [CRITICAL] finding
    (slopsquatting).
 7. **Existing tests**: `git diff` over test files — every change to
-   an existing test must be justified in `DECISIONS`. Weakened
+   an existing test must be justified in `DECISIONS`. Every
+   `DECISIONS` entry citing design freedom must name the contract's
+   `delegated_decisions` axis it resolves; a decision outside the
+   declared axes is improvisation — a blocking finding. Weakened
    asserts without justification — a [CRITICAL] finding.
 8. **Code**: spot-read the diff for violations of applicable
    `docs/CODING_HAZARDS.md` rules (by numbers) — especially in the

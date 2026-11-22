@@ -45,11 +45,13 @@ responsibilities; enforcement lives in gates.
 ### 2. Two-committee structure + review outside committees
 
 - **Architecture committee** — the root director (the main agent
-  instance in the repository) + partner consultants + the human
-  arbiter. Designs
+  instance in the repository) + partner consultants
+  (architect-partner, product-partner — canonical roles bound to
+  top-tier models) + the human arbiter. Designs
   the roadmap and each item. Never edits project code.
 - **Executive committee** — the executor subagent (`code_writer`) +
-  consultants. Implements one roadmap item inside a scope whitelist.
+  consultants (design-partner, product-partner — workhorse tier).
+  Implements one roadmap item inside a scope whitelist.
 - **Reviewers — outside both committees**: judge, reviewer subagent,
   resolver, reader. Verdicts are issued only against fixed artifacts
   and the frozen contract; no committee judges its own output.

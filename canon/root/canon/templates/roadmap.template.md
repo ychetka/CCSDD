@@ -51,3 +51,8 @@ coverage checks reference them.
 - design_dissent: |
     <preserved minority position of the arch committee, verbatim>
 ```
+
+The contract file MAY carry a `## Delegated decisions` block
+(harness.md §3): explicit freedom axes with constraints, frozen by
+the sign-off hash. Undetermined points outside the declared axes
+are contract gaps — escalation, never improvisation.

@@ -1,0 +1,35 @@
+{
+  "_comment": "Canonical partner-role registry. The canon names ROLES, never vendor models: the concrete model/partner binding per role is a project or deployment setting (project.json 'partners'). All calls go through the gateway (gateway.md); partners are stateless and never access the repo.",
+  "roles": {
+    "architect-partner": {
+      "committee": "architecture",
+      "profile": "Consult",
+      "tier": "top",
+      "duty": "co-designer: roadmap, contracts, cross-domain consistency"
+    },
+    "product-partner": {
+      "committee": "architecture,executive",
+      "profile": "Consult",
+      "tier": "top on arch items, workhorse on exec items",
+      "duty": "product constraints, UX coherence, requirement coverage"
+    },
+    "design-partner": {
+      "committee": "executive",
+      "profile": "Consult",
+      "tier": "workhorse",
+      "duty": "implementation-level design consults within declared delegated decisions"
+    },
+    "reviewer-partner": {
+      "committee": "review_support",
+      "profile": "Consult",
+      "tier": "workhorse",
+      "duty": "second-family consult on review disputes; a consult, never a verdict"
+    },
+    "ex-architect-partner": {
+      "committee": "arbitration",
+      "profile": "Audit",
+      "tier": "top",
+      "duty": "external audit and dispute arbitration; stateless, no repo access"
+    }
+  }
+}

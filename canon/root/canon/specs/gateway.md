@@ -18,6 +18,10 @@ orchestration-instance and shared-loop level (see `fleet.md`, terms
   human decision; a lightweight service with minimal state, restart
   without journal loss: the journal lives in STATE, not in the
   gateway process).
+- Partners are addressed by canonical ROLE, not vendor name: the
+  role registry (`config/partners.json`) fixes the committee,
+  profile and tier per role; the concrete model binding is a
+  project/deploy setting (`project.json` → `partners`).
 
 ## 2. Call profiles
 
@@ -25,6 +29,13 @@ orchestration-instance and shared-loop level (see `fleet.md`, terms
 |---|---|---|
 | `Audit` | external-architect audit, second-family verdict, dispute arbitration | iteration counter, immutable verdict journal in STATE, verbatim archive of request/response |
 | `Consult` | working partner consultations (arch/exec/orchestrator committees) | budget limits, light tracing (metadata + digest) |
+
+- Deliberation between partners runs as bounded conflict-directed
+  rounds (harness.md §2): round 1 is blind; later rounds carry
+  only counterarguments against the callee's own position, never
+  a consensus framing. The director assembles every packet;
+  partners stay stateless and never exchange directly. The call
+  round is journaled (`partner_call.sh --round`).
 
 ## 3. Call classification — from state, not from the claim
 

@@ -72,13 +72,20 @@ the partner is stateless and does not know our definitions.
   partner consultants.
 - **Review** — outside the committees: judge, reviewer, auto-review,
   resolver.
-- **Partner consultants (PARTNERS)** — external stateless models:
-  arch-committee co-authors, exec-committee consultants, the
-  orchestrator committee, dispute arbiters.
+- **Partner consultants (PARTNERS)** — external stateless models
+  bound to canonical roles (`config/partners.json`):
+  architect-partner / product-partner (arch-committee
+  co-designers), design-partner / product-partner (exec-committee
+  consultants), reviewer-partner (review-support consults),
+  ex-architect-partner (dispute arbitration). The role is fixed
+  by canon; the concrete model binding is a project setting —
+  vendor names never appear in canon.
 - **External architect (ARCH)** — external stateless auditor,
-  reachable only through the unified gateway.
+  reachable only through the unified gateway; bound as
+  ex-architect-partner, Audit profile.
 - **Independent reviewer (CR)** — the second model family,
-  mandatory on high risk before publication.
+  mandatory on high risk before publication; bound as
+  reviewer-partner.
 
 ## Infrastructure
 
