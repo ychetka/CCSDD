@@ -95,7 +95,11 @@ merge for an explicit developer decision. A decision is recorded as
 an **envelope**
 `{verdict, artifact_sha, sig, signed_by, ts}` — written outside the
 LLM context, signed with a key kept outside the workspace, and
-mechanically verified by consumers against the artifact hash. A
+mechanically verified by consumers against the artifact hash. For
+remote humans (a laptop with no agents, sessions over SSH) the same
+envelope travels as a one-line `CCSDD-SIGNOFF-1|…` string pasted
+into the agent chat — the chat is transport only; the pasted line
+is still a cryptographic envelope. A
 "verbal" approval is impossible: the gate checks the envelope, not
 chat text.
 

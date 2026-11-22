@@ -1,7 +1,7 @@
 {
   "canary": "GENERATED_AT_DEPLOY",
   "canon_home": "canon/root",
-  "canon_version": "1.2.2",
+  "canon_version": "1.2.3",
   "description": "CCSDD neutral canon: deployed into a project as canon/ dir. Runtime glue (adapters/*) is generated per-target at deploy time. canary is generated per-repo at deploy time.",
   "files": [
     "canon/RULES.md",
@@ -132,7 +132,7 @@
     "canon/bin/harness_log.sh": "3c7c08cd0eca3e1227e7ecfb7b8ef0655b2505364c3df13ecb78a7c71a558bee",
     "canon/bin/human_sign.sh": "48637d3173f96e4391148347a5e9ce4cfbcc3c8490f49eb4806b219c4b058a8a",
     "canon/bin/hygiene_check.sh": "bfdd7fcb6f6e8ff1a6b2fae58df18c13aab0ef46a5910ba5a0d65d483a381161",
-    "canon/bin/issue_merge.sh": "e39a6a8711089d2a998a6b716eda696310d4dea3493d45ba031afca2a6d066ee",
+    "canon/bin/issue_merge.sh": "dea73ef091bc3468f17eb8aa6de3e6f30192c26a7acfef5e93e3274a27a941aa",
     "canon/bin/item_worktree.sh": "9ecd5f81098702d5663749d5790a41d8a27b00630b7aab3a8afc183246c472fe",
     "canon/bin/migration_gate.sh": "c346ad2e60b34358bbf5b6146b24404e847293f24dd252fdaaba5c797d570049",
     "canon/bin/migration_pattern.sh": "badc245ce6bb752ad9b9ccfc63075b3817420cf298a58bccc833242fb2fc60dd",
@@ -176,7 +176,7 @@
     "canon/specs/fleet.md": "6fef9ba721bc728e7578a1ab8b0951806f38fff2d67b6f788af205dfaf5fd12a",
     "canon/specs/gateway.md": "c4b315630c84818017084ec8134cf25b3f2b1a1c3b51d3da29f548d9c820623a",
     "canon/specs/glossary.md": "e08d7b6217abd202c08fdba1e3d5d2da3d369c61c582609545f82b3e94ca4eca",
-    "canon/specs/harness.md": "31b984c22d6fb48882db42e463b5f8bc75b053935288748103ed7a5703dc426e",
+    "canon/specs/harness.md": "3d16a8eaa09cce3f327e1e80266c50e347d9b2396a3036db36002f5ec77b8922",
     "canon/specs/quota.md": "ccb2f40e1ea808ee4524ceb3778fbc5f159374ab669b5d9be69c130e10811e1f",
     "canon/specs/review_panel.md": "6538fb32e390f0b3e10f22b8756f0e98faa7d9e89f69b42ac8be20a67c4043ec",
     "canon/templates/release_workflow.yml": "df5c2db732d04d6e86a4bfb28141ba52c6800e10d26c10107a7a981768dfe06b",

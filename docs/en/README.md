@@ -8,8 +8,8 @@ both committees verify — and discipline is held not by prompts but by
 mechanical gates, hash-pinned artifacts, and signed human decision
 envelopes.
 
-Two version axes, deliberately separate: **product release** `v0.2.2`
-(the repo tag on this package) and **canon version** `1.2.2`
+Two version axes, deliberately separate: **product release** `v0.2.3`
+(the repo tag on this package) and **canon version** `1.2.3`
 (`MANIFEST.json.canon_version`, released as `canon-v*` tags — the axis
 deploy/release fencing cares about). Product tags track the package;
 canon tags track the methodology payload.

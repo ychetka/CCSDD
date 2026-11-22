@@ -572,9 +572,13 @@ fi
 # waits for the developer. The legal path is a human signoff
 # envelope: `human_sign.sh sign --verdict approve
 # --artifact <head_sha> --out canon/human_signoffs/<branch>.json`
-# - the ssh-signed envelope must verify against the exact head the
-# gate would merge (7-day freshness, nonce anti-replay). No envelope
-# or a stale/mismatched/replayed one = blocked.
+# or the compact form `sign ... --out -` whose CCSDD-SIGNOFF-1|
+# line the human pastes into the chat (remote-laptop workflow);
+# either content at ENV_FILE verifies identically - the line is a
+# signed envelope, not a text approval. The ssh-signed envelope
+# must verify against the exact head the gate would merge (7-day
+# freshness, nonce anti-replay). No envelope or a
+# stale/mismatched/replayed one = blocked.
 MANUAL_GATE=$(printf '%s' "$ENTRY" | python3 -c 'import json,sys
 try: print("yes" if (json.load(sys.stdin).get("flags") or {}).get("manual_gate") else "no")
 except Exception: print("no")')
@@ -592,7 +596,7 @@ raw = os.environ.get("ENTRY", "")
 try: report = json.loads(raw)
 except Exception: report = {}
 print(json.dumps({"status": "blocked", "failure_class": "manual_gate",
-                  "message": "fragment declares manual_gate: true - developer approval required. Sign with: human_sign.sh sign --verdict approve --artifact %s --out %s" % (os.environ.get("EXPECTED",""), os.environ.get("ENV_FILE","")),
+                  "message": "fragment declares manual_gate: true - developer approval required. Sign with: human_sign.sh sign --verdict approve --artifact %s --out %s (or --out - and paste the CCSDD-SIGNOFF-1 line into the chat; save it to %s)" % (os.environ.get("EXPECTED",""), os.environ.get("ENV_FILE",""), os.environ.get("ENV_FILE","")),
                   "gate_report": {"changes_entry": report}}))'
     exit 1
   fi

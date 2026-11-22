@@ -372,4 +372,8 @@ Next steps for the operator:
   4. Provision the human sign-off identity once (outside the
      workspace, ssh-agent key only):
        canon/bin/human_sign.sh init
+     Remote humans (laptop + ssh, no agent on this machine): run
+     init + sign on the laptop with --out - and paste the
+     CCSDD-SIGNOFF-1|<verdict>|<sha>|<ts>|<nonce>|<sig> line into
+     the agent chat - the gate verifies it identically.
 EOF

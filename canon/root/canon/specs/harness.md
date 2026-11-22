@@ -196,15 +196,23 @@ An immutable record of a human decision that affects a gate
   an ssh-agent-resident key (`ssh-keygen -Y sign`); the private
   key never enters the workspace filesystem, so a workspace agent
   cannot mint a signoff. `human_sign.sh init` writes
-  `~/.config/ccsdd/allowed_signers` once; `sign` writes
-  `{format: ssh-sig-v1, verdict, artifact_hash, ts, nonce,
-  signature_b64}` to `canon/human_signoffs/<branch>.json`; the
-  product gates run `human_sign.sh verify` against the exact head
-  SHA. Verification enforces the artifact/verdict binding, a
-  7-day freshness window and nonce anti-replay
-  (`canon/human_signoffs/.used_nonces`) — a captured envelope
-  cannot approve a different artifact, a different verdict, or a
-  second merge.
+  `~/.config/ccsdd/allowed_signers` once. `sign` supports two
+  transports for the SAME signed payload: `--out <file>.json`
+  writes the envelope to `canon/human_signoffs/<branch>.json`,
+  while `--out -` prints a compact single line
+  `CCSDD-SIGNOFF-1|<verdict>|<artifact>|<ts>|<nonce>|<sig_b64>`
+  the human can paste into the agent chat — the remote-laptop
+  workflow where signing happens off-server and the chat is just
+  transport (the line is still a cryptographic envelope, not a
+  "verbal" approval; a pasted plaintext "approved" is rejected).
+  `verify` accepts the JSON envelope, a file holding the compact
+  line, or the literal line — the compact fields expand into the
+  same envelope, so every check is identical: signature against
+  `allowed_signers` (which lives OUTSIDE the workspace), the
+  exact artifact/verdict binding, a 7-day freshness window and
+  nonce anti-replay (`canon/human_signoffs/.used_nonces`) — a
+  captured envelope cannot approve a different artifact, a
+  different verdict, or a second merge.
 - Written into the instance STATE (managed mode) or into the cycle
   artifact journal (direct mode) — never passed as text through an
   LLM intermediary.
