@@ -72,6 +72,17 @@ Implements one roadmap item.
   (pyproject.toml/package.json/Makefile) — the harness only calls
   the entrypoint; canon/ has no lint config of its own and must not
   have one.
+- The designer (a `designer`-profile subagent,
+  `canon/agents/designer.md`) — a CONDITIONAL member, spawned only
+  for items whose contract declares a `## Delegated decisions` block
+  with at least one axis. It resolves every declared axis into an
+  impl spec (decision + constraint_check + alternatives per axis)
+  BEFORE the code_writer starts; the mechanical gate
+  `canon/bin/design_spec_check.sh` must pass on the spec before the
+  writer is spawned. The designer writes no code, resolves nothing
+  outside the declared axes (undetermined → `contract_gap`
+  escalation) and holds no verdict power — the judge verifies its
+  coverage.
 - design-partner, product-partner — consultant co-authors
   (workhorse tier; consultation before spawn and on demand, through
   the gateway, Consult profile).
@@ -155,8 +166,11 @@ public repositories). Available to subagents locally.
 - A contract MAY carry a `## Delegated decisions` block (inside
   the contract file — it freezes together with the sign-off
   hash): an explicit list of freedom axes, each with its
-  constraint — `{axis, constraint}` (e.g. "control
-  position/size — must comply with the design system").
+  constraint, one per line as
+  `- axis: <name> | constraint: <binding constraint>`
+  (e.g. `- axis: control_placement | constraint: must comply
+  with the design system`). The line format is mechanical:
+  `design_spec_check.sh` parses it (p.4b).
   Everything the contract neither requires nor delegates is a
   CONTRACT GAP, not freedom — see p.4c.
 
@@ -313,8 +327,8 @@ Globally, several
 orchestrators with scoped ownership may exist (disjoint sets of
 tasks/instances — e.g. when one runs out of context window); two
 orchestrators on one project is a forbidden case. Roles:
-orchestrator, director, executor/code_writer, judge, reviewer,
-resolver, repository, git, reader, hygiene, partner.
+orchestrator, director, executor/code_writer, designer, judge,
+reviewer, resolver, repository, git, reader, hygiene, partner.
 
 Actor retirement: when an agent instance ends, its record in
 `actors.json` is removed by `cycle_log.sh unregister` (with the
@@ -501,7 +515,18 @@ The version policy is fixed at roadmap approval, not at merge
       The answer — a structured JSON list of flags; root attaches
       them to the item as additional_acceptance_notes. Not for
       docs/refactor items.
-   b. Spawn the executor with a package (p.5).
+   b. If the contract declares a `## Delegated decisions` block with
+      at least one axis: spawn the designer FIRST (§2). The designer
+      returns an impl spec — one decided entry per declared axis —
+      which the calling instance appends to the item journal. The
+      mechanical gate `canon/bin/design_spec_check.sh --contract
+      <contract-file> --spec <impl-spec>` must pass BEFORE the
+      executor is spawned: a declared axis left undecided or a spec
+      entry naming an undeclared axis fails the gate (designer
+      rework; a wrong axis set is a contract_gap → arch committee).
+      Then spawn the executor with a package (p.5) that includes the
+      impl spec. With no declared axes the designer is not spawned
+      and the step reduces to a plain executor spawn.
    c. Mandatory pre-code interrogation: the executor records in the
       item journal a structured interrogation BEFORE writing code —
       assumptions, ambiguities, readings of criteria. The

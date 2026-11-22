@@ -103,6 +103,15 @@ findings go back to the executor.
    `delegated_decisions` axis it resolves; a decision outside the
    declared axes is improvisation — a blocking finding. Weakened
    asserts without justification — a [CRITICAL] finding.
+7a. **IMPL_SPEC**: if the contract declares `## Delegated
+   decisions`, the item journal must carry the designer's impl spec
+   with a decided entry for every declared axis (the calling
+   instance gates it via `canon/bin/design_spec_check.sh`; verify
+   the coverage yourself — a missing spec or an undecided axis is
+   a blocking finding). Each spec decision must satisfy its
+   declared constraint, the diff must implement the spec's
+   resolutions, and a writer DECISIONS entry that silently
+   overrides the spec is improvisation — a blocking finding.
 8. **Code**: spot-read the diff for violations of applicable
    `docs/CODING_HAZARDS.md` rules (by numbers) — especially in the
    trigger areas declared in `HAZARDS`.

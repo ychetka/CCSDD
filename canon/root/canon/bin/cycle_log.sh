@@ -6,8 +6,8 @@
 #       capability token ONCE on stdout. Only sha256(token) is stored;
 #       the token travels to the actor inside its spawn/context
 #       package and authenticates `close`. Roles: orchestrator,
-#       director, executor|code_writer, judge, reviewer, resolver,
-#       repository, git, reader, hygiene, partner.
+#       director, executor|code_writer, designer, judge, reviewer,
+#       resolver, repository, git, reader, hygiene, partner.
 #
 #   cycle_log.sh append --item i_30 --actor git-agent \
 #     --action commit --expected "..." --result "..." \
@@ -61,7 +61,7 @@ if [ "$CMD" = "register" ]; then
   done
   [ -n "$ACTOR" ] && [ -n "$ROLE" ] || { echo "register: --actor and --role required" >&2; exit 2; }
   case "$ROLE" in
-    orchestrator|director|executor|code_writer|judge|reviewer|resolver|repository|git|reader|hygiene|partner) ;;
+    orchestrator|director|executor|code_writer|designer|judge|reviewer|resolver|repository|git|reader|hygiene|partner) ;;
     *) echo "register: bad role '$ROLE'" >&2; exit 2;;
   esac
   ACTORS="$ACTORS" ACTOR="$ACTOR" ROLE="$ROLE" PROJECT="$PROJECT" \

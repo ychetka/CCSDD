@@ -542,6 +542,54 @@ expect T48c-flyway-version-match 0 $?
   && ./canon/bin/ship_commit.sh "drop 010" db/migrations/010_up.sql) >"$SCRATCH/out" 2>&1
 expect T48d-delete-with-args 0 $?
 
+# --- T49: design_spec_check gate (designer -> code_writer) --------
+DS="$CANON_DIR/bin/design_spec_check.sh"
+cat >"$SCRATCH/contract_full.md" <<'EOF'
+## Delegated decisions
+- axis: control_placement | constraint: must comply with design system
+- axis: control_size | constraint: within grid bounds
+EOF
+cat >"$SCRATCH/spec_ok.md" <<'EOF'
+## Impl spec
+### axis: control_placement
+- decision: top-right toolbar
+- constraint_check: matches design system grid
+- alternatives: bottom bar (rejected: thumb reach)
+### axis: control_size
+- decision: 32px
+- constraint_check: inside grid bounds
+- alternatives: 40px (rejected: crowds the toolbar)
+EOF
+# a) contract without delegated axes - designer not required
+printf 'plain contract, no axes\n' >"$SCRATCH/contract_none.md"
+"$DS" --contract "$SCRATCH/contract_none.md" >"$SCRATCH/out" 2>&1
+expect T49a-no-axes 0 $? "not required"
+# b) declared axes but no spec file
+"$DS" --contract "$SCRATCH/contract_full.md" >"$SCRATCH/out" 2>&1
+expect T49b-no-spec 1 $? "no readable impl spec"
+# c) all axes covered -> pass
+"$DS" --contract "$SCRATCH/contract_full.md" --spec "$SCRATCH/spec_ok.md" >"$SCRATCH/out" 2>&1
+expect T49c-covered 0 $? "covered"
+# d) a declared axis left out of the spec -> fail naming the axis
+sed '/^### axis: control_size/,$d' "$SCRATCH/spec_ok.md" >"$SCRATCH/spec_missing.md"
+"$DS" --contract "$SCRATCH/contract_full.md" --spec "$SCRATCH/spec_missing.md" >"$SCRATCH/out" 2>&1
+expect T49d-uncovered-axis 1 $? "control_size"
+# e) spec resolving an undeclared axis = improvisation -> fail
+cat "$SCRATCH/spec_ok.md" >"$SCRATCH/spec_extra.md"
+printf '### axis: colors\n- decision: red\n' >>"$SCRATCH/spec_extra.md"
+"$DS" --contract "$SCRATCH/contract_full.md" --spec "$SCRATCH/spec_extra.md" >"$SCRATCH/out" 2>&1
+expect T49e-undeclared-axis 1 $? "improvisation"
+# f) axis entry present but no decision -> fail
+cat >"$SCRATCH/spec_nodec.md" <<'EOF'
+## Impl spec
+### axis: control_placement
+- constraint_check: matches design system
+### axis: control_size
+- decision: 32px
+EOF
+"$DS" --contract "$SCRATCH/contract_full.md" --spec "$SCRATCH/spec_nodec.md" >"$SCRATCH/out" 2>&1
+expect T49f-undecided-axis 1 $? "control_placement"
+
 echo "---"
 echo "gate_tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -50,6 +50,9 @@ responsibilities; enforcement lives in gates.
   top-tier models) + the human arbiter. Designs
   the roadmap and each item. Never edits project code.
 - **Executive committee** — the executor subagent (`code_writer`) +
+  a conditional `designer` (spawned only when the contract declares
+  `## Delegated decisions` axes: resolves every axis into an impl
+  spec, gated by `design_spec_check.sh` before the writer starts) +
   consultants (design-partner, product-partner — workhorse tier).
   Implements one roadmap item inside a scope whitelist.
 - **Reviewers — outside both committees**: judge, reviewer subagent,
@@ -98,7 +101,8 @@ chat text.
 
 ### 6. Per-item verification chain
 
-`executor (pre-code interrogation → code+tests → green run) → judge
+`designer (delegated axes → impl spec, gated before the writer) →
+executor (pre-code interrogation → code+tests → green run) → judge
 (≤3 rounds against the frozen contract) → reviewer subagent (separate
 account, remote-storage-only reads, verdict unfiltered by the
 director) → git agent (candidate commit with explicit sha) → hygiene
@@ -253,6 +257,7 @@ hardening for workspace-anchored items and is outside this drop.
 👨‍💻 DEV human ──► gates: roadmap, sign-off, manual_gate, escalations
 🧭 ROOT director ──► plan, contract drafts, spawns roles, never commits
 👷 CW executor ──► code+tests inside whitelist, pre-code interrogation
+🎨 DSG designer ──► conditional: closes contract's delegated axes → impl spec
 ⚖️ JDG judge ──► verdict vs frozen contract only
 🔍 RVW reviewer ──► remote-storage-only review, unfiltered by ROOT
 🤝 RES resolver ──► bounded disagreement rounds → stop/escalation

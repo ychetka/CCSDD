@@ -54,5 +54,15 @@ coverage checks reference them.
 
 The contract file MAY carry a `## Delegated decisions` block
 (harness.md §3): explicit freedom axes with constraints, frozen by
-the sign-off hash. Undetermined points outside the declared axes
-are contract gaps — escalation, never improvisation.
+the sign-off hash. Format, one axis per line:
+
+```markdown
+## Delegated decisions
+- axis: <name> | constraint: <binding constraint>
+```
+
+Undetermined points outside the declared axes are contract gaps —
+escalation, never improvisation. When at least one axis is
+declared, the designer resolves them into an impl spec and
+`design_spec_check.sh` gates the spec before the executor spawn
+(harness.md §4b).

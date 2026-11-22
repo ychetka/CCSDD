@@ -49,6 +49,11 @@ the partner is stateless and does not know our definitions.
 - **Artifact executor (CW)** — a worker role: writes artifacts in
   the work area against a file whitelist, a green native run is
   mandatory, the contract is immutable to it.
+- **Designer (DSG)** — a conditional exec-committee role, spawned
+  only when the contract declares `## Delegated decisions` axes:
+  resolves every declared axis into an impl spec before the
+  executor starts; no code, no verdict power, nothing outside the
+  declared axes (`contract_gap` otherwise).
 - **Item judge (JDG)** — verdicts only on fixed artifacts (diff,
   checks, frozen contract), never on self-reports.
 - **Reviewer (RVW)** — separate account, publishes the verdict
@@ -69,6 +74,7 @@ the partner is stateless and does not know our definitions.
   acceptance criteria, risk flags, disagreements. Director (author)
   + partner consultants (co-authors) + human (arbiter).
 - **Executive committee** — implementation of one item: executor +
+  designer (conditional, only when the contract delegates axes) +
   partner consultants.
 - **Review** — outside the committees: judge, reviewer, auto-review,
   resolver.

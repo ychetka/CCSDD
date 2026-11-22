@@ -4,6 +4,7 @@ flowchart LR
   end
   subgraph COM2["EXECUTIVE COMMITTEE"]
     CW["👷 CW executor<br/>code + tests in whitelist"]
+    DSG["🎨 DSG designer (conditional)<br/>delegated axes → impl spec"]
   end
   subgraph REV["REVIEWERS — outside both committees"]
     JDG["⚖️ JDG judge<br/>frozen contract only"]
@@ -24,7 +25,9 @@ flowchart LR
   RULES[["📜 canon/<br/>RULES.md · agents ·<br/>specs · gates"]]
 
   ROOT -->|spawn: package| CW
+  ROOT -->|spawn: axes| DSG
   ROOT -->|contract draft| JDG
+  DSG -->|impl spec| CW
   CW -->|report/blocker| ROOT
   CW --> ART
   JDG -->|accepted/resolver/escalation| ROOT
