@@ -244,7 +244,7 @@ if os.path.isfile(aj):
     try:
         actors = json.load(open(aj, encoding="utf-8"))
         roles = {"orchestrator","director","executor","code_writer",
-                 "judge","reviewer","resolver","repository","git",
+                 "designer","judge","reviewer","resolver","repository","git",
                  "reader","hygiene","partner"}
         lst = actors.get("actors") if isinstance(actors, dict) else actors
         if not isinstance(lst, list):
@@ -362,7 +362,7 @@ print("canon gitignore block complete")
 PY
       [ $? -eq 0 ] && ok "canon gitignore block" || fails=$((fails+1))
     else
-      grep -q "^# >>> canonical harness" "$GI" 2>/dev/null \
+      grep -q "^# >>> canon" "$GI" 2>/dev/null \
         && ok "canon gitignore block (header only - no manifest)" \
         || fail ".gitignore missing canon block (run onboard/rollout to install)"
     fi ;;

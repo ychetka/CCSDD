@@ -8,7 +8,7 @@
 #     --model-tier-upgraded false \
 #     --outcome merged_clean [--friction-note "..."]
 #
-# category: contract|implementation|test|refactor|docs|exploration
+# category: contract|implementation|test|refactor|docs|exploration|infra|epic
 # outcome:  merged_clean|merged_with_deviations|escalated|abandoned
 # (enum kept in sync with canon/specs/harness.md)
 set -euo pipefail
@@ -35,7 +35,7 @@ done
 
 [ -n "$ITEM" ] && [ -n "$CAT" ] && [ -n "$AR" ] && [ -n "$ER" ] && [ -n "$OUT" ] \
   || { echo "harness_log: --item --category --arch-revisions --exec-review-rounds --outcome required" >&2; exit 2; }
-case "$CAT" in contract|implementation|test|refactor|docs|exploration) ;;
+case "$CAT" in contract|implementation|test|refactor|docs|exploration|infra|epic) ;;
   *) echo "harness_log: bad category '$CAT'" >&2; exit 2;; esac
 case "$OUT" in merged_clean|merged_with_deviations|escalated|abandoned) ;;
   *) echo "harness_log: bad outcome '$OUT'" >&2; exit 2;; esac

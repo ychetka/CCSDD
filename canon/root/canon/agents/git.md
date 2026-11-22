@@ -38,6 +38,11 @@ OUT: {status: ok|error, branch?, commits?: [sha],
   with the violation text — do not fix the message yourself, the
   calling instance does that.
 - Never call `git` directly; `gh` — never (not your domain).
+- `git clean` is forbidden in the workspace root: `canon/` is
+  gitignored but live (roadmap.md, actors.json, journals) and any
+  `git clean -fdx`/`git clean -fd` would erase the cycle state.
+  Scoped cleanup is allowed only as `git clean -fd -- <explicit
+  path>` on product paths, never with `-x`.
 - Commit message: short, imperative, describes the functional
   change and the mechanics touched; match the repo's history
   style. FORBIDDEN: Generated with, Co-Authored-By, AI-mentions,

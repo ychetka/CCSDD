@@ -28,28 +28,34 @@ documents only.
 
 ## Invariants: system reliability (code)
 
-- Async: blocking calls (requests/open/time.sleep/subprocess
-  without await, heavy CPU) inside async def are forbidden — they
-  stall the event loop.
+Language-agnostic invariants; stack-bound forms live in
+`canon/kb/<stack>.md` (e.g. `kb/python-asyncio.md`), a project kb
+may extend them.
+
+- Async code: blocking calls (synchronous I/O, subprocesses,
+  heavy CPU) inside the async path are forbidden — they stall
+  the event loop.
 - Every HTTP/DB/bus call has an explicit timeout. No timeout = bug.
 - External writes (API, bus, DB) — idempotency key or upsert;
   retries only with backoff+max_attempts; a network call inside
   an open DB transaction is forbidden.
-- asyncio.create_task() — only inside a tracked TaskGroup/set;
-  do not swallow CancelledError.
-- Money/quantities — Decimal/int, never float. Datetime — aware
-  UTC only; naive = bug.
+- Spawned tasks/futures — only inside a tracked task group;
+  never swallow cancellation.
+- Money/quantities — exact decimal/integer arithmetic, never
+  binary floating point. Datetimes — timezone-aware UTC only.
 - N+1 and unindexed queries on hot tables are unacceptable.
-- except Exception: pass / bare except — forbidden: either a
-  specific exception or log+re-raise.
-- Secrets and PII (tokens, chat_id, phones) — never in logs.
-- Unbounded read()/list()/dict in daemon scope without TTL/cap —
+- Catch-all exception swallowing — forbidden: either a specific
+  exception or log+re-raise.
+- Secrets and PII (tokens, user identifiers, phones) — never in
+  logs.
+- Unbounded read/list/dict in daemon scope without TTL/cap —
   forbidden.
-- BOLA/IDOR: access by id (chat_id, user_id) — check ownership.
-- print() in commits is forbidden — logging with a level; new
-  external calls carry a structured log/metric.
+- BOLA/IDOR: access by id — check ownership.
+- Debug prints in commits are forbidden — structured logging
+  with a level; new external calls carry a structured
+  log/metric.
 - Risky paths (money, external writes, auth, async lifecycle)
-  require a pytest test.
+  require an automated test.
 - STOP trigger: before editing async daemons, external
   API/webhook clients, financial math — if the repo has
   docs/CODING_HAZARDS.md, read it and quote the applicable
@@ -181,11 +187,13 @@ bridge/bus: tasks, directives, answers to questions):
 
 - The first line of any such text — date and time
   (`YYYY-MM-DD HH:MM`). Before any heading or marker.
-  The stamp is applied MECHANICALLY: text is piped through
-  `canon/bin/msg_stamp.sh` (text on stdin -> stamped text on
-  stdout); manual typing, extrapolation and skipping the stamp
-  are forbidden (orchestrator incident 2026-11-10, instances
-  ignoring the stamp — 2026-11-17).
+  The stamp is applied MECHANICALLY wherever a bus/script carries
+  the message: text is piped through `canon/bin/msg_stamp.sh` (text
+  on stdin -> stamped text on stdout); manual typing, extrapolation
+  and skipping the stamp are forbidden (orchestrator incident
+  2026-11-10, instances ignoring the stamp — 2026-11-17). Direct
+  conversational replies to the developer in the interactive
+  channel need no pipe — the runtime stamps them itself.
 - Jargon is forbidden: write terms out in full. Instead of
   "Spike" — "a time-boxed research experiment"; any other slang —
   spelled out.

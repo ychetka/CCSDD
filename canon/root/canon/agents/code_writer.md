@@ -115,7 +115,7 @@ trust.
 8. `git status` + `git diff --stat` — compare the actual footprint
    against the file whitelist. Everything outside the list —
    `SCOPE_DELTA`.
-8. Compose the report per the format below.
+9. Compose the report per the format below.
 
 # CODE INVARIANTS
 

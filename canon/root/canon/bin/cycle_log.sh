@@ -183,9 +183,11 @@ if [ "$CMD" = "append" ]; then
     # documents the same set). Unknown values collapse to `unknown`.
     case "$FC" in \
       gate_blocked|merge_conflict|ci_failed|permission_denied|stale_head|\
-      malformed_input|upstream_error|missing_changes_entry|\
+      malformed_input|upstream_error|upstream_timeout|missing_changes_entry|\
       version_not_bumped|version_source_missing|version_drift|conflict|\
-      contract_gap|quota_limited|incomplete_read|not_found|manual_gate|\
+      contract_gap|contract_ambiguity|unverifiable|scope_conflict|\
+      quota_limited|incomplete_read|not_found|manual_gate|\
+      epic_incomplete|missing_issue_field|issue_mismatch|stale_input|\
       verify_escalated|verify_failed|release_failed|\
       baseline_unresolvable|env_setup_failed|unknown) ;; *) FC=unknown;; esac
   fi

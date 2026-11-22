@@ -292,6 +292,11 @@ fi
 # into scannable text; diff.external= kills driver overrides.
 printf '%s\n' "$MSG" | "$CANON_DIR/bin/hygiene_check.sh" || {
   echo "HYGIENE_GATE: commit message rejected" >&2; exit 2; }
+# numstat marks staged binary rows with '-' - those paths are exempt
+# from the language class inside the scan (secrets still scan).
+export HYGIENE_BINARY_PATHS
+HYGIENE_BINARY_PATHS=$(git -c diff.external= diff --cached --numstat --no-ext-diff \
+  | awk -F'\t' '$1=="-"{print $3}')
 git -c diff.external= diff --cached --text --no-ext-diff | "$CANON_DIR/bin/hygiene_check.sh" --diff || {
   echo "HYGIENE_GATE: staged content rejected" >&2; exit 2; }
 

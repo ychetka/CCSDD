@@ -76,8 +76,11 @@ git cat-file -e "$EXPECTED" 2>/dev/null \
   || json_error upstream_error "expected head $EXPECTED not available locally"
 
 # canon/roadmap.md is a deployed working document (gitignored by
-# design, canon manifest entry) - read the live workspace copy.
-TMPD_RM="$TOP/canon/roadmap.md"
+# design, canon manifest entry) - read the live workspace copy. It
+# lives next to this script (CANON_DIR), not under the code repo
+# top: the supported nested layout keeps canon/ as a workspace
+# sibling of code/.
+TMPD_RM="$CANON_DIR/roadmap.md"
 [ -f "$TMPD_RM" ] \
   || json_blocked epic_incomplete "canon/roadmap.md missing in the workspace - the epic item cannot be resolved"
 

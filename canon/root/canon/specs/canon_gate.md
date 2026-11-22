@@ -31,7 +31,7 @@ area) -> CANON_PUB (publication gate) -> CANON (immutable release)
   equal the candidate tree hash (PR head). The signature payload
   additionally binds the target `--version` string, so an envelope
   cannot be replayed under a different release number, and `ts`
-  must sit inside a 24h freshness window — a stale approval is not
+  must sit inside a 7-day freshness window — a stale approval is not
   a current decision. Without a valid envelope publication is
   rejected fail-closed — orchestrator self-publication of canon is
   impossible.

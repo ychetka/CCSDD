@@ -19,7 +19,15 @@ lifecycle and field semantics.
 - risk_flags: [<auth | persistence | boundary | migration | ...>]
   # items touching contract/schema files, auth or persistence
   # boundaries get mandatory review escalation (harness.md)
-- frozen_hash: <sha256 of item text>    # filled at criteria freeze
+- frozen_hash: <sha256>                 # filled at criteria freeze:
+                                        # sha256 over the item block
+                                        # text with the mutable fields
+                                        # status/pr/issue/frozen_hash
+                                        # REMOVED first, then the
+                                        # remaining lines joined by
+                                        # \n in file order (no
+                                        # re-sorting, trailing spaces
+                                        # stripped per line)
 - pr: <PR number once assembled>        # optional
 - issue: <tracker issue number>         # epic items: REQUIRED —
                                         # binds epic_issue_<N>-<slug>

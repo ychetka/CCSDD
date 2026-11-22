@@ -266,7 +266,7 @@ abandon) — the outcome is recorded as fact, not forecast. 7 fields:
  "friction_note": "worker fought mock setup in tests"}
 ```
 
-- category: contract | implementation | test | refactor | docs | exploration
+- category: contract | implementation | test | refactor | docs | exploration | infra | epic
 - arch_revisions: iterations of item approval in the arch committee
 - exec_review_rounds: judge/reviewer rounds (1, 2, 3+)
 - model_tier_upgraded: whether exec-committee models were upgraded
@@ -284,12 +284,13 @@ responses (`repo_merge.sh`, `repo_release.sh`, `repo_pr_review.sh`
 etc.); `cycle_log.sh append --failure-class` validates against it:
 
 `gate_blocked | merge_conflict | ci_failed | permission_denied |
-stale_head | malformed_input | upstream_error |
+stale_head | malformed_input | upstream_error | upstream_timeout |
 missing_changes_entry | version_not_bumped | version_source_missing |
-version_drift | conflict | contract_gap | quota_limited |
-incomplete_read | not_found | manual_gate | verify_escalated |
-verify_failed | release_failed | baseline_unresolvable |
-env_setup_failed | unknown`
+version_drift | conflict | contract_gap | contract_ambiguity |
+unverifiable | scope_conflict | quota_limited | incomplete_read |
+not_found | manual_gate | epic_incomplete | missing_issue_field |
+issue_mismatch | stale_input | verify_escalated | verify_failed |
+release_failed | baseline_unresolvable | env_setup_failed | unknown`
 
 ### cycle_log.jsonl
 
@@ -606,10 +607,14 @@ The version policy is fixed at roadmap approval, not at merge
    COMMENT with blocking findings — the executor fixes and goes for
    another pass. APPROVED is set only by the reviewer (self-approve
    does not count). The severity of findings in comments is
-   mechanical: the reviewer must mark each finding `[BLOCKING]` or
-   `[MINOR]`; COMMENT/REQUEST_CHANGES with at least one `[BLOCKING]`
-   = merge block, COMMENT with only `[MINOR]` (including from a
-   human/third party) is treated as consent. A PR is not
+   mechanical: the reviewer marks each finding `[CRITICAL]`,
+   `[WARNING]` or `[MINOR]` (the `[UNCERTAIN]` tag requests missing
+   facts and is not a verdict); COMMENT/REQUEST_CHANGES with at
+   least one `[CRITICAL]` or `[WARNING]` = merge block, COMMENT
+   with only `[MINOR]` (including from a human/third party) is
+   treated as consent. An APPROVE event carrying any
+   `[CRITICAL]`/`[WARNING]` finding is invalid and the gate
+   rejects it. A PR is not
    merge-ready without APPROVE. If review rounds > 3 — complaint to
    the arch committee ("many review cycles, what to fix"), action
    per its decision. If the arch committee is called on one PR 3
@@ -842,7 +847,9 @@ publication). States:
 - `waiting_quota` — parked on an explicit model-limit error;
 - `saved` — resume point saved, step not running;
 - `paused` — stopped by an external command (HALT, manual pause,
-  terminal escalation).
+  terminal escalation);
+- `completed` — terminal: step finished with a result;
+- `abandoned` — terminal: step dropped by decision (close/abandon).
 
 Transitions (complete table; other pairs are invalid):
 
@@ -853,17 +860,20 @@ Transitions (complete table; other pairs are invalid):
 | running | saved | checkpoint save at turn end / limit T |
 | running | interrupted | turn crash, kill, executor deadline |
 | running | paused | HALT / manual pause / terminal escalation |
-| running | - (done) | step completed with a result |
+| running | completed | step completed with a result |
 | waiting_quota | running | probe after reset_at succeeds |
 | waiting_quota | waiting_quota | probe hits the limit again — re-park on new reset_at |
 | waiting_quota | paused | fleet HALT (takes priority over quota) |
 | waiting_quota | interrupted | killed by daemon kill-switch |
 | saved | running | resume from the resume point |
+| saved | waiting_quota | resume probe hits the model limit — park on the returned reset_at |
+| saved | paused | HALT / manual pause arrives while the step is saved |
 | saved | interrupted | kill-switch / unfixable failure |
 | interrupted | running | resume of existing agent or fresh spawn from checkpoint |
 | interrupted | paused | escalation without auto-resume |
 | paused | running | pause lifted by external command |
-| paused | - (done) | terminal decision (abandon/close) |
+| paused | completed | terminal decision confirming the step result |
+| paused | abandoned | terminal decision (close/abandon) |
 
 The instance must be able to answer a status request with the current
 step's state, last-update time and transition reason.

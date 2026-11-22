@@ -30,11 +30,11 @@ flowchart LR
 
   subgraph P4["4 · ЭПИК → default = релиз"]
     INTG["интеграционный прогон"]
-    RVW{"🔍 вердикт ревьюера<br/>только удалённое хранилище"}
-    GIT["🔀 git-агент<br/>коммит кандидата (sha)"]
+    GIT["🔀 git-агент<br/>коммит кандидата (sha)<br/>+ push + PR"]
+    RVW{"🔍 reviewer-субагент<br/>вердикт по удалённому PR<br/>APPROVE на текущем sha"}
     MG{"merge-гейт<br/>изолир. копия + expected_sha<br/>+ APPROVE ревьюеров + зелёные проверки<br/>+ фрагмент issue: ↔ PR<br/>+ epic: все задачи закрыты"}
     REL["релиз: merge в default<br/>версия из .changes + тег<br/>(manual_gate ждёт 👨‍💻 аппрува)"]
-    INTG --> RVW -->|APPROVED| GIT --> MG --> REL
+    INTG --> GIT --> RVW -->|APPROVED| MG --> REL
   end
 
   ISS --> EPB

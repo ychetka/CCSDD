@@ -103,9 +103,10 @@ chat text.
 
 `designer (delegated axes → impl spec, gated before the writer) →
 executor (pre-code interrogation → code+tests → green run) → judge
-(≤3 rounds against the frozen contract) → reviewer subagent (separate
-account, remote-storage-only reads, verdict unfiltered by the
-director) → git agent (candidate commit with explicit sha) → hygiene
+(≤3 rounds against the frozen contract) → git agent (candidate
+commit with explicit sha + push + PR open) → reviewer subagent
+(separate account, remote-storage-only reads, APPROVE bound to the
+head sha, verdict unfiltered by the director) → hygiene
 (diff scan, attribution, `.changes` fragment) → merge gate (isolated
 worktree re-verification + `expected_sha` + every expected reviewer's
 APPROVE on the current head + required checks green) →

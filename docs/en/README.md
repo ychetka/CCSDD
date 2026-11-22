@@ -9,7 +9,7 @@ mechanical gates, hash-pinned artifacts, and signed human decision
 envelopes.
 
 Two version axes, deliberately separate: **product release** `v0.0.1`
-(the repo tag on this package) and **canon version** `1.0.0`
+(the repo tag on this package) and **canon version** `1.0.7`
 (`MANIFEST.json.canon_version`, released as `canon-v*` tags — the axis
 deploy/release fencing cares about). Product tags track the package;
 canon tags track the methodology payload.

@@ -30,11 +30,11 @@ flowchart LR
 
   subgraph P4["4 · EPIC → default = release"]
     INTG["integration run"]
-    RVW{"🔍 reviewer verdict<br/>remote storage only"}
-    GIT["🔀 git agent<br/>candidate commit (sha)"]
+    GIT["🔀 git agent<br/>candidate commit (sha)<br/>+ push + PR"]
+    RVW{"🔍 reviewer subagent<br/>verdict on the remote PR<br/>APPROVE bound to head sha"}
     MG{"merge gate<br/>isolated copy + expected_sha<br/>+ reviewer APPROVE + green checks<br/>+ fragment issue: ↔ PR<br/>+ epic: all tasks closed"}
     REL["release: merge to default<br/>version from .changes + tag<br/>(manual_gate waits for 👨‍💻 approve)"]
-    INTG --> RVW -->|APPROVED| GIT --> MG --> REL
+    INTG --> GIT --> RVW -->|APPROVED| MG --> REL
   end
 
   ISS --> EPB

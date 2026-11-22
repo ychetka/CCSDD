@@ -54,6 +54,22 @@ for extra in ${ISSUE_NUMS//,/ }; do
 }Closes #$extra"
 done
 
+# Fragments carried by the branch must be mentionable: the merge
+# gate only allows a fragment issue: that is the branch issue or a
+# #N referenced in the body (FRAG_ISSUES). An epic accumulates task
+# fragments - link each declared issue: as `Includes #M` (a
+# reference, not a close: task issues close on task->epic landing).
+for frag in .changes/*.md; do
+  [ -f "$frag" ] || continue
+  fi_n=$(awk '/^---/{d++; next} d==1 && /^issue:/{print $2; exit} d==2{exit}' "$frag" | tr -cd '0-9')
+  [ -n "$fi_n" ] || continue
+  fi_n=$((10#$fi_n))
+  printf '%s' "$BODY" | grep -qE "#$fi_n([^0-9]|$)" \
+    || BODY="${BODY:+$BODY
+
+}Includes #$fi_n"
+done
+
 HYGIENE_OUT=$(printf '%s\n%s\n' "$TITLE" "$BODY" | "$CANON_DIR/bin/hygiene_check.sh")
 if [ $? -ne 0 ]; then
   HYGIENE_OUT="$HYGIENE_OUT" python3 -c 'import json,os

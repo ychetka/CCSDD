@@ -150,6 +150,14 @@ EVENT_MAP = {"approve": "APPROVE", "request-changes": "REQUEST_CHANGES",
 clean = {k: payload[k] for k in ("commit_id", "body", "event", "comments")
          if k in payload}
 clean["event"] = EVENT_MAP.get(clean["event"], clean["event"])
+# Severity invariant (harness.md): an APPROVE carrying blocking
+# findings is invalid - [CRITICAL]/[WARNING] anywhere in the body
+# or inline comments forces REQUEST_CHANGES/COMMENT instead.
+if clean["event"] == "APPROVE" and any(
+        "[CRITICAL]" in t or "[WARNING]" in t for t in texts):
+    print(json.dumps({"status":"error","failure_class":"malformed_input",
+                      "message":"APPROVE with [CRITICAL]/[WARNING] findings is invalid - submit REQUEST_CHANGES or COMMENT"}))
+    sys.exit(2)
 # The review is bound to the resolved head unconditionally - absent
 # commit_id is filled, a matching one is kept.
 clean["commit_id"] = os.environ["HEAD_SHA"]

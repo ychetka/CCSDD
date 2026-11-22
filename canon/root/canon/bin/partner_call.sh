@@ -57,6 +57,7 @@ fi
   echo "partner_call: --partner, --tool and (--args|--args-file) are required" >&2; exit 2; }
 
 JOURNAL="$JOURNAL" COUNTERS="$COUNTERS" POLICY="$POLICY" \
+  PARTNERS_CFG="$CANON_DIR/config/partners.json" \
   PARTNER="$PARTNER" TOOL="$TOOL" \
   ARGS_JSON="$ARGS_JSON" ARGS_FILE="$ARGS_FILE" \
   AUDIT_KEY="$AUDIT_KEY" REQ_CLASS="$REQ_CLASS" ROUND="$ROUND" \
@@ -116,7 +117,17 @@ audit_key = os.environ["AUDIT_KEY"] or \
         json.dumps(call_args, sort_keys=True).encode()).hexdigest()[:16]
 
 # --- deterministic classification --------------------------------
-AUDIT_PARTNERS = {"architect-partner", "code-reviewer"}
+# Audit set comes from the canonical role registry (partners.json):
+# every role whose declared profile is `Audit` is always an Audit
+# call - never a hardcoded name list here. If the registry is
+# unreadable the safe degradation keeps the `ex-*` (external
+# arbitration) naming convention classified as `audit`.
+try:
+    _preg = json.load(open(os.environ["PARTNERS_CFG"], encoding="utf-8"))
+    AUDIT_PARTNERS = {rid for rid, r in (_preg.get("roles") or {}).items()
+                      if isinstance(r, dict) and r.get("profile") == "Audit"}
+except Exception:
+    AUDIT_PARTNERS = {p for p in (partner,) if p.startswith("ex-")}
 call_class = "audit" if partner in AUDIT_PARTNERS else "consult"
 if req_class == "audit":
     call_class = "audit"          # initiator may only raise

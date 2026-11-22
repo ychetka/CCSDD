@@ -17,6 +17,12 @@ set -uo pipefail
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 PJ="$CANON_DIR/project.json"
 
+# Binary payloads: --text unfolds them into byte soup where random
+# compressed data trips the language filter with high probability.
+# Callers list binary paths (git --numstat marks them '-') via
+# HYGIENE_BINARY_PATHS - those files are exempt from the language
+# class only; secret/attribution rules keep scanning (a token
+# embedded in a binary still leaks).
 run_check() { # $1 = file to scan, $2 = mode (stdin|diff)
   HYGIENE_INPUT_FILE="$1" HYGIENE_MODE="$2" \
   HYGIENE_PJ="$PJ" python3 - <<'PYEOF'
@@ -74,6 +80,9 @@ if pj and os.path.exists(pj):
             indent=2))
         sys.exit(1)
 cyr_paths = list(cyr_paths)
+binary_paths = {p for p in
+                os.environ.get("HYGIENE_BINARY_PATHS", "").split("\n")
+                if p}
 violations = []
 
 def hit(cls, pattern, line_no, hint, path=None):
@@ -193,10 +202,14 @@ for i, (line, path) in enumerate(items(), 1):
                 continue
         if m:
             hit(cls, pattern, i, hint, path)
+    # cyrillic_paths entries are path boundaries: "locales" exempts
+    # locales/** and the file "locales", never locales_evil/**.
     exempt = path is not None and any(
-        path.startswith(p) for p in cyr_paths)
-    if lang == "en" and not exempt and re.search(
-            "[\\u0410-\\u044f\\u0401\\u0451]", line):
+        path == p.rstrip("/") or path.startswith(p.rstrip("/") + "/")
+        for p in cyr_paths)
+    if (lang == "en" and not exempt and path not in binary_paths
+            and re.search(
+            "[\\u0410-\\u044f\\u0401\\u0451]", line)):
         hit("language", "[cyrillic]", i,
             "non-English text in en-language repository", path)
 
@@ -232,6 +245,11 @@ if [ "${1:-}" = "--diff-base" ]; then
   trap 'rm -f "$F1" "$F2"' EXIT
   git -C "$TOP" log --format=%B "${BASE}...HEAD" > "$F1" 2>/dev/null
   git -C "$TOP" -c diff.external= diff --text --no-ext-diff "${BASE}...HEAD" -- ':(exclude)*.lock' > "$F2"
+  # numstat marks binary rows with '-' - those paths are exempt from
+  # the language class inside the scan (see run_check header).
+  export HYGIENE_BINARY_PATHS
+  HYGIENE_BINARY_PATHS=$(git -C "$TOP" -c diff.external= diff --numstat --no-ext-diff "${BASE}...HEAD" \
+    | awk -F'\t' '$1=="-"{print $3}')
   run_check "$F1" stdin || fail=1
   run_check "$F2" diff || fail=1
 elif [ "${1:-}" = "--diff" ]; then

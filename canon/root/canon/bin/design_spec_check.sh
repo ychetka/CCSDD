@@ -9,7 +9,10 @@
 #   text-format contracts). If it contains a `## Delegated decisions`
 #   section, every axis declared as
 #     - axis: <name> | constraint: <text>
-#   must be resolved by the impl spec.
+#   must be resolved by the impl spec. In code-format contracts the
+#   section lives inside a comment container that keeps the file
+#   compilable: python `""" ... """` docstring or `#`-comments,
+#   typescript `/** ... */` block or `//`-comments.
 # --spec: the designer's impl spec (the `## Impl spec` block appended
 #   to the item journal), with entries
 #     ### axis: <name>
@@ -36,14 +39,26 @@ done
 [ -n "$CONTRACT" ] || { echo "design_spec_check: --contract required" >&2; exit 2; }
 [ -r "$CONTRACT" ] || { echo "design_spec_check: contract file unreadable: $CONTRACT" >&2; exit 2; }
 
-# Declared axes: "- axis: <name>" lines inside the section.
+# Declared axes: "- axis: <name>" lines inside the section. The
+# section may sit inside a comment/docstring container so the file
+# still compiles: python `"""..."""` or `#`-lines, ts `/** ... */`
+# or `//`-lines. Leading comment markers are stripped before
+# matching (but `##` itself is kept, it is the section marker).
 AXES=$(awk '
-  /^##[[:space:]]+Delegated decisions/ { insec=1; next }
-  /^##[[:space:]]/ && insec { insec=0 }
-  insec && /^[[:space:]]*-[[:space:]]+axis:/ {
-    line=$0; sub(/^[[:space:]]*-[[:space:]]+axis:[[:space:]]*/,"",line)
-    sub(/[[:space:]]*\|.*/,"",line); gsub(/[[:space:]]/,"",line)
-    if (line != "") print line
+  {
+    line=$0
+    sub(/^[[:space:]]+/,"",line)
+    while (line !~ /^##/ && line ~ /^(#|\/\/|\*|\/\*|\*\/|""")/) {
+      sub(/^("""|\/\*|\*\/|\/\/|#|\*)/,"",line)
+      sub(/^[[:space:]]+/,"",line)
+    }
+    if (line ~ /^##[[:space:]]+Delegated decisions/) { insec=1; next }
+    if (line ~ /^##[[:space:]]/ && insec) { insec=0 }
+    if (insec && line ~ /^-[[:space:]]+axis:/) {
+      sub(/^-[[:space:]]+axis:[[:space:]]*/,"",line)
+      sub(/[[:space:]]*\|.*/,"",line); gsub(/[[:space:]]/,"",line)
+      if (line != "") print line
+    }
   }' "$CONTRACT" | sort -u)
 
 if [ -z "$AXES" ]; then

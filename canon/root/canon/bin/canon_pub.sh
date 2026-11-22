@@ -143,8 +143,10 @@ want = hmac.new(key.encode(), payload.encode(), hashlib.sha256).hexdigest()
 got = str(env.get("sig") or "")
 if not hmac.compare_digest(want, got):
     fail("envelope signature invalid (HMAC mismatch)", 5)
-# Envelope freshness: a publication decision older than 24h is stale
-# (the tree may be identical but the decision context is not).
+# Envelope freshness: the window is 7 days - the envelope is bound
+# to (tree_sha, version) cryptographically, so age alone cannot
+# approve a different artifact; the window only limits replay of
+# stale contexts (a Friday decision must survive the weekend).
 try:
     ts = datetime.datetime.fromisoformat(
         str(env.get("ts", "")).replace("Z", "+00:00"))
@@ -153,12 +155,12 @@ try:
     age = (datetime.datetime.now(datetime.timezone.utc) - ts).total_seconds()
 except Exception:
     fail("envelope ts is not a parseable ISO timestamp", 5)
-if not (0 <= age <= 86400):
-    fail(f"envelope ts outside the 24h freshness window (age {int(age)}s)", 5)
+if not (0 <= age <= 604800):
+    fail(f"envelope ts outside the 7d freshness window (age {int(age)}s)", 5)
 
 # -- 3. read-limit ------------------------------------------------
 for p in files:
-    n = p.read_text(encoding="utf-8", errors="replace").count("\n") + 1
+    n = len(p.read_text(encoding="utf-8", errors="replace").splitlines())
     if n > max_lines:
         fail(f"line-limit breach: {p.relative_to(cand)} has {n} lines > {max_lines}")
 

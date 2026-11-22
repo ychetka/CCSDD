@@ -15,7 +15,13 @@ an LLM — mechanics inside the publish wrappers (ship_*, repo_*).
   footers
 - secrets: tokens, keys, pem blocks, password patterns
 - language: Cyrillic when repo_language=en (default; explicit opt-out
-  via repo_language in canon/project.json)
+  via repo_language in canon/project.json). Per-path exemptions:
+  `cyrillic_paths: ["locales/", "docs/ru/", "tests/testdata/"]` in
+  project.json — entries are path prefixes with an implicit `/`
+  boundary (`locales` exempts `locales/**` and the file `locales`,
+  never `locales_evil/**`).
+  Binary files (numstat `-` rows) are exempt from the language
+  class automatically; secrets still scan inside them.
 - license headers: missing in new files where required
 - forbidden files/paths in the published change
 
