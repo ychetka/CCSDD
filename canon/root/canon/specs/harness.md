@@ -617,7 +617,10 @@ The version policy is fixed at roadmap approval, not at merge
    b. If the contract declares a `## Delegated decisions` block with
       at least one axis: spawn the designer FIRST (§2). The designer
       returns an impl spec — one decided entry per declared axis —
-      which the calling instance appends to the item journal. The
+      which the calling instance commits as the tracked artifact
+      `docs/impl_specs/<item_slug>.md` on the item branch
+      (repo_language; English by default), so the fidelity floor
+      sees it in the PR delta. The
       mechanical gate `canon/bin/design_spec_check.sh --contract
       <contract-file> --spec <impl-spec>` must pass BEFORE the
       executor is spawned: a declared axis left undecided or a spec

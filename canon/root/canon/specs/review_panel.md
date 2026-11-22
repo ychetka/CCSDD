@@ -137,8 +137,10 @@ on forges that support them).
    equally valid). Each reviewer reads its floor status, judges
    its lane, publishes its own signal.
    A domain whose floor reports no applicable input AND declares
-   `auto_pass_when_no_axes` may publish `success` directly via a
-   director-issued record - no LLM spawn needed.
+   `auto_pass_when_no_axes` needs no LLM spawn and no signal: the
+   floor's `axes=none` note in `gate_runs.jsonl` is the
+   deterministic auto-pass evidence, verified mechanically by the
+   panel gate and the aggregator.
 4. Director mechanically verifies via `panel_verdict get --sha H`
    that every active domain reached a TERMINAL signal
    (success|failure) - respawning missing domains, never counting

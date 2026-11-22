@@ -114,10 +114,13 @@ trust.
    implementation.
 7. Run the native checks to green: lint + typecheck + tests. Fix
    redness in code, not in checks.
-8. `canon/bin/git_ro.sh status` +
-   `canon/bin/git_ro.sh diff --stat <base_ref>...HEAD` — compare the
-   actual footprint against the file whitelist (a bare `diff` is
-   empty once the item is committed; always diff against the base).
+8. `canon/bin/git_ro.sh status --porcelain` +
+   `canon/bin/git_ro.sh diff --stat <base_ref>` — compare the
+   actual footprint against the file whitelist. The candidate
+   commit does not exist yet (you never commit — the git agent
+   does), so a `<base_ref>...HEAD` range diff is EMPTY on the
+   first pass: measure the working tree against the base
+   (two-dot `diff <base_ref>` covers uncommitted work too).
    Everything outside the list — `SCOPE_DELTA`.
 9. Compose the report per the format below.
 

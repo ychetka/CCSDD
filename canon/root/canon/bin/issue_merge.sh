@@ -906,6 +906,16 @@ if [ $rc -ne 0 ]; then
   exit 1
 fi
 
+# Consume the manual_gate envelope only NOW: the earlier verify was
+# side-effect free, so a merge blocked at CI/panel/constraints never
+# burned the human's nonce. Recording after the successful merge
+# means the signature certified exactly one completed acceptance.
+if [ "${MANUAL_GATE:-no}" = "yes" ] && [ -n "${ENV_FILE:-}" ]; then
+  "$CANON_DIR/bin/human_sign.sh" consume --envelope "$ENV_FILE" \
+    --artifact "$EXPECTED" --verdict approve >/dev/null 2>&1 \
+    || echo "issue_merge: signoff nonce consume failed post-merge" >&2
+fi
+
 # Post-merge release under RoM: release is part of the merge
 # operation ONLY on the repository default branch - a merge into a
 # non-default base (a task branch merged into its epic branch) is

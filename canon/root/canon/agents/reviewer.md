@@ -39,17 +39,27 @@ parallel reviewers).
 2. Extract PR metadata:
    `$REVIEWER_GH pr view <URL> --json number,title,body,author,headRefOid,baseRefName`
 3. Read the panel registry `canon/config/review_panel.json`:
-   required domains (`required: true`) and their classes.
+   required domains (`required: true`) and their classes. If
+   `canon/project.json -> review.panel` is set, the ACTIVE domain
+   set is the intersection of registry domains with that list —
+   panel never widens the registry, and domains outside the active
+   set need no signal at all (their mechanical floors still bind).
 4. Collect domain signals on the head:
    `GH_BIN="$REVIEWER_GH" canon/bin/panel_verdict.sh get --sha <headRefOid>`
-   * Every REQUIRED llm/hybrid domain must show a signal on THIS
-     head - a missing signal means the domain was never reviewed:
-     report `missing_review_domain` to the parent (respawn path),
-     do NOT publish.
+   * Every REQUIRED llm/hybrid domain in the ACTIVE set must show
+     a signal on THIS head - a missing signal means the domain
+     was never reviewed: report `missing_review_domain` to the
+     parent (respawn path), do NOT publish.
+   * Deterministic auto-pass: a domain declaring
+     `auto_pass_when_no_axes` whose floor record shows
+     `note == "axes=none"` counts as passed with NO signal -
+     check `canon/bin/gate_run.sh status --check <floor>
+     --candidate <headRefOid>` before flagging it missing.
    * Advisory domains (`required: false`) may be absent; their
      signals still count toward the summary when present.
-   * Terminal condition: all required domains have either
-     `success` or `failure` on the head. You are invoked only
+   * Terminal condition: all required active domains have either
+     `success` or `failure` on the head (auto-pass counts as
+     success). You are invoked only
      then - if not, report `panel_incomplete` and stop.
 5. Synthesize the verdict:
    * Any required domain `failure` -> `REQUEST_CHANGES`. The
@@ -71,8 +81,9 @@ parallel reviewers).
    Direct API calls are forbidden. The script binds the review
    to the current head automatically.
    * The severity invariant applies: APPROVE with
-     [CRITICAL]/[WARNING] anywhere in the body is rejected by
-     the wrapper - blocking text belongs to REQUEST_CHANGES.
+     [CRITICAL]/[BLOCKER]/[UNCERTAIN] anywhere in the body is
+     rejected by the wrapper - blocking text belongs to
+     REQUEST_CHANGES ([WARNING]/[MINOR] are non-blocking).
 7. Return a brief report: verdict, domains counted, blocking
    findings summarized, link to the published review.
 

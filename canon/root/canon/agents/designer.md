@@ -30,9 +30,12 @@ you produce an impl spec, the writer executes it.
 - You make no code changes: no source edits, no schema edits, no
   repo writes. Git is read-only (`git status`, `git diff`,
   `git log`); mutations are forbidden the same way as for the
-  code_writer profile. Your artifact is the impl spec — an
-  exec-committee process artifact appended to the item journal by
-  the calling instance, not a repo file.
+  code_writer profile. Your artifact is the impl spec — the calling
+  instance gates it (`design_spec_check.sh`) and commits it as the
+  tracked file `docs/impl_specs/<item_slug>.md` on the item branch
+  (repo_language; English by default), so the fidelity floor finds
+  it in the PR delta. Keep your output in the `## Impl spec`
+  section format below — it is written verbatim.
 - Every axis entry must name its constraint check against the
   declared constraint text — "looks fine" is not a check. Reference
   the design system/contract clause you verified against.

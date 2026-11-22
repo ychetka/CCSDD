@@ -9,11 +9,17 @@
 #                       --out <envelope.json|->
 #   human_sign.sh verify --envelope <file|CCSDD-SIGNOFF-1|...>
 #                        --artifact <sha256|sha1|file>
+#                        [--verdict <v>]
+#   human_sign.sh consume --envelope <...> --artifact <...>
 #                        [--verdict <v>] [--nonce-store <file>]
 #
 # `--out -` prints a compact one-line signoff the human can paste
 # into an agent chat (remote-laptop workflow); verify accepts the
-# pasted line directly or inside a file.
+# pasted line directly or inside a file. `verify` is side-effect
+# free; `consume` runs the same checks and only then records the
+# nonce into .used_nonces under flock - gates call verify early and
+# consume AFTER the protected action succeeded, so a merge blocked
+# downstream does not burn the envelope.
 #
 # Model: `ssh-keygen -Y sign -n ccsdd-signoff` signs the canonical
 # message `ccsdd-signoff v1|<verdict>|<artifact_sha>|<utc>|<nonce>`
@@ -23,9 +29,14 @@
 #
 # Envelope safety properties: the signature cryptographically binds
 # verdict + artifact hash + timestamp + nonce; verify() enforces
-# artifact/verdict equality, a 7-day freshness window, and records
-# nonces into a store (default canon/human_signoffs/.used_nonces)
-# so a captured envelope cannot be replayed onto a later merge.
+# artifact/verdict equality and a 7-day freshness window; consume()
+# additionally records the nonce into a store (default
+# canon/human_signoffs/.used_nonces) under flock so a captured
+# envelope cannot be replayed onto a later merge.
+# init REFUSES to overwrite an existing allowed_signers: key
+# rotation is a deliberate out-of-band act (delete the file by hand
+# first). A workspace agent under the same UID could otherwise swap
+# in its own pubkey and mint signoffs.
 set -euo pipefail
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 CONF_DIR="${CCSDD_CONF_DIR:-$HOME/.config/ccsdd}"
@@ -36,7 +47,7 @@ WINDOW=$((7 * 86400))   # envelope freshness: 7 days
 MODE=""; VERDICT=""; ARTIFACT=""; ENVELOPE=""; KEYFILE=""; NONCE_STORE=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    init|sign|verify) MODE=$1; shift;;
+    init|sign|verify|consume) MODE=$1; shift;;
     --verdict)  VERDICT=$2;  shift 2;;
     --artifact) ARTIFACT=$2; shift 2;;
     --key)      KEYFILE=$2;  shift 2;;
@@ -71,6 +82,11 @@ init)
     fi
   }
   [ -f "$KEYFILE" ] || die "pubkey file not found: $KEYFILE"
+  # No silent overwrite: any workspace actor can exec canon/bin, so
+  # an unconditional init would let an agent swap the trusted pubkey
+  # and self-mint signoffs. Rotation = delete the file first, then
+  # init - a deliberate act performed by the human, not the agent.
+  [ -f "$SIGNERS" ] && die "allowed_signers already exists at $SIGNERS - remove it manually to rotate (init never overwrites)"
   mkdir -p "$CONF_DIR"; chmod 700 "$CONF_DIR"
   printf 'human %s\n' "$(cat "$KEYFILE")" > "$SIGNERS"
   chmod 600 "$SIGNERS"
@@ -121,16 +137,18 @@ else:
 PY
   ;;
 
-verify)
+verify|consume)
   [ -n "$ARTIFACT" ] && [ -n "$ENVELOPE" ] \
-    || die "usage: human_sign.sh verify --envelope <f> --artifact <sha|file> [--verdict <v>]"
+    || die "usage: human_sign.sh verify|consume --envelope <f> --artifact <sha|file> [--verdict <v>]"
   [ -f "$SIGNERS" ] || die "no allowed_signers at $SIGNERS - human_sign.sh init was never run"
   SHA=$(artifact_sha "$ARTIFACT")
+  CONSUME="0"; [ "$MODE" = "consume" ] && CONSUME="1"
   E=$(ENVELOPE="$ENVELOPE" SHA="$SHA" VERDICT="$VERDICT" WINDOW="$WINDOW" \
+      CONSUME="$CONSUME" \
       NONCE_STORE="${NONCE_STORE:-$CANON_DIR/human_signoffs/.used_nonces}" \
       SIGNERS_ENV="$SIGNERS" NS_ENV="$NS" \
       python3 - <<'PY'
-import base64, json, os, sys, tempfile, subprocess, time
+import base64, json, os, sys, tempfile, subprocess, time, calendar, shutil, fcntl
 env, sha, want_v = (os.environ.get(k) or "" for k in
                     ("ENVELOPE", "SHA", "VERDICT"))
 # --envelope accepts: a file path (JSON envelope or a file holding
@@ -171,16 +189,23 @@ expect = "ccsdd-signoff v1|%s|%s|%s|%s" % (
     e["verdict"], e["artifact_hash"].lower(), e["ts"], e["nonce"])
 if e["message"] != expect:
     sys.exit("human_sign: signed message does not match envelope fields")
-# Freshness window: an old envelope approves nothing.
+# Freshness window: an old envelope approves nothing. timegm, NOT
+# mktime - mktime reads the struct as LOCAL time, so in UTC-x
+# zones a fresh UTC stamp computed a negative age and was rejected.
 try:
     ts = time.strptime(e["ts"], "%Y-%m-%dT%H:%M:%SZ")
-    age = time.time() - time.mktime(ts)
+    age = time.time() - calendar.timegm(ts)
 except Exception:
     sys.exit("human_sign: unparseable ts in envelope")
 if not (0 <= age <= float(os.environ["WINDOW"])):
     sys.exit(f"human_sign: envelope stale ({int(age//86400)}d old, window 7d)")
-# Anti-replay: a nonce may certify exactly one acceptance.
+# Anti-replay: a nonce may certify exactly one acceptance. The
+# consumed-check happens on EVERY verify (a burned nonce is dead
+# input), but the WRITE is consume-only: gates verify early and
+# consume after the protected action, so a merge blocked later in
+# the pipeline does not strand the human's envelope.
 store = os.environ["NONCE_STORE"]
+consume = os.environ.get("CONSUME") == "1"
 used = set()
 if os.path.isfile(store):
     used = {ln.strip() for ln in open(store) if ln.strip()}
@@ -188,20 +213,30 @@ if e["nonce"] in used:
     sys.exit("human_sign: envelope nonce already consumed (replay)")
 sig_raw = base64.b64decode(e["signature_b64"])
 tmp = tempfile.mkdtemp(prefix="ccsdd-verify.")
-sig_f = os.path.join(tmp, "msg.sig")
-open(sig_f, "wb").write(sig_raw)
-# -Y verify reads the SIGNED DATA FROM STDIN - a positional file
-# argument is not the message and fails verification outright.
-r = subprocess.run(["ssh-keygen", "-Y", "verify", "-f",
-                    os.environ["SIGNERS_ENV"], "-I", "human",
-                    "-n", os.environ["NS_ENV"], "-s", sig_f],
-                   input=e["message"], capture_output=True, text=True)
-if r.returncode != 0:
-    sys.exit("human_sign: signature does not verify: " +
-             (r.stderr or r.stdout).strip()[:200])
-os.makedirs(os.path.dirname(store), exist_ok=True)
-with open(store, "a") as fh:
-    fh.write(e["nonce"] + "\n")
+try:
+    sig_f = os.path.join(tmp, "msg.sig")
+    open(sig_f, "wb").write(sig_raw)
+    # -Y verify reads the SIGNED DATA FROM STDIN - a positional file
+    # argument is not the message and fails verification outright.
+    r = subprocess.run(["ssh-keygen", "-Y", "verify", "-f",
+                        os.environ["SIGNERS_ENV"], "-I", "human",
+                        "-n", os.environ["NS_ENV"], "-s", sig_f],
+                       input=e["message"], capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit("human_sign: signature does not verify: " +
+                 (r.stderr or r.stdout).strip()[:200])
+finally:
+    shutil.rmtree(tmp, ignore_errors=True)
+if consume:
+    os.makedirs(os.path.dirname(store), exist_ok=True)
+    # flock around check+append: concurrent merges must not both
+    # pass the replay check before either records the nonce.
+    with open(store, "a+") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        fh.seek(0)
+        if e["nonce"] in {ln.strip() for ln in fh if ln.strip()}:
+            sys.exit("human_sign: envelope nonce already consumed (replay)")
+        fh.write(e["nonce"] + "\n")
 print(f"human_sign: envelope OK - '{e['verdict']}' for artifact {sha[:16]}..")
 PY
   ) || exit 2

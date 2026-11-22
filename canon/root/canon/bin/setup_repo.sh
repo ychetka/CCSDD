@@ -43,22 +43,33 @@ if ! gh auth status >/dev/null 2>&1 && [ -z "${GH_TOKEN:-}" ]; then
 fi
 
 # --- 1. branch protection -------------------------------------------------
-read -r -d '' PROT <<'JSON' || true
-{
-  "required_status_checks": null,
-  "enforce_admins": false,
+# required_status_checks: PRESERVE whatever is already required -
+# sending null would silently drop the branch's existing CI gates.
+EXISTING_CHECKS=$(gh api "repos/$REPO/branches/$BASE/protection" \
+    --jq '.required_status_checks' 2>/dev/null || echo 'null')
+PROT=$(EXISTING="$EXISTING_CHECKS" python3 - <<'PY'
+import json, os
+try:
+    checks = json.loads(os.environ.get("EXISTING") or "null")
+except Exception:
+    checks = None
+prot = {
+  "required_status_checks": checks if isinstance(checks, dict) else None,
+  "enforce_admins": False,
   "required_pull_request_reviews": {
-    "dismiss_stale_reviews": true,
-    "require_code_owner_reviews": false,
+    "dismiss_stale_reviews": True,
+    "require_code_owner_reviews": False,
     "required_approving_review_count": 1
   },
-  "restrictions": null,
-  "required_linear_history": false,
-  "allow_force_pushes": false,
-  "allow_deletions": false,
-  "required_conversation_resolution": false
+  "restrictions": None,
+  "required_linear_history": False,
+  "allow_force_pushes": False,
+  "allow_deletions": False,
+  "required_conversation_resolution": False
 }
-JSON
+print(json.dumps(prot))
+PY
+)
 
 echo "setup_repo: applying branch protection on $BASE"
 echo "$PROT"
@@ -122,11 +133,16 @@ cat <<EOF
 setup_repo: canonical project.json block for this repository:
   "review": {
     "reviewer_logins": ["<reviewer-bot-login>"],
-    "gh_bin": "gh",
+    "gh_bin": "gh-reviewer",
     "reviewer_profiles": {
-      "<reviewer-login>": {"gh_bin": "gh", "model_family": "<family>"}
+      "<reviewer-login>": {"gh_bin": "gh-reviewer", "model_family": "<family>"}
     }
   },
   "merge": {"gh_bin": "gh"}
+  NOTE: review.gh_bin MUST differ from merge.gh_bin - separate
+  accounts/wrappers, or check_setup fails the deploy (author ==
+  reviewer enables self-approve and review-signal forgery).
+  Reviewer token rights on GitHub: Pull requests: Read & Write,
+  Commit statuses: Read & Write, Issues: Read & Write.
 setup_repo: done.
 EOF

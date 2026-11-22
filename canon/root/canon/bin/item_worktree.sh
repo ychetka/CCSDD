@@ -26,6 +26,7 @@
 set -euo pipefail
 
 die()  { echo "item_worktree: $1" >&2; exit 2; }
+CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 TOP=$(git rev-parse --show-toplevel 2>/dev/null) || die "not a git repo"
 WT_ROOT="${CCSDD_WT_ROOT:-$(dirname "$TOP")/.worktrees}"
 
@@ -68,6 +69,23 @@ case "$VERB" in
     fi
     git worktree add "$WT" -b "$BRANCH" "$BASE" \
       || die "worktree add failed for $BRANCH @ $BASE"
+    # canon/ and .devin/ are gitignored workspace state - they do not
+    # exist inside the fresh worktree, but the agent working there
+    # still needs canon/bin on its RELATIVE path (the exec policy
+    # allows `canon/bin/` only). Symlink them in and record the names
+    # in the worktree's own info/exclude: a `.gitignore` pattern
+    # `canon/` matches directories only, not a symlink, so without
+    # info/exclude the tree would show `?? canon` and trip the
+    # clean-tree gates. `.canon_scope_whitelist.txt` is the
+    # per-worktree scope file ship_commit prefers over the shared
+    # $CANON_DIR one - canon state, never committed.
+    EXCL=$(git -C "$WT" rev-parse --git-path info/exclude)
+    for name in canon .devin .canon_scope_whitelist.txt; do
+      grep -qxF "$name" "$EXCL" 2>/dev/null || echo "$name" >> "$EXCL"
+    done
+    ln -sfn "$CANON_DIR" "$WT/canon"
+    WS_DEVIN="$(dirname "$CANON_DIR")/.devin"
+    [ -d "$WS_DEVIN" ] && ln -sfn "$WS_DEVIN" "$WT/.devin"
     echo "item_worktree: opened $WT (branch $BRANCH @ $BASE)";;
 
   close)

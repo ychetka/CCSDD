@@ -88,9 +88,9 @@ findings go back to the executor.
    G/W/T scenario / falsified coverage claim).
 4. **Baseline**: match the report's `BASELINE` against reality — if
    the writer claimed pre-existing red checks, confirm it
-   MECHANICALLY on a clean temporary worktree at HEAD:
-   `canon/bin/verify_worktree.sh --baseline-test "<check command>"`
-   spins up a clean copy of the base revision and runs the command
+   MECHANICALLY on a clean temporary worktree at the base revision:
+   `canon/bin/verify_worktree.sh --base <base_ref> --baseline-test "<check command>"`
+   spins up a clean copy of the base and runs the command
    there — the claimed "pre-existing red" must reproduce on the
    baseline run. Red caused by the edits themselves and recorded as
    "pre-existing" — a [CRITICAL] finding.
@@ -99,6 +99,15 @@ findings go back to the executor.
    commands the writer reported). Compare exit codes and outputs
    with `GATES`. A mismatch — a [CRITICAL] finding: the report is
    unprovable.
+5a. **Attestation**: for every check configured in
+   `project.json -> gate_checks` (test_suite, lint, sast, …) run it
+   on the candidate commit through
+   `canon/bin/gate_run.sh run --check <name> --candidate <head_sha>`
+   inside the worktree BEFORE the merge is attempted — the merge
+   gate verifies the journal, it never executes project code under
+   merge credentials. A check left unattested blocks the merge:
+   record it even when the native run already passed — the journal
+   entry is the gate-visible artifact.
 6. **PROVENANCE**: with new dependencies — verify the name and
    version exist in the manifest and registry, and that the called
    APIs' signatures exist in code/vendor sources. Calling a
@@ -112,9 +121,10 @@ findings go back to the executor.
    declared axes is improvisation — a blocking finding. Weakened
    asserts without justification — a [CRITICAL] finding.
 7a. **IMPL_SPEC**: if the contract declares `## Delegated
-   decisions`, the item journal must carry the designer's impl spec
-   with a decided entry for every declared axis (the calling
-   instance gates it via `canon/bin/design_spec_check.sh`; verify
+   decisions`, the PR delta must carry the tracked artifact
+   `docs/impl_specs/<item>.md` with a decided entry for every
+   declared axis (the calling instance gates it via
+   `canon/bin/design_spec_check.sh`; verify
    the coverage yourself — a missing spec or an undecided axis is
    a blocking finding). Each spec decision must satisfy its
    declared constraint, the diff must implement the spec's

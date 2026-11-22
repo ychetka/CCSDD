@@ -134,14 +134,22 @@ if isinstance(m, dict) and "gh_bin" in m:
     if not isinstance(gb, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", gb or ""):
         errs.append("merge.gh_bin must be a bare binary basename (no path separators)")
 # Identity separation: the merge/author binary must differ from the
-# reviewer binary when both are configured. Same binary => PR author
+# reviewer binary whenever a reviewer identity is configured on a
+# real forge. The comparison uses EFFECTIVE binaries - an omitted
+# key resolves to "gh" in gh_id.sh, so "one side unset, other side
+# gh" is still a collision, not a pass. Same binary => PR author
 # == reviewer => forge self-approve rejection and a merge identity
 # able to publish review signals.
-if isinstance(m, dict) and isinstance(r, dict) \
-   and m.get("gh_bin") and r.get("gh_bin") \
-   and m["gh_bin"] == r["gh_bin"]:
-    errs.append("merge.gh_bin must differ from review.gh_bin "
-                "(author and reviewer identities must be separate)")
+_fr = cfg.get("forge")
+_reviewer_cfg = isinstance(r, dict) and (
+    bool(r.get("reviewer_logins")) or bool(r.get("reviewer_profiles")))
+if _reviewer_cfg and _fr != "test":
+    _mb = (m.get("gh_bin") if isinstance(m, dict) else None) or "gh"
+    _rb = (r.get("gh_bin") if isinstance(r, dict) else None) or "gh"
+    if _mb == _rb:
+        errs.append("merge.gh_bin must differ from review.gh_bin "
+                    "(author and reviewer identities must be separate; "
+                    f"both resolve to {_mb!r})")
 # reviewer_profiles: {<login>: {"gh_bin": <basename>, ...}} - keys are
 # the panel logins (canonical schema, also read by panel_gate.sh).
 rp = r.get("reviewer_profiles") if isinstance(r, dict) else None

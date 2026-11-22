@@ -90,6 +90,28 @@ d = json.load(open(os.environ["REG"]))
 for name, e in (d.get("domains") or {}).items():
     if e.get("gate_check"): print(e["gate_check"])' | sort -u)
 
+# --- 1b. project-declared checks not consumed by any domain ---
+# gate_checks.* keys that no registry gate_check names (lint, sast,
+# typecheck, extra suites) still bind the merge: each must have a
+# green attestation at --sha in gate_runs.jsonl, recorded earlier in
+# the credential-free worktree (gate_run run). *_optional opt-outs
+# are handled inside gate_run verify itself.
+REG_CHECKS=$(REG="$REG" python3 -c 'import json,os
+d = json.load(open(os.environ["REG"]))
+print(" ".join(sorted({e.get("gate_check") or "" for e in
+      (d.get("domains") or {}).values()} - {""})))' 2>/dev/null)
+while IFS= read -r chk; do
+  [ -z "$chk" ] && continue
+  case " $REG_CHECKS " in *" $chk "*) continue;; esac
+  bash "$CANON_DIR/bin/gate_run.sh" verify --check "$chk" --candidate "$SHA" >/dev/null 2>&1 \
+    || FLOOR_FAIL="$FLOOR_FAIL $chk"
+done < <(PJ="$PJ" python3 -c 'import json,os
+try:
+    gc = json.load(open(os.environ["PJ"])).get("gate_checks") or {}
+except Exception: gc = {}
+for k in sorted(gc):
+    if not k.endswith("_optional"): print(k)')
+
 # --- 2. domain signals on --sha ---
 SIG_JSON=$(bash "$ADAPTER" signal_get --sha "$SHA" 2>/dev/null || echo '{"signals":[]}')
 PANEL_REPORT=$(SIG_JSON="$SIG_JSON" REG="$REG" PJ="$PJ" SHA="$SHA" FLOOR_FAIL="$FLOOR_FAIL" FLOOR_NOTES="$FLOOR_NOTES" INFO_FILE="$INFO_FILE" python3 - <<'PY'

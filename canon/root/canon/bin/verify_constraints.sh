@@ -304,7 +304,7 @@ fi
 #    true local-only canon state is covered by .gitignore, so a new
 #    untracked canon canon file still surfaces here)
 UNTRACKED=$(git status --porcelain | sed -n 's/^?? //p' \
-            | grep -vE '(^|/)scope_whitelist\.txt$|(^|/)migration_rollforward\.md$|(^|/)\canon/[^/]*\.lock$' || true)
+            | grep -vE '(^|/)\.?scope_whitelist\.txt$|(^|/)migration_rollforward\.md$|(^|/)\canon/[^/]*\.lock$' || true)
 [ -z "$UNTRACKED" ] \
   && pass "tree clean (no untracked)" \
   || fail "untracked files present" "commit intended ones, remove leftovers"

@@ -40,22 +40,34 @@ shift || true
 STAGED_Z=$(mktemp); REQ_Z=$(mktemp)
 trap 'rm -f "$STAGED_Z" "$REQ_Z"' EXIT
 
-# Stage explicit file list if given - BEFORE cd, so caller-relative
-# paths and pathspecs resolve against the caller's directory. The
-# requested set is captured in the same cwd (repo-relative names) so
-# Gate 1 compares like with like after the cd.
+# Stage explicit file list if given. Pathspecs are caller-relative,
+# but the caller may sit OUTSIDE the target repo (nested workspace
+# layout <ws>/code - `git add` run there finds no repo at all).
+# Absolutize every pathspec against the caller's physical cwd, then
+# add from $TOP: absolute pathspecs (incl. globs) resolve uniformly
+# no matter where the caller stood.
+ARGS_ABS=()
 if [ $# -gt 0 ]; then
-  git add -- "$@" || { echo "git add failed" >&2; exit 1; }
+  CALLER_PWD=$(pwd -P)
+  for a in "$@"; do
+    case "$a" in
+      /*|:*) ARGS_ABS+=("$a");;
+      *)     ARGS_ABS+=("$CALLER_PWD/$a");;
+    esac
+  done
+fi
+cd -P "$TOP"
+if [ ${#ARGS_ABS[@]} -gt 0 ]; then
+  git add -- "${ARGS_ABS[@]}" || { echo "git add failed" >&2; exit 1; }
   # The requested set = staged changes matching the pathspecs, taken
   # from the index diff - NOT git ls-files: a staged DELETION has no
   # index entry, so ls-files would drop the path the caller just
   # asked to delete and Gate 1 would flag it as unrequested.
   # diff.relative=false pins repo-relative output independent of
   # caller config.
-  git -c diff.relative=false diff --cached --name-only -z --no-renames -- "$@" > "$REQ_Z" \
+  git -c diff.relative=false diff --cached --name-only -z --no-renames -- "${ARGS_ABS[@]}" > "$REQ_Z" \
     || { echo "cannot enumerate requested paths" >&2; exit 1; }
 fi
-cd -P "$TOP"
 
 # Shared pattern - single source, do not fork it here.
 . "$CANON_DIR/bin/migration_pattern.sh"
@@ -178,7 +190,13 @@ fi
 # the index, or HEAD: an unstaged `rm` or a staged `git rm` must not
 # silently disable it (the deletion is only effective once committed,
 # and the self-edit rule below makes that a standalone commit).
-WL="$CANON_DIR/scope_whitelist.txt"
+# Per-worktree scope beats the shared canon file: parallel
+# item_worktrees must not serialize on one global whitelist. The
+# director drops .canon_scope_whitelist.txt at the worktree root
+# (info/excluded by item_worktree open); absent that, the shared
+# $CANON_DIR whitelist applies.
+WL="$TOP/.canon_scope_whitelist.txt"
+[ -f "$WL" ] || WL="$CANON_DIR/scope_whitelist.txt"
 # Canonicalize only the parent directory, never the leaf: resolving
 # the leaf would let an unstaged symlink at the whitelist path push
 # REL_WL outside the toplevel and substitute attacker-controlled
@@ -263,6 +281,10 @@ PY
     # The whitelist file itself is always in-scope: the self-edit
     # check above already forces it to be the only staged file.
     [ -n "$REL_WL" ] && [ "$f" = "$REL_WL" ] && continue
+    # Canon artifacts are always in scope: the tracked impl spec the
+    # designer's package ships (fidelity floor reads it from the PR
+    # delta).
+    case "$f" in docs/impl_specs/*) continue;; esac
     ok=0
     while IFS= read -r line; do
       line="${line%$'\r'}"
