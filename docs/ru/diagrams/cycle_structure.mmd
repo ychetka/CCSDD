@@ -1,10 +1,15 @@
 flowchart LR
   subgraph COM1["АРХИТЕКТУРНЫЙ КОМИТЕТ"]
     ROOT["🧭 ROOT директор<br/>план · контракты · спавны"]
+    AP[["🏛️ architect-partner<br/>со-дизайнер · топ-тир"]]
+    PPA[["📦 product-partner<br/>со-дизайнер · топ-тир"]]
+    DEV(["👨‍💻 человек<br/>арбитр"])
   end
   subgraph COM2["ИСПОЛНИТЕЛЬНЫЙ КОМИТЕТ"]
     CW["👷 CW исполнитель<br/>код + тесты в белом списке"]
     DSG["🎨 DSG дизайнер (условный)<br/>делегированные оси → impl spec"]
+    DP[["🧩 design-partner<br/>консультант · рабочий тир"]]
+    PPE[["📦 product-partner<br/>консультант · рабочий тир"]]
   end
   subgraph REV["РЕВЬЮВЕРЫ — вне обоих комитетов"]
     JDG["⚖️ JDG судья<br/>только замороженный контракт"]
@@ -20,8 +25,8 @@ flowchart LR
 
   ART[/"📦 артефакты:<br/>roadmap · контракт(sha) · WS ·<br/>журналы · конверты"/]
   REPO[("🗄️ хранилище<br/>repo + CI + PR")]
-  DEV(["👨‍💻 человек<br/>арбитр"])
-  PART[["🛰️ партнёры / 2-е семейство<br/>через шлюз"]]
+  GW[["🛰️ шлюз<br/>все вызовы партнёров"]]
+  XA[["🏛️ ex-architect-partner<br/>Audit · арбитраж споров"]]
   RULES[["📜 canon/<br/>RULES.md · agents ·<br/>specs · гейты"]]
 
   ROOT -->|спавн: пакет| CW
@@ -38,13 +43,23 @@ flowchart LR
   GIT -.-> HYG
   RA -.-> HYG
   ROOT <-.-> ART
-  PART -.-> ROOT
-  PART -.-> CW
+  GW -.-> AP
+  GW -.-> PPA
+  GW -.-> DP
+  GW -.-> PPE
+  GW -.-> XA
+  XA -.->|арбитраж| ROOT
+  AP -.->|консультация| ROOT
+  PPA -.->|консультация| ROOT
+  DP -.->|консультация| CW
+  PPE -.->|консультация| CW
   RULES -.-> ROOT
   RULES -.-> CW
   DEV -.->|👨‍💻 roadmap · sign-off ·<br/>manual_gate · эскалации| ROOT
 
   classDef human fill:#f5e6c8,stroke:#8a6d1f,stroke-width:2px
   classDef rev fill:#e8e0f5,stroke:#5b4a8a,stroke-width:2px
+  classDef partner stroke-dasharray:5 5
   class DEV human
   class JDG,RVW,RES,RD rev
+  class AP,PPA,DP,PPE,XA partner
