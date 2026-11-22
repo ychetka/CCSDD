@@ -64,7 +64,7 @@ cd -P "$TOP"
 # canon_manifest.json carries sha256 digests, the gate scripts must
 # match them - a rewritten gate is a rewritten rule. (Residual: the
 # manifest is itself workspace state; deeper drift is caught by
-# check_setup.sh at session start. This check just raises tampering
+# check_setup.sh at instance start. This check just raises tampering
 # from a one-file to a two-file edit.)
 if [ -f "$CANON_DIR/canon_manifest.json" ]; then
   if ! CANON_DIR="$CANON_DIR" python3 - <<'PY'

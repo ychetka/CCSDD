@@ -17,7 +17,7 @@
 #   5. publish: candidate -> canon root, MANIFEST.json sha map
 #      recomputed, canon_version bumped, release history row
 #      appended. Git commit + canon-v<version> tag are performed
-#      afterwards by the git-agent (sessions never run git).
+#      afterwards by the git-agent (instances never run git).
 #
 # --orch-dir <dir> additionally folds a second tree (the
 # orchestrator layer: protocols, PLAYBOOK, bin) into the manifest

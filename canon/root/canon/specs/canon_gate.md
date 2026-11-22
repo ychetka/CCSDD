@@ -12,12 +12,12 @@ area) -> CANON_PUB (publication gate) -> CANON (immutable release)
   `canon_owner` mark in FLEET, assigned by the human — `fleet.md`
   §4).
 - Canon drafts live in the owner's work area (`canon_ws/`), NOT in
-  `canon/`. Direct editing of `canon/` by an LLM session is
+  `canon/`. Direct editing of `canon/` by an agent instance is
   forbidden: `root/` changes only as part of a published release.
 - The `canon_owner` mark in `fleet_registry.json` is assigned ONLY
   by the human: changing it requires a signed human decision
   envelope (`harness.md`, "Human decision envelope"). Editing the
-  mark or MANIFEST.json by hand from a session is a drift incident
+  mark or MANIFEST.json by hand from an instance is a drift incident
   (failure_class=conflict, auditable event).
 
 ## 2. Publication gate (CANON_PUB)

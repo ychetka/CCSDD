@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # verify_worktree.sh - deterministic signed worktree report.
-# The director's "blood signature" made mechanical: sessions are
+# The director's "blood signature" made mechanical: agent instances are
 # forbidden from running git directly, so this whitelisted script
 # produces the evidence a director must verify personally before
 # reporting or merging - current branch/HEAD, dirty tree list,

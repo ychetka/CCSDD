@@ -13,25 +13,25 @@ in the system: [1..M]. There is no meta-orchestrator: instances
 are isolated and do not dispatch each other.
 
 - One instance — one active orchestrator. Two orchestrators on
-  one bus/session is a forbidden case; globally, several
+  one bus is a forbidden case; globally, several
   orchestrators exist (one per instance).
 - The orchestrator role on the bus is registered CAS with a lease
   (TTL) and an epoch: writes to instance state are accepted only
   from the holder of the current epoch — a stale (zombie)
   orchestrator cannot write.
-- Addressing — the logical role, not the session-id: worker
+- Addressing — the logical role, not the instance-id: worker
   messages go to the instance's orchestrator role, not to a
   concrete sid.
 
 ## 2. Orchestrator replacement
 
-The orchestrator is a replaceable LLM session, not a context
+The orchestrator is a replaceable agent instance, not a context
 accumulation point.
 
 - The transport daemon watches the orchestrator (heartbeat+lease,
   context window, kill-switch) symmetrically to workers.
 - On death/hang/context exhaustion the out-of-band loop (OOB)
-  performs a cold respawn: the new session is hydrated from the
+  performs a cold respawn: the new instance is hydrated from the
   instance's STATE while workers are parked.
 - Exhausting the respawn budget — an alert to the human (the
   terminal path); there are no further automatic levels.
@@ -55,7 +55,8 @@ accumulation point.
 
 ## 4. Fleet registry (FLEET)
 
-- Shared storage of records about domains/sessions/instances.
+- Shared storage of records about agent-instance domains and
+  orchestration instances.
   Every record is marked with the owner instance (`instance`) and
   carries the registration epoch (`epoch`).
 - An instance writes its own records and reads others'. The canon
@@ -66,13 +67,13 @@ accumulation point.
 
 ## 5. Out-of-band loop (OOB, Runtime Root of Trust)
 
-A non-LLM component outside sessions: the only mechanism of cold
-start and recovery.
+A non-LLM component outside agent instances: the only mechanism
+of cold start and recovery.
 
 - Bootstrap and break-glass entry are performed only by the human —
-  no LLM session initiates OOB.
+  no agent instance initiates OOB.
 - Duties: initializing storages and the bus, starting the gateway
-  (keys and limits bypassing LLM), session spawn/respawn,
+  (keys and limits bypassing LLM), instance spawn/respawn,
   freeze/restore of STATE, rotation/protection of root secrets,
   emergency backup control of a worker.
 - OOB makes no product decisions and does not write to working

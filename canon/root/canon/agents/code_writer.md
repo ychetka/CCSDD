@@ -49,7 +49,7 @@ trust.
   plausible name does not prove a package exists (slopsquatting).
   Evidence goes into the report's `PROVENANCE`.
 - The `.changes/<slug>.md` fragment and the `docs/specs/` delta are
-  NOT your zone: the calling session creates them at PR assembly
+  NOT your zone: the calling instance creates them at PR assembly
   (they lie outside an implementation item's `may_edit`). You return
   only the item's `bump:` value (from the roadmap/`release:` field)
   in the report's `RELEASE` line. If the package explicitly extends
@@ -66,7 +66,7 @@ trust.
   IMMEDIATELY end the run with a `RESULT: QUOTA` + `QUOTA_RESET_AT`
   report + the raw error text. Waiting, retrying and sleeping inside
   the turn are forbidden — the wait window is owned by the calling
-  session (harness.md 9.3a).
+  instance (harness.md 9.3a).
 
 # PROCEDURE
 

@@ -7,10 +7,10 @@ three rounds of consultations with quantum partners).
 
 ## 1. Principles
 
-- Two levels of abstraction: the project root session operates at the
-  high level (roadmap, contracts, statuses); the executor subagent
-  operates only at the low level (one item, one module, its own
-  contract and files).
+- Two levels of abstraction: the project root agent instance
+  operates at the high level (roadmap, contracts, statuses); the
+  executor subagent operates only at the low level (one item, one
+  module, its own contract and files).
 - Contract-first: a module is defined by its external contract before
   code; executors of different modules can work in parallel and
   independently.
@@ -28,7 +28,7 @@ three rounds of consultations with quantum partners).
   criteria fixed before the start.
 - All external model calls (partners, external architect, second
   family) — only through the unified gateway via Audit/Consult
-  profiles; direct calls from an LLM session are forbidden (see
+  profiles; direct calls from an agent instance are forbidden (see
   `gateway.md`).
 - Human decisions that affect gates are recorded as an immutable
   decision envelope (see §3) — not as a mediator's text.
@@ -44,7 +44,8 @@ three rounds of consultations with quantum partners).
 
 Designs roadmap.md and the design of each item.
 
-- Root director (the main session in the repository) — the author.
+- Root director (the main agent instance in the repository) — the
+  author.
 - gh-copilot-partner, gemini-product — co-designers (smart/expensive
   models). Calls go through the gateway, Consult profile
   (`gateway.md`); design disputes taken to external arbitration —
@@ -76,7 +77,7 @@ Implements one roadmap item.
 
 ### Reviewers (outside the committees)
 
-- Item judge — a subagent of the root session, fresh bounded
+- Item judge — a subagent of the root instance, fresh bounded
   context, repo access.
 - Reviewer subagent (reviewer profile) — PR level, separate account,
   publishes its verdict directly via repo_pr_review.sh.
@@ -88,7 +89,7 @@ only on COMMITTED artifacts (the PR diff, the contract in the repo,
 gate-script run results) — not on the executor's self-report and not
 on the uncommitted state of the working tree.
 
-Invariant: one session/subagent never holds both authorship and
+Invariant: one agent instance never holds both authorship and
 approval.
 
 ## 3. Artifacts
@@ -202,7 +203,7 @@ contract.py/ts — types (the spec references, does not duplicate);
 ADR — decisions and reasons. Backlog ideas and unaccepted plans
 never enter the spec — only what is already in the code.
 
-Session rule: for "how is it built now" look at `docs/specs/`
+Agent-instance rule: for "how is it built now" look at `docs/specs/`
 first, then code. A spec<>code divergence is a defect, fixed by a
 delta in the next PR.
 
@@ -282,12 +283,12 @@ closing is always privileged (only `orchestrator`/`director`/
 cannot "wash out" its own escalation.
 Globally, several
 orchestrators with scoped ownership may exist (disjoint sets of
-tasks/sessions — e.g. when one runs out of context window); two
+tasks/instances — e.g. when one runs out of context window); two
 orchestrators on one project is a forbidden case. Roles:
 orchestrator, director, executor/code_writer, judge, reviewer,
 resolver, repository, git, reader, hygiene, partner.
 
-Actor retirement: when a session/subagent ends, its record in
+Actor retirement: when an agent instance ends, its record in
 `actors.json` is removed by `cycle_log.sh unregister` (with the
 actor's own `--token` or a privileged registrar's
 `--registrar-token`) — the token immediately stops authorizing
@@ -309,11 +310,11 @@ one's `--registrar-token`; the departing one is unregistered).
 Retrospective: after 15-20 items the log goes to gemini-product for
 bottleneck analysis — metrics appear then.
 
-### The director-session model (event-driven, approved 2026-11-11)
+### The director-instance model (event-driven, approved 2026-11-11)
 
-The worker session = the project director: does not write code
+The worker instance = the project director: does not write code
 itself, delegates to background executors and lives in SHORT
-event-driven turns. Goal: the session is almost always available
+event-driven turns. Goal: the instance is almost always available
 for orchestrator mail and questions — availability is achieved by
 releasing the slot, not by holding it forever.
 
@@ -335,32 +336,33 @@ Principles:
   retry cap — max 3 before escalation.
 - **Blood signature — mechanical only**: the director does NOT
   report on the executor's word and does not run git itself (direct
-  git by the session is forbidden) — verification is performed by
+  git by the agent instance is forbidden) — verification is
+  performed by
   the whitelisted `verify_worktree.sh` script whose JSON report the
   director quotes verbatim; before merge the gate itself runs
   `verify_constraints.sh` + `verify_worktree.sh` on a detached
   worktree of the PR tree.
 - **Kill-switch**: a STOP directive from the orchestrator is
   executed by the daemon: `bridge agent-kill --agent <agent_id>`
-  sends cancel directly to the executor session's runtime,
+  sends cancel directly to the executor instance's runtime,
   bypassing the mail queue (a STOP letter could sit while the
-  session is not polling mail). The executor is killed BEFORE
+  instance is not polling mail). The executor is killed BEFORE
   answering the letter. Fallback — a targeted kill of the hung
-  local runtime process of that executor (not a blanket stop of the
-  whole session).
+  local runtime process of that executor (not a blanket stop of
+  the whole instance).
 - **Lease != progress**: `bridge wait` extends the lease only while
   the executor is alive (a progress note with substance, not an
   empty ping).
 - **Review — external only**: the reviewer subagent is spawned by
   the director at PR assembly (the director is the only spawn owner
-  in the session), but there is no conflict of interest: verdict
+  in the instance), but there is no conflict of interest: verdict
   independence is ensured by the separate reviewer account declared
   in `project.json` (`review.reviewer_logins`, `review.gh_bin`) and
   by direct review publication via `repo_pr_review.sh` — the
   director can neither edit the verdict, nor filter its
   publication, nor approve its own PR.
 - **Mid-turn inject — closed empirically (2026-11-11)**:
-  `session/prompt` on a busy session is rejected by the host
+  `session/prompt` on a busy instance is rejected by the host
   immediately ("a turn is already running") — it is neither queued
   nor injected. The event-driven model is the only path; 'always-on'
   is unreachable.
@@ -507,7 +509,7 @@ The version policy is fixed at roadmap approval, not at merge
    the arch committee ("many review cycles, what to fix"), action
    per its decision. If the arch committee is called on one PR 3
    times and cannot clear the objections — stop, escalate to the
-   developer. After APPROVE — the session itself merges the PR via
+   developer. After APPROVE — the instance itself merges the PR via
    `repo_merge.sh` (every expected reviewer's APPROVE bound to the
    current head + required checks green, item without a manual_gate
    fragment). All publication commands
@@ -675,23 +677,24 @@ model families + developer confirmation before PR assembly.
 - Root does not edit project code. A stuck review — resolver
   subagent, not self-repair.
 
-## 8.1. Session start — initialization protocol
+## 8.1. Instance start — initialization protocol
 
-Performed ONCE at session start, before any work other than reading
+Performed ONCE at instance start, before any work other than reading
 `canon/RULES.md` and explicitly named files. These are entry
 conditions, not per-step approval: after initialization only the
 cycle gates apply (roadmap approval, contract sign-offs,
 PLAN_DELTA, review disputes) — no intermediate confirmations
 required.
 
-Managed mode: for a managed session "developer" in steps 1-4 and in
+Managed mode: for a managed instance "developer" in steps 1-4 and in
 all blocking checkpoints = the orchestrator on the bus (`bridge ask`
 / question_answer reply); terminal human decisions are escalated to
 the developer by the orchestrator itself — the worker never writes
 to the developer directly.
 
-1. ROLE: state your role and the expected result. If the session's
-   assignment is not obvious from the rules/context — clarify with
+1. ROLE: state your role and the expected result. If the
+   instance's assignment is not obvious from the rules/context —
+   clarify with
    the developer in one question.
 2. SKILLS AND TOOLS: check the harness — `partner_info` on both
    partners, profiles in `canon/agents/`, skills in `canon/skills/`.
@@ -699,7 +702,7 @@ to the developer directly.
    developer what to substitute or where to get it. Silent
    substitutions are forbidden.
 3. TASK: if the task statement was not given in the first message —
-   ask the developer what the session's task is and wait for the
+   ask the developer what the instance's task is and wait for the
    answer. Choosing the subject of work and analysing the repo
    "just in case" is forbidden. Code exploration is allowed only
    after the task statement — and only to the extent needed for the
@@ -711,7 +714,7 @@ to the developer directly.
 
 ## 9. Step states, quota and observability
 
-### 9.1. Reporting format (short invariant — in the session rules)
+### 9.1. Reporting format (short invariant — in the agent-instance rules)
 
 - Every authored text, including intermediate work-progress
   messages, starts with `YYYY-MM-DD HH:MM` and a `Question -` /
@@ -753,7 +756,7 @@ Transitions (complete table; other pairs are invalid):
 | paused | running | pause lifted by external command |
 | paused | - (done) | terminal decision (abandon/close) |
 
-The session must be able to answer a status request with the current
+The instance must be able to answer a status request with the current
 step's state, last-update time and transition reason.
 
 ### 9.3. Model-limit protocol (waiting_quota)
@@ -771,9 +774,9 @@ On trigger:
 3. Move the step to `waiting_quota` until `reset_at`. The task does
    NOT fail, the retry budget is NOT consumed, lease recovery does
    not spawn a second executor.
-4. Until `reset_at` wake messages into the session are suppressed.
+4. Until `reset_at` wake messages into the instance are suppressed.
 5. After `reset_at` — one control probe (a model preflight ping
-   inside the session before resuming the step):
+   inside the instance before resuming the step):
    - success > continue exactly the blocked step;
    - limit again > update `reset_at`, repeat the wait cycle
      (without frequent retries).
@@ -787,7 +790,7 @@ split the pools.
 
 #### 9.3a. Limit on a subagent (incident 2026-11-17)
 
-The wait window is owned by the session only — a subagent cannot
+The wait window is owned by the instance only — a subagent cannot
 and must not wait. An executor that hits the free-model limit and
 keeps hanging without exit blocks the step forever — a real
 incident. Two legs of the protocol:
@@ -799,20 +802,20 @@ per its profile contract (`RESULT: QUOTA` + `QUOTA_RESET_AT`, or
 failure_class=quota_limited) carrying the raw error text. Waiting,
 retries and sleep inside the agent's turn are forbidden.
 
-Calling session:
+Calling instance:
 
-1. The executor is called in BACKGROUND — the session turn stays
+1. The executor is called in BACKGROUND — the instance turn stays
    free for checkpoint ticks and parking. A foreground call that
-   hangs on a limit blocks the session turn and makes pp.2-4
+   hangs on a limit blocks the instance turn and makes pp.2-4
    impossible; the foreground discipline from the rules applies to
-   interactive (Desktop) sessions where background occupies the
+   interactive (Desktop) instances where background occupies the
    turn-slot.
-2. The agent returned a limit report -> the session parks the live
+2. The agent returned a limit report -> the instance parks the live
    task:
    `bridge quota-park --task <id> --reset-at <UTC>`
    --checkpoint 'subagent=<agent_id>; <resume point>'
    --note '<raw error text>'. The daemon will send one control
-   probe after reset_at — no own timer or sleep in the session,
+   probe after reset_at — no own timer or sleep in the instance,
    they are forbidden.
 3. The agent did not return and hangs -> on a checkpoint tick
    `read_subagent <agent_id> block=false`: the output tail is
@@ -821,11 +824,11 @@ Calling session:
    marker without reset -> park for the default window (900 s).
    The hung agent is killed AFTER parking:
    `bridge agent-kill --agent <agent_id>` — the daemon sends cancel
-   directly to the session's runtime, bypassing the mail queue (a
-   STOP letter could wait while the session picks up mail). A hung
+   directly to the instance's runtime, bypassing the mail queue (a
+   STOP letter could wait while the instance picks up mail). A hung
    agent is NEVER "resumed" in hope of a report: resumption — only
    from a saved resume point.
-4. After the control probe the session resumes THE SAME agent:
+4. After the control probe the instance resumes THE SAME agent:
    `run_subagent resume=<agent_id>` — the transcript is preserved,
    the step continues from the block point. Repeated quota error ->
    re-park on the new reset_at.
@@ -837,10 +840,10 @@ Calling session:
 
 ### 9.4. Wake-up deduplication
 
-A session wake/nudge counts only if there is BOTH delivery
+An instance wake/nudge counts only if there is BOTH delivery
 confirmation AND actual progress (new message/status/step
 progress). N identical wakes without progress = 1 incident, not N
-attempts. Do not poke a `busy` or quota-blocked session again.
+attempts. Do not poke a `busy` or quota-blocked instance again.
 
 ### 9.5. Responsibility
 
@@ -850,7 +853,7 @@ attempts. Do not poke a `busy` or quota-blocked session again.
 - Neighboring canon specs: `quota.md` (quota), `gateway.md`
   (external access), `fleet.md` (topology, orchestrator, OOB),
   `glossary.md` (terms).
-- Machine storage of states and deduplication — the session bus
+- Machine storage of states and deduplication — the bus
   (`bridge`, task/step states, reset_at, suppress-window).
 
 ## 10. What is excluded (cut deliberately)

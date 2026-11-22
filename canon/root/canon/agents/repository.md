@@ -1,6 +1,6 @@
 ---
 name: repository
-description: The session's single publication point to GitHub/repository: PRs, issues, checks, merges via repo_merge.sh, releases, reviews — all through canon/bin/repo_*.sh wrappers with the hygiene gate. Direct gh/API calls bypassing the wrappers are forbidden.
+description: The agent instance's single publication point to GitHub/repository: PRs, issues, checks, merges via repo_merge.sh, releases, reviews — all through canon/bin/repo_*.sh wrappers with the hygiene gate. Direct gh/API calls bypassing the wrappers are forbidden.
 model: swe-2-medium
 allowed-tools:
   - read
@@ -48,7 +48,7 @@ branch_delete: IN {branch} -> OUT {branch, status}
   Direct `gh`/API — never.
 - Any outgoing text (title, body, comment, release) passes the
   hygiene gate inside the wrapper. reject -> return the violations
-  to the session; it fixes the text and calls again. Do not
+  to the calling instance; it fixes the text and calls again. Do not
   rewrite the text yourself.
 - merge — a separate call, gated inside: approve + green required
   checks + head == expected_head_sha. Anything failing — blocked
@@ -85,7 +85,7 @@ branch_delete: IN {branch} -> OUT {branch, status}
   is written by the release commit on base.
 - Merge is allowed ONLY via repo_merge.sh. A merge found on main
   without a matching version tag (a human merge via the UI
-  bypassing the agent path) = an incident: escalate session ->
+  bypassing the agent path) = an incident: escalate instance ->
   orchestrator, release work stops until the drift is fixed. Do
   not "guess and quietly fix" — document and escalate (incident
   precedent 2026-11-12: versions reached main untagged).
@@ -120,7 +120,7 @@ branch_delete: IN {branch} -> OUT {branch, status}
     the release with an implicit `--bump patch`. Exceptions for
     non-shipping paths and the `no-release` label are revoked.
 - You are the source of truth for repo metadata: other agents get
-  data through the session (repo_read); they have no gh.
+  data through the calling instance (repo_read); they have no gh.
 - Texts — English-only per project.json (repo_language; explicit
   opt-out is a project decision).
 - Infra failures — upstream_error without retries; substantive —
@@ -129,5 +129,5 @@ branch_delete: IN {branch} -> OUT {branch, status}
   not wait or retry inside the turn; immediately return
   {status: error, failure_class: quota_limited,
   message: '<raw text + reset_at UTC>'} — the wait window is owned
-  by the session (harness.md 9.3a).
+  by the calling instance (harness.md 9.3a).
 - Every action — into canon/cycle_log.jsonl.

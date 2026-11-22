@@ -34,8 +34,9 @@ Everything else in the methodology follows from that axiom.
 ### 1. Untrusted actors + deterministic gates
 
 Every rule that matters exists in two forms: text in a spec/rules file
-**and** an executable check. A session cannot "decide" to skip lint,
-commit a protected path, or merge without verdicts — the corresponding
+**and** an executable check. An agent instance cannot "decide" to
+skip lint, commit a protected path, or merge without verdicts — the
+corresponding
 exec calls are denied in `config/policy.json`, and state transitions
 are performed only by `canon/bin/` scripts (bash + git + gh,
 deterministic, fail-closed). Prompts and role profiles describe
@@ -43,8 +44,9 @@ responsibilities; enforcement lives in gates.
 
 ### 2. Two-committee structure + review outside committees
 
-- **Architecture committee** — the root director (the main session in
-  the repository) + partner consultants + the human arbiter. Designs
+- **Architecture committee** — the root director (the main agent
+  instance in the repository) + partner consultants + the human
+  arbiter. Designs
   the roadmap and each item. Never edits project code.
 - **Executive committee** — the executor subagent (`code_writer`) +
   consultants. Implements one roadmap item inside a scope whitelist.
@@ -55,12 +57,12 @@ responsibilities; enforcement lives in gates.
 Separation of duties is mechanical, not organizational: the executor
 has no git in its allowed execs, the git agent has no merge right, and
 the merge gate merges only on reviewer verdicts bound to the current
-head sha — never on a session's say-so.
+head sha — never on an instance's say-so.
 
-### 3. The director session (event-driven)
+### 3. The director instance (event-driven)
 
-Root is one long-lived session per repository: the single writer of
-plan and statuses; it spawns role subagents with narrow contexts
+Root is one long-lived agent instance per repository: the single
+writer of plan and statuses; it spawns role subagents with narrow contexts
 (whitelist packages — item text, read-only contract, file slices),
 collects their reports and verdicts, and keeps the journals. The
 subagent's narrow context is itself a mechanism: it physically cannot
@@ -120,7 +122,7 @@ code — an empty interrogation is itself a signal to the judge.
 The methodology is an artifact under control too: canon deploys
 verbatim per `MANIFEST.json` with a sha256 map (drift is caught by
 `check_setup.sh`), it is deployed not tracked (gitignore block), and
-a per-repo **canary** in the `RULES.md` tail proves the session rules
+a per-repo **canary** in the `RULES.md` tail proves the instance rules
 were not truncated. Canon changes are single-writer through
 `canon_pub.sh` with a signed human envelope; LLM self-modification of
 the canon is forbidden. The actor registry (`actors.json` +

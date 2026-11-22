@@ -39,11 +39,11 @@ quota pass re-probes at its end.
 #### Scenario: transport-surfaced rate limit parks the live task
 
 - **WHEN** a wake or prompt `rpc_error` body carries a rate-limit
-  marker and the session has a live task
+  marker and the instance has a live task
 - **THEN** the task parks as `waiting_quota` with the parsed reset -
   or the default window when the marker names none - instead of
   burning the retry streak or finishing the task failed
-- **AND** the session drops out of every wake leg until that reset
+- **AND** the instance drops out of every wake leg until that reset
 
 ### Requirement: every real park is durable-journaled with its marker
 
@@ -66,7 +66,7 @@ whole episode.
 
 #### Scenario: quota signal without a live task journals only
 
-- **WHEN** a wake error carries a quota marker but the session has
+- **WHEN** a wake error carries a quota marker but the instance has
   no live task
 - **THEN** the signal is journaled as `quota_signal_seen` and
   ordinary `rpc_error` handling applies
@@ -92,21 +92,21 @@ the re-read row or abandoned, never forced.
 
 When `quota_reset_at` passes, the daemon quota pass SHALL clear the
 park, re-arm the lease for a full window and enqueue/send exactly
-one control probe to the session INSIDE the same transaction - a
+one control probe to the instance INSIDE the same transaction - a
 cleared park without a delivered probe must not be observable.
 Probe delivery paces on a dedicated pacing budget independent of
-the ordinary wake cooldown - a session whose undrained mail keeps
+the ordinary wake cooldown - a instance whose undrained mail keeps
 the wake cooldown armed SHALL still receive its control probe.
 When the probe turn and a pending mail-drain fall in the same
 pass, the probe fires once and the turn drains the mailbox - the
 daemon SHALL NOT issue a second wake for the same mail.
 
 The control probe is a daemon-owned probe of the step's model
-pool: it asks the session to run the blocked step's smallest
+pool: it asks the instance to run the blocked step's smallest
 preflight on the same model tier. Its outcome is binary:
 
-- probe succeeds -> the session resumes exactly the blocked step;
-- probe hits the limit again -> the session reports the marker and
+- probe succeeds -> the instance resumes exactly the blocked step;
+- probe hits the limit again -> the instance reports the marker and
   the task re-parks by the new reset (full park cycle, not the
   short defer window used for transport failures).
 
@@ -135,15 +135,15 @@ defer path below.
 
 #### Scenario: mail-wake cooldown does not starve the probe
 
-- **WHEN** a session is woken for pending mail in the same daemon pass
+- **WHEN** a instance is woken for pending mail in the same daemon pass
   that its expired park sweeps
 - **THEN** the control probe still fires - wake pacing must not
   consume the probe's delivery budget
 
 ### Requirement: give-up on a busy owner holds and escalates
 
-When the defer limit is reached and the owning session is verifiably
-mid-turn per session/list, the task SHALL NOT release to the lease
+When the defer limit is reached and the owning instance is verifiably
+mid-turn per instance/list, the task SHALL NOT release to the lease
 lifecycle - releasing there folds a probe-delivery problem into a
 worker failure. The park instead re-arms for a bounded hold
 (`QUOTA_BUSY_HOLD_SECONDS`, default 3600s) and the
@@ -160,7 +160,7 @@ budget is spent, keeps the release contract.
 - **WHEN** a probe stays undeliverable past the defer limit and the
   owner reports mid-turn status
 - **THEN** the task re-parks under `quota_source=busy-hold`, the
-  orchestrator gets one `[QUOTA_PROBE]` notice naming task, session
+  orchestrator gets one `[QUOTA_PROBE]` notice naming task, instance
   and defer count, and `quota_probe_escalated`/`quota_probe_held_busy`
   events journal durably
 - **AND** when the owner is absent, idle or unverifiable, or the
@@ -171,9 +171,9 @@ budget is spent, keeps the release contract.
 
 When a parked step's background agent hangs (no structured report,
 quota marker in its tail, no progress past its deadline), the
-session/daemon SHALL park the step and stop the hung agent -
+instance/daemon SHALL park the step and stop the hung agent -
 `bridge agent-kill --agent <id>` (daemon cancel straight into the
-session runtime, bypassing the mailbox). A hung agent is NEVER
+instance runtime, bypassing the mailbox). A hung agent is NEVER
 "resumed" hoping it will produce a report: resume requires a
 saved checkpoint, and when resume is impossible or rejected a
 fresh agent spawns from the checkpoint - it does not re-do
@@ -190,7 +190,7 @@ verified work.
 ### Requirement: model pools are tiered and the probe hits the right pool
 
 Quota is a property of the model/pool, not of the agent. The
-session SHALL park against the pool the step actually used
+instance SHALL park against the pool the step actually used
 (recorded as `quota_pool` in the park row) and the control probe
 SHALL preflight that same pool. A step SHALL NOT silently downgrade
 to another tier on park: a tier change is a caller decision made at
@@ -207,12 +207,12 @@ project configuration, not in the canon.
 
 ### Requirement: HALT is senior to a quota reset
 
-A halted session's expired quota park SHALL stay parked - the quota
+A halted instance's expired quota park SHALL stay parked - the quota
 pass sweeps it only after `bridge resume` lifts the halt.
 
-#### Scenario: halted session past reset
+#### Scenario: halted instance past reset
 
-- **WHEN** `quota_reset_at` passed but the session is halted
+- **WHEN** `quota_reset_at` passed but the instance is halted
 - **THEN** the park remains and no probe fires until resume
 
 ### Requirement: transport defaults are named and bounded once

@@ -38,17 +38,17 @@ enums = {"text_language": {"en", "ru"},
          "task_tracker": {"github_issues", "local", "none"},
          "role": {"worker", "service", "orchestrator"}}
 # every key the canonical harness may legitimately declare - an
-# incomplete allowlist rejects valid configs and drives sessions to
+# incomplete allowlist rejects valid configs and drives instances to
 # invent undeclared keys instead
 allowed = required | {
     "task_tracker", "cyrillic_paths", "repo_language",
     "version",                    # {file, regex} for repo_version_*
     "review",                     # {reviewer_logins: [...]}
     "migration_dry_run_cmd",      # verify_constraints dry-run
-    "sessions_bridge_dir",        # transport adapter location
+    "instances_bridge_dir",       # transport adapter location
     "canonical_harness_dir",      # canon root override
-    "bound_session", "workspace", # onboard linkage
-    "ignored_sessions",           # fleet audit exemptions
+    "bound_instance", "workspace",# onboard linkage
+    "ignored_instances",          # fleet audit exemptions
     "repos",                      # nested multi-repo declaration
     "role",                       # worker|service|orchestrator
     "project_name",               # display name for fleet messages
@@ -56,13 +56,13 @@ allowed = required | {
     "actors",                     # actor-registry bootstrap overrides
 }
 types = {"protected_paths": list, "cyrillic_paths": list,
-         "ignored_sessions": list, "repos": list,
+         "ignored_instances": list, "repos": list,
          "version": dict, "review": dict, "director": dict,
          "actors": dict,
          "repo": str, "text_language": str, "repo_language": str,
          "role": str,
-         "migration_dry_run_cmd": str, "sessions_bridge_dir": str,
-         "canonical_harness_dir": str, "bound_session": str,
+         "migration_dry_run_cmd": str, "instances_bridge_dir": str,
+         "canonical_harness_dir": str, "bound_instance": str,
          "workspace": str, "project_name": str, "task_tracker": str}
 missing = required - set(cfg)
 extra = set(cfg) - allowed
@@ -374,7 +374,7 @@ if gh auth status >/dev/null 2>&1; then ok "gh auth"; else fail "gh not authenti
 # canary check: canon/RULES.md must end with the canary token declared
 # by the deployed canon stamp (canon/canon_manifest.json "canary") -
 # if it is missing, the injected rules were truncated (16KB incident
-# class) and the session must halt instead of running on partial
+# class) and the instance must halt instead of running on partial
 # rules. The expected token comes from the deploy manifest, never
 # hardcoded: the same canon ships to multiple repos and onboard
 # generates a per-repo token. An absent/placeholder canary key in the

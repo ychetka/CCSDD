@@ -8,7 +8,7 @@
 # invokes every requested adapters/<name>.sh to produce runtime glue.
 #
 # This is the reusable core: a future orchestrator calls THIS script;
-# bus/session wiring stays outside.
+# bus/instance wiring stays outside.
 #
 # Usage:
 #   start_project.sh --workspace DIR [options]
@@ -355,7 +355,7 @@ DEPLOY OK: canon v$CANON_VER -> $WORKSPACE
 adapters applied: ${ADAPTERS[*]:-<none>}
 
 Next steps for the operator:
-  1. Open a fresh agent session with working_directory = $WORKSPACE
+  1. Open a fresh agent instance with working_directory = $WORKSPACE
   2. Its first move: read canon/RULES.md (last line must be
      CANARY_EOF_TOKEN:<token> - halt if absent) and re-run
      canon/bin/check_setup.sh

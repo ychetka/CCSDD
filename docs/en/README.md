@@ -62,7 +62,7 @@ Everything else (commit gates, canon integrity, gateway) is remote-free.
 canon/
   MANIFEST.json        # files + sha256 + gitignore policy; sole authority
   root/canon/          # mirrors what lands in a project as canon/
-    RULES.md           # session kernel rules; integrity canary at the tail
+    RULES.md           # instance kernel rules; integrity canary at the tail
     agents/            # role profiles (code_writer, judge, reviewer, git, ...)
     bin/               # gate scripts (check_setup, verify_*, repo_*, ship_*)
                        # + test suites: gate_tests.sh, pipeline_tests.sh
@@ -103,7 +103,7 @@ tools/start_project.sh --workspace /path/to/repo \
     --adapter devin --adapter generic --text-lang ru
 ```
 
-After deploy, open an agent session with `working_directory` = project
+After deploy, open an agent instance with `working_directory` = project
 root. Its first move is to read `canon/RULES.md` (last line must be
 `CANARY_EOF_TOKEN:<token>`, otherwise halt) and re-run
 `canon/bin/check_setup.sh`.

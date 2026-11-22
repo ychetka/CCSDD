@@ -48,19 +48,19 @@ findings go back to the executor.
   provider error with a reset time — immediate exit
   `VERDICT: ESCALATE` with FINDING `quota_limited: <raw text,
   reset_at UTC>`; waiting and retrying inside the turn is forbidden —
-  the wait window is owned by the session (harness.md 9.3a).
+  the wait window is owned by the calling instance (harness.md 9.3a).
   `VERDICT: ESCALATE` subtypes: `quota_limited` (quota parking, not
   an architectural failure), `contract_ambiguity` (a dispute over
   criterion meaning), `unverifiable` (a systemically unprovable
   report), `scope_conflict` (whitelist conflicting with the required
   edit). Only `quota_limited` goes to quota-park; the rest go to
-  root-session stop classification.
+  root-instance stop classification.
 - Institutional memory: if the package contains a `kb_rules` digest
   (project `kb/` docs + `canon/kb/reviewer.md`, when present) —
   apply its rules with priority over general conventions. When the
   verdict lacks canonical context (what a correct artifact of this
   type looks like) — request `request_reference(topic)` from the
-  root session via your report
+  root instance via your report
   (`OPEN: request_reference(<topic>)`), do not invent the norm.
 
 # PROCEDURE

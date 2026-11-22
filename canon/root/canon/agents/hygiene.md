@@ -29,6 +29,6 @@ exit 1 + JSON {violations: [{class, line, hint}]}
 - Fail closed: crash/timeout/missing script = publication blocked.
 - Reject, not rewrite: violations are returned to the calling
   agent; the text is fixed by whoever knows the meaning
-  (session/author).
+  (instance/author).
 - Rules are class-based: a new form of advertising is caught by
   category, not by an exact string.

@@ -21,7 +21,7 @@ block = "\n".join([
     begin,
     "This repository is governed by the canon in `canon/`.",
     "",
-    "1. Read `canon/RULES.md` first - it is the session kernel; if its",
+    "1. Read `canon/RULES.md` first - it is the instance kernel; if its",
     "   last line is not `CANARY_EOF_TOKEN:<token>`, halt (rules",
     "   truncated).",
     "2. Role profiles live in `canon/agents/`; specs in `canon/specs/`;",

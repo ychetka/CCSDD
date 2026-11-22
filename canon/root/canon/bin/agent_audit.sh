@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# session_audit.sh <transcript_file> - end-of-session stats.
+# agent_audit.sh <transcript_file> - end-of-instance stats.
 # Counts mechanical signals from cycle_log + transcript greps.
 set -uo pipefail
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
@@ -7,16 +7,16 @@ LOG=$CANON_DIR/cycle_log.jsonl
 TR=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    -f|--file) [ $# -ge 2 ] || { echo "usage: session_audit.sh [-f] <transcript>" >&2; exit 2; }
+    -f|--file) [ $# -ge 2 ] || { echo "usage: agent_audit.sh [-f] <transcript>" >&2; exit 2; }
                TR=$2; shift 2 ;;
-    -*)        echo "usage: session_audit.sh [-f] <transcript>" >&2; exit 2 ;;
+    -*)        echo "usage: agent_audit.sh [-f] <transcript>" >&2; exit 2 ;;
     *)         TR=$1; shift ;;
   esac
 done
-[ -n "$TR" ] || { echo "usage: session_audit.sh [-f] <transcript>" >&2; exit 2; }
-[ -f "$TR" ] || { echo "session audit: transcript '$TR' not found" >&2; exit 2; }
+[ -n "$TR" ] || { echo "usage: agent_audit.sh [-f] <transcript>" >&2; exit 2; }
+[ -f "$TR" ] || { echo "agent audit: transcript '$TR' not found" >&2; exit 2; }
 
-echo "== session audit =="
+echo "== agent audit =="
 if [ -f "$LOG" ]; then
   echo "agent_calls=$(grep -c . "$LOG")"
   echo "commits=$(grep -c '"action": *"commit"' "$LOG")"

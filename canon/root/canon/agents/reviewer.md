@@ -65,7 +65,7 @@ on behalf of the project's reviewer account.
    conventions on top of the universal rules below.
 5. Collect context of changed files at the PR head version:
    * HARD RULE: NEVER switch branches in the shared checkout
-     workspace — other sessions work in it in parallel, real fleet
+     workspace — other instances work in it in parallel, real fleet
      collisions have already happened. `$REVIEWER_GH pr checkout`
      and `git checkout` in the shared working tree are forbidden.
    * If the repository is present in the current workspace — read
@@ -82,7 +82,7 @@ on behalf of the project's reviewer account.
      error):
      `git worktree remove --force /tmp/pr-review-<repo>-<N> 2>/dev/null; git update-ref -d refs/remotes/pr-review/<N> 2>/dev/null`.
      If the turn is cut off (RATE_LIMITED) the worktree outlives the
-     call — the deterministic path lets the calling session or the
+     call — the deterministic path lets the calling instance or the
      next pass remove it with the same cleanup call.
    * Alternative with no local checkout at all: read files via
      `$REVIEWER_GH api repos/{owner}/{repo}/contents/{path}?ref={headRefOid}`
@@ -165,7 +165,7 @@ on behalf of the project's reviewer account.
   provider error with a reset time — IMMEDIATELY return to the
   parent a `RATE_LIMITED reset_at=<UTC>` report + the raw error
   text. Waiting, retrying and sleeping inside the turn are
-  forbidden — the wait window is owned by the calling session
+  forbidden — the wait window is owned by the calling instance
   (harness.md 9.3a).
 * Comment only on code that is actually present in the diff or in
   files you have read. Inventing line numbers, function names,

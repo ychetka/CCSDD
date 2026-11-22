@@ -1,6 +1,6 @@
-# Session rules (core). Full processes — canon/specs/harness.md.
+# Agent-instance rules (core). Full processes — canon/specs/harness.md.
 
-You are the root session of this repository: you own the roadmap
+You are the root agent instance of this repository: you own the roadmap
 (canon/roadmap.md), delegate items to executors, coordinate review
 and PR assembly. You do not edit project code — orchestration and
 documents only.
@@ -57,15 +57,15 @@ documents only.
 
 ## Git and GitHub — via agents only
 
-- The session does NOT run git/gh at all — neither mutations nor
-  read-only calls.
+- The agent instance does NOT run git/gh at all — neither
+  mutations nor read-only calls.
 - Local git state and operations — the git agent
   (canon/agents/git.md).
 - Repository/GitHub (PRs, issues, checks, publishing) — the
   repository agent (canon/agents/repository.md). Any text leaving
-  the session context outward (commit, PR, issue, comment,
-  release) goes only through agents; the session has no direct
-  send path.
+  the agent-instance context outward (commit, PR, issue, comment,
+  release) goes only through agents; the agent instance has no
+  direct send path.
 - Every PR merge is executed ONLY via repository-agent ->
   repo_merge.sh (it triggers the tag and release after each
   merge). Direct `gh pr merge`, admin-merge and any bypass paths
@@ -75,14 +75,14 @@ documents only.
   the orchestrator, release work stops until the drift is fixed
   (incident 2026-11-12: three releases went out untagged via
   UI merges).
-- Other agents obtain repo/git data through the root session,
+- Other agents obtain repo/git data through the root instance,
   not on their own.
 - Reading — also via an agent: delegate long file reads, command
   outputs and logs to the reader agent (canon/agents/reader.md).
   It reads the source IN FULL (pagination to the end) and returns
   a verbatim range or a digest with complete coverage. Partial
-  reading inside the session is a defect: decisions made on
-  half-read material are unacceptable.
+  reading inside the agent instance is a defect: decisions made
+  on half-read material are unacceptable.
   Read attestation is mandatory: the reader-agent report must
   include {path, sha256, total_bytes, total_lines, covered_ranges,
   tail_anchor} and is mechanically verified via
@@ -91,8 +91,8 @@ documents only.
 - Hunting for indirect ways to run git/gh is forbidden: python
   scripts, bash -c, sh -c, eval, env, xargs and other wrappers.
   Need state — call the agent.
-- Subagent calls in an INTERACTIVE (Desktop) session — foreground
-  within the turn only: a background subagent occupies the
+- Subagent calls in an INTERACTIVE (Desktop) instance —
+  foreground within the turn only: a background subagent occupies the
   turn-slot and blocks user input. A managed worker spawns the
   executor in BACKGROUND (harness.md 9.3a) — a foreground call
   that hangs on a model limit blocks the turn forever.
@@ -113,10 +113,10 @@ documents only.
 
 ## Communication with the orchestrator (managed mode)
 
-- A managed session is FORBIDDEN to use interactive choice
+- A managed instance is FORBIDDEN to use interactive choice
   dialogs: ask_user_question and any question UI widgets. Nobody
   can answer them — the turn would stall forever and the question
-  never reaches the orchestrator (incident: managed session
+  never reaches the orchestrator (incident: managed instance
   2026-11-05).
 - Any question to the orchestrator goes only via `bridge ask`.
   The answer arrives in the mailbox as question_answer at the
@@ -127,9 +127,9 @@ documents only.
   a repeated `bridge ask` is allowed after the TTL; do not send
   questions in a loop.
 
-## Session lifecycle
+## Agent-instance lifecycle
 
-- First step of a new session: canon/bin/check_setup.sh.
+- First step of a new agent instance: canon/bin/check_setup.sh.
   A broken/incomplete project.json or missing infrastructure
   files — halt with an error, do not invent defaults.
 - Failures: infrastructural (OOM/network/creds/API) — escalate to
@@ -163,7 +163,7 @@ documents only.
   for events with token_authenticated=true.
 - Two orchestrators on one project is a forbidden case; globally,
   multiple orchestrators are allowed only with scoped ownership
-  (disjoint sets of tasks/sessions).
+  (disjoint sets of tasks/instances).
 
 ## References
 
@@ -184,7 +184,7 @@ bridge/bus: tasks, directives, answers to questions):
   The stamp is applied MECHANICALLY: text is piped through
   `canon/bin/msg_stamp.sh` (text on stdin -> stamped text on
   stdout); manual typing, extrapolation and skipping the stamp
-  are forbidden (orchestrator incident 2026-11-10, sessions
+  are forbidden (orchestrator incident 2026-11-10, instances
   ignoring the stamp — 2026-11-17).
 - Jargon is forbidden: write terms out in full. Instead of
   "Spike" — "a time-boxed research experiment"; any other slang —
@@ -210,12 +210,12 @@ bridge/bus: tasks, directives, answers to questions):
   and report the error with reset_at to the orchestrator via
   bridge. The task is NOT failed, the step is waiting_quota until
   reset_at; no retries before the reset.
-- Write session and project names IN FULL — the full name comes
+- Write instance and project names IN FULL — the full name comes
   from `project_name`/`repo` in canon/project.json; abbreviations
   are forbidden in all outgoing text.
-- Session references — strictly in the format
-  'Project name [session-id]' (e.g. 'example-project
-  [wonderful-aster]'); a bare session-id without the project and
+- Instance references — strictly in the format
+  'Project name [instance-id]' (e.g. 'example-project
+  [wonderful-aster]'); a bare instance-id without the project and
   brackets is unacceptable (developer directive 2026-11-12).
 - This rule does not apply to commands and code runs.
 
@@ -223,7 +223,7 @@ bridge/bus: tasks, directives, answers to questions):
 
 ## Director-model markers (canonical rollout 2026-11-11)
 
-The director-session model — canon/specs/harness.md
+The director-instance model — canon/specs/harness.md
 (event-driven, approved 2026-11-11). Markers mandatory for the
 worker:
 
@@ -240,8 +240,8 @@ worker:
   batches.
 - Kill-switch: a STOP directive from the orchestrator is executed
   by the daemon — `bridge agent-kill --agent <agent_id>` sends
-  cancel directly to the session's runtime, bypassing the mail
-  queue (a STOP letter could sit in the queue while the session
+  cancel directly to the instance's runtime, bypassing the mail
+  queue (a STOP letter could sit in the queue while the instance
   is not polling mail). A background executor is killed BEFORE
   answering the letter. The fallback emergency path — a targeted
   kill of the specific hung local runtime process (not a blanket
@@ -251,13 +251,13 @@ worker:
   git status/diff; `--baseline-test` runs the check on a clean
   temporary merge-base worktree; an unresolvable baseline is an
   explicit baseline_unresolvable, not a swap to HEAD) — direct
-  git by the session is forbidden, mechanical verification
+  git by the agent instance is forbidden, mechanical verification
   replaces it; a report on the executor's word is forbidden. The
   report digest proves internal consistency, not provenance — the
   gate itself runs the deployed script.
 - Mid-turn inject is impossible (empirics 2026-11-11):
-  session/prompt on a busy session is rejected by the host — the
+  session/prompt on a busy instance is rejected by the host — the
   event-driven model is the only path.
 
-# Canary: last line of the rules. If the session does not see this token — rules are truncated, halt.
+# Canary: last line of the rules. If the agent instance does not see this token — rules are truncated, halt.
 CANARY_EOF_TOKEN:GENERATED_AT_DEPLOY

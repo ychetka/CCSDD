@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# msg_stamp.sh - prepends a real timestamp to outgoing session text.
-# The rule "first line = YYYY-MM-DD HH:MM" exists because sessions
+# msg_stamp.sh - prepends a real timestamp to outgoing instance text.
+# The rule "first line = YYYY-MM-DD HH:MM" exists because instances
 # systematically guess/extrapolate time (incident 2026-11-10) or skip
 # the stamp entirely. Routing text through this script makes the stamp
 # mechanical instead of remembered.

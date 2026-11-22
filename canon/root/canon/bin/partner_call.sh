@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # partner_call.sh - the ONLY permitted path to external LLM partners
 # (gateway.md: all external calls go through the gateway; a direct
-# mcp_call_tool / stdio runner from a session is a PROXY bypass).
+# mcp_call_tool / stdio runner from an instance is a PROXY bypass).
 #
 #   partner_call.sh --partner <id> --tool <name>
 #     (--args '<json>' | --args-file <path>)
@@ -22,7 +22,7 @@
 #   3. journals verbatim request+response to
 #      canon/partner_journal/<ts>-<partner>-<pid>.json BEFORE the
 #      answer is printed - the raw verdict exists in the journal even
-#      if the caller session crashes.
+#      if the caller instance crashes.
 #   4. sanitizes: refuses args containing obvious secret material
 #      (token/password/secret keys or .env blobs).
 #

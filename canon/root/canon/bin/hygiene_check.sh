@@ -30,7 +30,7 @@ with open(os.environ["HYGIENE_INPUT_FILE"], encoding="utf-8",
 # non-object root, or a wrong value type - -> fail closed: emit an
 # infra violation instead of silently defaulting.
 # The repo-artifact language is `repo_language` (default en), NOT
-# `text_language`: the latter only drives user-facing session text,
+# `text_language`: the latter only drives user-facing instance text,
 # while the repository-artifact invariant (English-only) is checked
 # here unconditionally unless a project explicitly opts out.
 lang = "en"

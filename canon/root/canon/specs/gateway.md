@@ -8,11 +8,12 @@ orchestration-instance and shared-loop level (see `fleet.md`, terms
 
 - All external LLM calls (partner consultants, external architect,
   second-family independent reviewer, other providers) go ONLY
-  through the gateway. A direct external-model call from an LLM
-  session (orchestrator, director, executor, judge, reviewer, etc.)
-  is forbidden.
-- Provider keys and quotas belong to the gateway, not to sessions.
-  A session has no access to provider credentials.
+  through the gateway. A direct external-model call from an agent
+  instance (orchestrator, director, executor, judge, reviewer,
+  etc.) is forbidden.
+- Provider keys and quotas belong to the gateway, not to agent
+  instances. An agent instance has no access to provider
+  credentials.
 - The gateway is an accepted single point of failure (a deliberate
   human decision; a lightweight service with minimal state, restart
   without journal loss: the journal lives in STATE, not in the

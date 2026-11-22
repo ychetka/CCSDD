@@ -59,7 +59,7 @@
 canon/
   MANIFEST.json        # files + sha256 + gitignore-политика; единственный авторитет
   root/canon/          # зеркало того, что попадёт в проект как canon/
-    RULES.md           # ядро правил сессии; канарейка целостности в хвосте
+    RULES.md           # ядро правил инстанса; канарейка целостности в хвосте
     agents/            # профили ролей (code_writer, judge, reviewer, git, ...)
     bin/               # гейт-скрипты (check_setup, verify_*, repo_*, ship_*)
                        # + тест-сюиты: gate_tests.sh, pipeline_tests.sh
@@ -100,8 +100,8 @@ tools/start_project.sh --workspace /path/to/repo \
     --adapter devin --adapter generic --text-lang ru
 ```
 
-После деплоя откройте сессию агента с `working_directory` = корень
-проекта. Первое действие сессии — прочитать `canon/RULES.md` (последняя
+После деплоя откройте инстанс агента с `working_directory` = корень
+проекта. Первое действие инстанса — прочитать `canon/RULES.md` (последняя
 строка `CANARY_EOF_TOKEN:<token>`, иначе halt) и прогнать
 `canon/bin/check_setup.sh`.
 
