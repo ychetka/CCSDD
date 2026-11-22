@@ -6,9 +6,14 @@
 #
 #   human_sign.sh init  [--key <pubkey-file>]
 #   human_sign.sh sign  --verdict <v> --artifact <sha256|sha1|file>
-#                       --out <envelope.json>
-#   human_sign.sh verify --envelope <file> --artifact <sha256|sha1|file>
+#                       --out <envelope.json|->
+#   human_sign.sh verify --envelope <file|CCSDD-SIGNOFF-1|...>
+#                        --artifact <sha256|sha1|file>
 #                        [--verdict <v>] [--nonce-store <file>]
+#
+# `--out -` prints a compact one-line signoff the human can paste
+# into an agent chat (remote-laptop workflow); verify accepts the
+# pasted line directly or inside a file.
 #
 # Model: `ssh-keygen -Y sign -n ccsdd-signoff` signs the canonical
 # message `ccsdd-signoff v1|<verdict>|<artifact_sha>|<utc>|<nonce>`
@@ -100,10 +105,19 @@ e = {"type": "human_signoff", "format": "ssh-sig-v1",
      "ts": os.environ["TS"], "nonce": os.environ["NONCE"],
      "message": os.environ["MSG"], "signature_b64": sig}
 out = os.environ["ENVELOPE"]
-os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
-with open(out, "w", encoding="utf-8") as fh:
-    json.dump(e, fh, indent=2); fh.write("\n")
-print(f"human_sign: envelope written: {out} (artifact {os.environ['SHA'][:16]}..)")
+if out == "-":
+    # Chat-paste transport: a single self-authenticating line the
+    # human can copy from a laptop terminal into an agent chat.
+    # The channel is untrusted by design - verify() re-derives the
+    # signed message from the fields, so nothing here can be
+    # altered, replayed or rebound to a different artifact.
+    print("CCSDD-SIGNOFF-1|%s|%s|%s|%s|%s" % (
+        e["verdict"], e["artifact_hash"], e["ts"], e["nonce"], sig))
+else:
+    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+    with open(out, "w", encoding="utf-8") as fh:
+        json.dump(e, fh, indent=2); fh.write("\n")
+    print(f"human_sign: envelope written: {out} (artifact {os.environ['SHA'][:16]}..)")
 PY
   ;;
 
@@ -119,10 +133,28 @@ verify)
 import base64, json, os, sys, tempfile, subprocess, time
 env, sha, want_v = (os.environ.get(k) or "" for k in
                     ("ENVELOPE", "SHA", "VERDICT"))
-try:
-    e = json.load(open(env, encoding="utf-8"))
-except Exception as ex:
-    sys.exit(f"human_sign: cannot parse envelope {env}: {ex}")
+# --envelope accepts: a file path (JSON envelope or a file holding
+# a compact line), a literal CCSDD-SIGNOFF-1|... line, or literal
+# JSON text. The compact line expands into the same envelope
+# fields, so every check below is identical for both transports.
+raw = open(env, encoding="utf-8").read().strip() \
+      if os.path.isfile(env) else env
+if raw.startswith("CCSDD-SIGNOFF-1|"):
+    parts = raw.split("|")
+    if len(parts) != 6:
+        sys.exit("human_sign: malformed compact signoff line")
+    _, v, art, ts_c, nonce, sig = parts
+    e = {"format": "ssh-sig-v1", "signer": "human", "verdict": v,
+         "artifact_hash": art.lower(),
+         "artifact_alg": "sha256" if len(art) == 64 else "sha1",
+         "ts": ts_c, "nonce": nonce, "signature_b64": sig,
+         "message": "ccsdd-signoff v1|%s|%s|%s|%s" %
+                    (v, art.lower(), ts_c, nonce)}
+else:
+    try:
+        e = json.loads(raw)
+    except Exception as ex:
+        sys.exit(f"human_sign: cannot parse envelope {env}: {ex}")
 if e.get("format") != "ssh-sig-v1":
     sys.exit("human_sign: unsupported envelope format "
              f"{e.get('format')!r} (legacy TOTP envelopes are not "

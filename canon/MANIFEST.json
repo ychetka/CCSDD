@@ -130,7 +130,7 @@
     "canon/bin/git_ro.sh": "8ea40f9d0ef96bdf7c181eb315bf7c60230969d2aca3b31be16b991f5deee3e3",
     "canon/bin/gw_store.py": "6ef584fdf058d858dfba8eef5e99698f1e994c9b8e1cd2b46294d8160b3eb8ec",
     "canon/bin/harness_log.sh": "3c7c08cd0eca3e1227e7ecfb7b8ef0655b2505364c3df13ecb78a7c71a558bee",
-    "canon/bin/human_sign.sh": "77b7d3e98cc4562d7412295a84a9c8024a49543f4a93d179ed0310b73ee8b1e8",
+    "canon/bin/human_sign.sh": "48637d3173f96e4391148347a5e9ce4cfbcc3c8490f49eb4806b219c4b058a8a",
     "canon/bin/hygiene_check.sh": "bfdd7fcb6f6e8ff1a6b2fae58df18c13aab0ef46a5910ba5a0d65d483a381161",
     "canon/bin/issue_merge.sh": "e39a6a8711089d2a998a6b716eda696310d4dea3493d45ba031afca2a6d066ee",
     "canon/bin/item_worktree.sh": "9ecd5f81098702d5663749d5790a41d8a27b00630b7aab3a8afc183246c472fe",
