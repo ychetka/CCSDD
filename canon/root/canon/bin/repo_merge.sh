@@ -381,7 +381,7 @@ try: json.load(sys.stdin)
 except Exception: print("bad")' | grep -q bad && \
     ENTRY='{"status":"error","detail":"adapter returned non-JSON output"}'
 else
-  FRAG_SCAN=$(TOP="$TOP" REMOTE="$REMOTE" BASE="$BASE" EXPECTED="$EXPECTED" INFO_FILE="$INFO_FILE" python3 - <<'PY'
+  FRAG_SCAN=$(TOP="$TOP" REMOTE="$REMOTE" BASE="$BASE" EXPECTED="$EXPECTED" INFO_FILE="$INFO_FILE" HEAD_BRANCH="$HEAD_BRANCH" python3 - <<'PY'
 import json, os, re, subprocess
 top = os.environ["TOP"]
 base_ref = os.environ["REMOTE"] + "/" + os.environ["BASE"]
@@ -423,6 +423,7 @@ def front_fields(body):
 
 SEV = {"patch":0,"minor":1,"major":2}
 bumps, bad, manual_gate, ci_bootstrap = [], [], False, False
+iss_missing, iss_bad, frag_issues = [], [], {}
 for f in frags:
     body = subprocess.run(["git","-C",top,"show",head+":"+f],
                           capture_output=True, text=True).stdout
@@ -432,8 +433,30 @@ for f in frags:
         bumps.append(b)
     else:
         bad.append(f)
+    iss = (flds.get("issue") or "").lstrip("#").strip()
+    if not iss:
+        iss_missing.append(f)
+    else:
+        frag_issues.setdefault(f, iss)
     manual_gate = manual_gate or flds.get("manual_gate") == "true"
     ci_bootstrap = ci_bootstrap or flds.get("ci_bootstrap") == "true"
+
+# Correspondence check: the fragment's issue: field must name the
+# issue this PR is about - taken from the issue_<N>-<slug> branch
+# name, else from close/fix/resolve refs in the PR body. A fragment
+# pointing at a different issue is a release/journal forgery; a
+# missing field violates the mandatory fragment contract
+# (harness.md branch/fragment section).
+expected_issue = ""
+m = re.match(r"^issue_(\d+)(?:[-_]|$)", os.environ.get("HEAD_BRANCH") or "")
+if m:
+    expected_issue = m.group(1)
+else:
+    refs = re.findall(r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)",
+                      d.get("body") or "", re.I)
+    expected_issue = refs[0] if refs else ""
+if expected_issue:
+    iss_bad = [f for f, i in frag_issues.items() if i != expected_issue]
 
 flags = {"bumps": bumps, "manual_gate": manual_gate,
          "ci_bootstrap": ci_bootstrap}
@@ -441,6 +464,14 @@ if bad:
     entry = {"status":"blocked","failure_class":"malformed_input",
              "message":"changes fragment(s) lack a valid 'bump: patch|minor|major' field",
              "fragments": bad}
+elif iss_missing:
+    entry = {"status":"blocked","failure_class":"missing_issue_field",
+             "message":"changes fragment(s) lack the mandatory 'issue:' field",
+             "fragments": iss_missing}
+elif iss_bad:
+    entry = {"status":"blocked","failure_class":"issue_mismatch",
+             "message":"fragment issue: does not match the PR issue (#%s)" % expected_issue,
+             "fragments": iss_bad}
 elif frags:
     entry = {"status":"pass","via":"fragment"}
 elif "no-changes-entry" in labels:
@@ -816,7 +847,10 @@ if [ $rc -ne 0 ]; then
 fi
 
 # Post-merge release under RoM: release is part of the merge
-# operation, not a separate agent duty. repo_release.sh computes the
+# operation ONLY on the repository default branch - a merge into a
+# non-default base (a task branch merged into its epic branch) is
+# integration work, not a publication: no version bump, no tag.
+# repo_release.sh computes the
 # next version from pending .changes fragments (max bump) applied to
 # max(latest tag, version source), writes the release commit (version
 # file + CHANGELOG fold + fragment consumption), tags and publishes.
@@ -828,7 +862,9 @@ REL_ARGS=()
 case "$ENTRY_VIA" in
   label|changelog) REL_ARGS=(--bump patch) ;;
 esac
-if ! git fetch "$REMOTE" "+refs/heads/$BASE:refs/remotes/$REMOTE/$BASE" --tags >/dev/null 2>&1; then
+if [ -n "$DEFAULT_BRANCH" ] && [ "$BASE" != "$DEFAULT_BRANCH" ]; then
+  RELEASE='{"status":"skipped","reason":"non_default_base","base":"'"$BASE"'"}'
+elif ! git fetch "$REMOTE" "+refs/heads/$BASE:refs/remotes/$REMOTE/$BASE" --tags >/dev/null 2>&1; then
   RELEASE='{"status":"error","failure_class":"upstream_error","reason":"fetch_failed"}'
 elif [ ! -x "$CANON_DIR/bin/repo_release.sh" ]; then
   RELEASE='{"status":"error","failure_class":"release_failed","reason":"repo_release_missing"}'
@@ -844,6 +880,10 @@ raw = os.environ.get("RELEASE","{}")
 try: rel = json.loads(raw)
 except Exception: rel = {"status":"error","message":raw}
 rs = rel.get("status")
+if rs == "skipped":
+    # non-default base: integration merge, no release by design
+    print(json.dumps({"status":"merged","release":rel}))
+    raise SystemExit(0)
 if rs == "release_pr_opened":
     print(json.dumps({"status":"merged","release":rel,"release_pending":True}))
     raise SystemExit(0)

@@ -362,7 +362,7 @@ expect M2-env-no-substitute 1 $? "no reviewers configured"
 # gate sits AFTER it, so fragment-less PRs never reach the review
 # verdict. issue_42-fix carries a bump fragment.
 (cd "$WS" && git checkout -q -b issue_42-fix main \
-  && mkdir -p .changes && printf 'bump: patch\n\nfix\n' > .changes/fix.md \
+  && mkdir -p .changes && printf 'bump: patch\nissue: 42\n\nfix\n' > .changes/fix.md \
   && git add -A && git commit -qm "fix" \
   && git push -q origin issue_42-fix)
 FIXSHA=$(cd "$WS" && git rev-parse issue_42-fix)
@@ -454,7 +454,7 @@ PY
 # must be blocked even with a valid .changes fragment.
 (cd "$WS" && git checkout -q -b issue_7-ver main \
   && printf '[project]\nname="pipe"\nversion="9.9.9"\n' > pyproject.toml \
-  && mkdir -p .changes && printf 'bump: patch\n\nv\n' > .changes/v.md \
+  && mkdir -p .changes && printf 'bump: patch\nissue: 7\n\nv\n' > .changes/v.md \
   && git add -A && git commit -qm "bump" \
   && git push -q origin issue_7-ver)
 VERSHA=$(cd "$WS" && git rev-parse issue_7-ver)
@@ -562,6 +562,61 @@ grep -q -- "--match-head-commit $FULLSHA" "$GHSTATE/merge_calls" \
 grep -q '"release"' "$SCRATCH/out" \
   && { echo "PASS M9c-release-ran"; pass=$((pass+1)); } \
   || { echo "FAIL M9c-release-ran"; fail=$((fail+1)); }
+
+# ---------- M10: fragment issue: correspondence --------------------
+# A fragment whose issue: field names another issue is blocked at
+# the entry gate - before any review verdict is consulted.
+(cd "$WS" && git checkout -q -b issue_44-mismatch main \
+  && mkdir -p .changes \
+  && printf 'bump: patch\nissue: 99\n\nx\n' > .changes/x.md \
+  && git add -A && git commit -qm "x" \
+  && git push -q origin issue_44-mismatch)
+MISSHA=$(cd "$WS" && git rev-parse issue_44-mismatch)
+printf '{"headRefOid":"%s","headRefName":"issue_44-mismatch","baseRefName":"main","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"closes #44","reviewRequests":[]}' "$MISSHA" > "$GHSTATE/pr_view.json"
+(cd "$WS" && env FAKEGH_REPO="$WS" FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
+       canon/bin/repo_merge.sh 44 "$MISSHA" squash) >"$SCRATCH/out" 2>&1
+expect M10a-issue-mismatch 1 $? "issue_mismatch"
+# and a fragment without the mandatory issue: field at all
+(cd "$WS" && git checkout -q -b issue_45-noissue main \
+  && mkdir -p .changes \
+  && printf 'bump: patch\n\nx\n' > .changes/x.md \
+  && git add -A && git commit -qm "x" \
+  && git push -q origin issue_45-noissue)
+NOISSHA=$(cd "$WS" && git rev-parse issue_45-noissue)
+printf '{"headRefOid":"%s","headRefName":"issue_45-noissue","baseRefName":"main","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"closes #45","reviewRequests":[]}' "$NOISSHA" > "$GHSTATE/pr_view.json"
+(cd "$WS" && env FAKEGH_REPO="$WS" FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
+       canon/bin/repo_merge.sh 45 "$NOISSHA" squash) >"$SCRATCH/out" 2>&1
+expect M10b-missing-issue 1 $? "missing_issue_field"
+
+# ---------- M11: task -> epic merge releases nothing ---------------
+# A merge into a NON-default base (task branch into the epic branch)
+# is integration work: it merges, but Release-on-Merge does not run -
+# no bump, no tag.
+(cd "$WS" && git checkout -q -b issue_9-epic main \
+  && git push -q origin issue_9-epic \
+  && git checkout -q -b issue_10-auth issue_9-epic \
+  && mkdir -p .changes \
+  && printf 'bump: patch\nuser_visible: true\nissue: 10\n\nauth task\n\n## Spec impact\n- none\n' > .changes/auth.md \
+  && git add -A && git commit -qm "auth" \
+  && git push -q origin issue_10-auth)
+TASKSHA=$(cd "$WS" && git rev-parse issue_10-auth)
+printf '{"headRefOid":"%s","headRefName":"issue_10-auth","baseRefName":"issue_9-epic","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"closes #10","reviewRequests":[]}' "$TASKSHA" > "$GHSTATE/pr_view.json"
+python3 - "$GHSTATE/reviews.json" "$TASKSHA" <<'PY'
+import json, sys
+json.dump([{"user": {"login": "alice"}, "id": 11, "state": "APPROVED",
+            "commit_id": sys.argv[2], "submitted_at": "2026-01-01T00:00:00Z"}],
+          open(sys.argv[1], "w"))
+PY
+TAGS_BEFORE=$(cd "$WS" && git tag | wc -l)
+(cd "$WS" && env FAKEGH_REPO="$WS" FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
+       canon/bin/repo_merge.sh 10 "$TASKSHA" squash) >"$SCRATCH/out" 2>&1
+expect M11a-epic-merge-ok 0 $? '"status": "merged"'
+grep -q 'non_default_base' "$SCRATCH/out" \
+  && { echo "PASS M11b-release-skipped"; pass=$((pass+1)); } \
+  || { echo "FAIL M11b-release-skipped: $(cat "$SCRATCH/out")"; fail=$((fail+1)); }
+[ "$(cd "$WS" && git tag | wc -l)" = "$TAGS_BEFORE" ] \
+  && { echo "PASS M11c-no-tag"; pass=$((pass+1)); } \
+  || { echo "FAIL M11c-no-tag: tag created on epic merge"; fail=$((fail+1)); }
 
 # ---------- G8/G9: counter integrity + audit-key derivation --------
 echo 'not json' > "$CNTR"

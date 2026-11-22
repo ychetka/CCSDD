@@ -18,9 +18,12 @@ three rounds of consultations with external partners).
 - Human checkpoints: roadmap approval (and contract sign-off) before
   code, plus escalations from the list. There is NO separate
   "release merge" gate (tag-always ruling 2026-11-17): every merge
-  via repo_merge.sh checks the version bump itself, and after the
-  merge tags + cuts the release — the third-level human gate is
+  into the DEFAULT branch via repo_merge.sh checks the version bump
+  itself, and after the merge tags + cuts the release — the
+  third-level human gate is
   abolished, release discipline moved into the objective gate.
+  Merges into non-default bases (task → epic) merge without a
+  release.
   Everything in between — autonomous.
 - The human is maximally involved at the design stage and minimally
   during implementation against an approved spec: the implementation
@@ -423,14 +426,31 @@ The version policy is fixed at roadmap approval, not at merge
 - **Branch**: `issue_<N>-<slug>` (no version in the name); a
   mandatory `.changes/<slug>.md` fragment with fields
   `bump: patch|minor|major`, `user_visible:`, `issue:` — on the
-  branch BEFORE the PR merge. Optional `manual_gate: true` on an
+  branch BEFORE the PR merge. The fragment's `issue:` is verified
+  mechanically: it must name the PR's issue (the `issue_<N>` of the
+  head branch, else the issue closed by the PR body) —
+  `failure_class=missing_issue_field`/`issue_mismatch` otherwise.
+  Optional `manual_gate: true` on an
   item with `manual_gate` in the roadmap: `repo_merge.sh` blocks
   the merge (`status=blocked`, `failure_class=manual_gate`) — the
   item waits for the developer
   (`failure_class=missing_changes_entry`/`malformed_input`
   otherwise). The version file on the branch is NOT bumped. A merge
   without a fragment is gated by `repo_merge.sh`.
-- **Release**: after merge `repo_release.sh` computes
+- **Epic decomposition**: a roadmap item MAY be an epic decomposed
+  into tasks. The epic lives on its `issue_<N>-<slug>` branch; each
+  task is its own item with its own `issue_<M>-<slug>` branch and
+  merges into the epic branch through the same objective
+  `repo_merge.sh` gate — reviewer approvals + required checks, no
+  human gate. A merge into a NON-default base is integration, not
+  publication: `repo_merge.sh` merges it but skips Release-on-Merge
+  (`release.status=skipped`, `reason=non_default_base`) — no version
+  bump, no tag. Task fragments accumulate on the epic branch and are
+  consumed by the epic's release. The epic's own merge into the
+  default branch is the release boundary — and the point where a
+  `manual_gate` item waits for the developer's approval.
+- **Release**: after a merge into the DEFAULT branch
+  `repo_release.sh` computes
   `next = bump(max(latest v* tag, version source on base))` by the
   maximum `bump:` among fragments, writes the release commit on
   base (version file + `.changes` rollup into CHANGELOG + fragment

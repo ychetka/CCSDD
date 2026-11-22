@@ -1,49 +1,54 @@
-flowchart TB
-  DEV(["👨‍💻 Человек — высший арбитр"])
+flowchart LR
+  DEV(["👨‍💻 человек — высший арбитр"])
 
-  subgraph P1["1 · ПЛАН"]
-    RM["roadmap.md<br/>пункты · типы · зависимости · G/W/T · risk-флаги"]
+  subgraph P1["1 · ПЛАН — арх. комитет + человек"]
+    TASK["комплексная задача<br/>ставит человек"]
+    ARCH["арх. комитет: ROOT +<br/>architect-partner + product-partner<br/>вопросы ↔ человек"]
+    RM["roadmap.md<br/>эпики · задачи · G/W/T · risk-флаги"]
     AP1{"👨‍💻 аппрув<br/>roadmap"}
-    ISS["заведение issues<br/>(по одному на пункт)"]
-    RM --> AP1 --> ISS
+    ISS["issues<br/>по одному на пункт"]
+    TASK --> ARCH --> RM --> AP1 --> ISS
   end
 
-  subgraph P2["2 · КОНТРАКТ  (опц. пакетный проход §2a)"]
-    CF["файл контракта<br/>draft"]
+  subgraph P2["2 · ЭПИК → задачи"]
+    EPB["ветка эпика<br/>issue_&lt;N&gt;-&lt;slug&gt;"]
+    DEC["декомпозиция в задачи<br/>свои issue_&lt;M&gt;-&lt;slug&gt; ветки"]
+    EPB --> DEC
+  end
+
+  subgraph P3["3 · ЗАДАЧА → ветка эпика"]
+    CF["контракт draft"]
     JDG1["⚖️ судья<br/>вердикт по черновику"]
     SO["👨‍💻 конверт sign-off<br/>sha256 контракта заморожен"]
-    CF --> JDG1 --> SO
-  end
-
-  subgraph P3["3 · ИМПЛЕМЕНТАЦИЯ"]
-    PRE["пред-консультация<br/>(партнёры, флаги)"]
-    SP["спавн исполнителя<br/>белый список контекста"]
+    DSG["🎨 дизайнер (условный)<br/>делегированные оси → impl spec"]
     INT["опрос до кода<br/>допущения · неоднозначности"]
     CODE["код + тесты<br/>зелёный нативный прогон"]
     JDG2["⚖️ судья<br/>вердикт по замороженному контракту"]
-    PRE --> SP --> INT --> CODE --> JDG2
+    TPR["task PR → ветка эпика<br/>ревьюер-боты + CI<br/>БЕЗ человека · БЕЗ версии"]
+    CF --> JDG1 --> SO --> DSG --> INT --> CODE --> JDG2 --> TPR
   end
 
-  subgraph P4["4 · СБОРКА → РЕЛИЗ"]
+  subgraph P4["4 · ЭПИК → default = релиз"]
     INTG["интеграционный прогон"]
     RVW{"🔍 вердикт ревьюера<br/>только удалённое хранилище"}
     GIT["🔀 git-агент<br/>коммит кандидата (sha)"]
-    MG{"merge-гейт<br/>изолир. копия + expected_sha<br/>+ APPROVE ревьюеров + зелёные проверки<br/>(manual_gate-фрагмент паркует к 👨‍💻)"}
-    REL["релиз<br/>версия из .changes/"]
+    MG{"merge-гейт<br/>изолир. копия + expected_sha<br/>+ APPROVE ревьюеров + зелёные проверки<br/>+ фрагмент issue: ↔ PR"}
+    REL["релиз: merge в default<br/>версия из .changes + тег<br/>(manual_gate ждёт 👨‍💻 аппрува)"]
     INTG --> RVW -->|APPROVED| GIT --> MG --> REL
   end
 
-  ISS --> CF
-  SO --> PRE
+  ISS --> EPB
+  DEC --> CF
+  TPR -->|все задачи влиты| INTG
   JDG2 -->|правки, ≤3 раундов| CODE
-  JDG2 -->|принято| INTG
   JDG2 -.->|">3 раундов"| RES["резолвер → стоп / эскалация"]
   SO -.->|дрейф| PD["PLAN_DELTA → человек"]
-  RES -.-> DEV
-  PD -.-> DEV
+  DEV -.-> TASK
   AP1 -.-> DEV
   SO -.-> DEV
   MG -.->|manual_gate-фрагмент| DEV
+  RES -.-> DEV
+  PD -.-> DEV
 
   classDef human fill:#f5e6c8,stroke:#8a6d1f,stroke-width:2px
   classDef gate fill:#fde2e2,stroke:#a33,stroke-width:2px

@@ -1,49 +1,54 @@
-flowchart TB
-  DEV(["👨‍💻 Human — highest arbiter"])
+flowchart LR
+  DEV(["👨‍💻 human — supreme arbiter"])
 
-  subgraph P1["1 · PLAN"]
-    RM["roadmap.md<br/>items · types · deps · G/W/T · risk flags"]
+  subgraph P1["1 · PLAN — arch committee + human"]
+    TASK["compound task<br/>set by the human"]
+    ARCH["arch committee: ROOT +<br/>architect-partner + product-partner<br/>questions ↔ human"]
+    RM["roadmap.md<br/>epics · tasks · G/W/T · risk flags"]
     AP1{"👨‍💻 roadmap<br/>approve"}
-    ISS["issues created<br/>(one per item)"]
-    RM --> AP1 --> ISS
+    ISS["issues<br/>one per item"]
+    TASK --> ARCH --> RM --> AP1 --> ISS
   end
 
-  subgraph P2["2 · CONTRACT  (optional batch pass §2a)"]
-    CF["contract file<br/>draft"]
-    JDG1["⚖️ judge<br/>verdict vs draft"]
+  subgraph P2["2 · EPIC → tasks"]
+    EPB["epic branch<br/>issue_&lt;N&gt;-&lt;slug&gt;"]
+    DEC["decomposed into tasks<br/>own issue_&lt;M&gt;-&lt;slug&gt; branches"]
+    EPB --> DEC
+  end
+
+  subgraph P3["3 · TASK → epic branch"]
+    CF["contract draft"]
+    JDG1["⚖️ judge<br/>draft verdict"]
     SO["👨‍💻 sign-off envelope<br/>contract sha256 frozen"]
-    CF --> JDG1 --> SO
-  end
-
-  subgraph P3["3 · IMPLEMENTATION"]
-    PRE["pre-consultation<br/>(partners, flags)"]
-    SP["spawn executor<br/>context whitelist"]
+    DSG["🎨 designer (conditional)<br/>delegated axes → impl spec"]
     INT["pre-code interrogation<br/>assumptions · ambiguities"]
-    CODE["code + tests<br/>native run green"]
+    CODE["code + tests<br/>green native run"]
     JDG2["⚖️ judge<br/>verdict vs frozen contract"]
-    PRE --> SP --> INT --> CODE --> JDG2
+    TPR["task PR → epic branch<br/>reviewer bots + CI<br/>NO human · NO version bump"]
+    CF --> JDG1 --> SO --> DSG --> INT --> CODE --> JDG2 --> TPR
   end
 
-  subgraph P4["4 · ASSEMBLY → RELEASE"]
+  subgraph P4["4 · EPIC → default = release"]
     INTG["integration run"]
     RVW{"🔍 reviewer verdict<br/>remote storage only"}
     GIT["🔀 git agent<br/>candidate commit (sha)"]
-    MG{"merge gate<br/>isolated copy + expected_sha<br/>+ reviewer APPROVE + green checks<br/>(manual_gate fragment parks for 👨‍💻)"}
-    REL["release<br/>version from .changes/"]
+    MG{"merge gate<br/>isolated copy + expected_sha<br/>+ reviewer APPROVE + green checks<br/>+ fragment issue: ↔ PR"}
+    REL["release: merge to default<br/>version from .changes + tag<br/>(manual_gate waits for 👨‍💻 approve)"]
     INTG --> RVW -->|APPROVED| GIT --> MG --> REL
   end
 
-  ISS --> CF
-  SO --> PRE
-  JDG2 -->|changes requested, ≤3 rounds| CODE
-  JDG2 -->|accepted| INTG
-  JDG2 -.->|">3 rounds"| RES["resolver → stop / escalate"]
+  ISS --> EPB
+  DEC --> CF
+  TPR -->|all tasks merged| INTG
+  JDG2 -->|changes, ≤3 rounds| CODE
+  JDG2 -.->|">3 rounds"| RES["resolver → stop / escalation"]
   SO -.->|drift| PD["PLAN_DELTA → human"]
-  RES -.-> DEV
-  PD -.-> DEV
+  DEV -.-> TASK
   AP1 -.-> DEV
   SO -.-> DEV
   MG -.->|manual_gate fragment| DEV
+  RES -.-> DEV
+  PD -.-> DEV
 
   classDef human fill:#f5e6c8,stroke:#8a6d1f,stroke-width:2px
   classDef gate fill:#fde2e2,stroke:#a33,stroke-width:2px

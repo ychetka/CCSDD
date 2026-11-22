@@ -1,7 +1,7 @@
 {
   "canary": "GENERATED_AT_DEPLOY",
   "canon_home": "canon/root",
-  "canon_version": "1.0.4",
+  "canon_version": "1.0.5",
   "description": "CCSDD neutral canon: deployed into a project as canon/ dir. Runtime glue (adapters/*) is generated per-target at deploy time. canary is generated per-repo at deploy time.",
   "files": [
     "canon/RULES.md",
@@ -84,13 +84,13 @@
     "canon/bin/migration_pattern.sh": "badc245ce6bb752ad9b9ccfc63075b3817420cf298a58bccc833242fb2fc60dd",
     "canon/bin/msg_stamp.sh": "acb0ea2ca499ec2be5ebb68f48acdf53305b7d5d5c405e8d3ea1ec8c8fb36c89",
     "canon/bin/partner_call.sh": "adf89cf003c628b932dbdd6f98122bc721ac4b550bcb704aa45c891e8c2630c7",
-    "canon/bin/pipeline_tests.sh": "90224cd0268113ba102569bb5942c8a2d10eb7adc9938a17c9853d33faddaa11",
+    "canon/bin/pipeline_tests.sh": "173747e11e10ba03b645e02b052920994f7f218693fc4d6b593be0313a2fb654",
     "canon/bin/reader_digest.sh": "55ba180f0c7f5ff0f55cd4149f6f0085d08f07cb7c5843ab1c81d93d099736a6",
     "canon/bin/repo_branch_delete.sh": "b2b4457ee6cbea6e0a2c942c9983b56501e924b1ef29cac3887770976536cd38",
     "canon/bin/repo_issue_close.sh": "252f4b52063c120f547b332df9b3716899ae01075725927963feeb2122f181bb",
     "canon/bin/repo_issue_comment.sh": "c43390956fc57523f47db68c9513fbd22bc371c013c586f21f3d73d500a414e5",
     "canon/bin/repo_issue_create.sh": "29fa9ceaaa6a53766947d67d530e0ad501f89df1959204e636859ed0e0834c55",
-    "canon/bin/repo_merge.sh": "b24a61302c32624ceb5ca03584bab44c629a32757e365611e6030f7c59e60475",
+    "canon/bin/repo_merge.sh": "22122e0d6951ce2414857e9e3ff709246d5d5ec9b0ed87d8bc6c246f917a711c",
     "canon/bin/repo_pr_open.sh": "c55a584c3ddbd4c9d5165e2154cf6ebdf5ade9926852d370b65b1d549362b633",
     "canon/bin/repo_pr_review.sh": "ace9dae26dbf32fd592cc514545183104842d1b35c49e36a9f8aef4fcc52496f",
     "canon/bin/repo_read.sh": "2eb6a6cfb8f0468eef6638ea8ffae9708fcc6f123f829e3ef4e7f25ead1c0e7a",
@@ -108,7 +108,7 @@
     "canon/specs/fleet.md": "6fef9ba721bc728e7578a1ab8b0951806f38fff2d67b6f788af205dfaf5fd12a",
     "canon/specs/gateway.md": "5da9ed6f52489b849dd55400b0fae5b3afb1d2d5ab92d9132a967b7ae01b7555",
     "canon/specs/glossary.md": "f33e3524f0d173d71fbfeda14e364e9415a8e11581acf5414167df5618e167f3",
-    "canon/specs/harness.md": "38d8ec43a98b598d210ba2b65ef8cd0ea10b7d36266244bf5fef31888728d98b",
+    "canon/specs/harness.md": "ebb7934e688cc73e4f00e3b76a0063af37b810e6b19a4cbd07b5308f55060616",
     "canon/specs/quota.md": "ccb2f40e1ea808ee4524ceb3778fbc5f159374ab669b5d9be69c130e10811e1f",
     "canon/templates/roadmap.template.md": "8f920fd0709c7373ea0bd9e1db42bcb9fbbee903c94c8135e6222f2d3a3132ea"
   }
