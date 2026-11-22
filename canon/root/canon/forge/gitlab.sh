@@ -5,6 +5,12 @@
 # Final approval on GitLab maps to POST merge_requests/:iid/approve
 # (no REQUEST_CHANGES primitive - a failed ccsdd/* signal + missing
 # approve is the negative verdict).
+#
+# HONEST BOUNDARY: on GitLab, `creator` attribution of a commit
+# status is the token user and every developer+ project member may
+# post statuses under any name - creator checks are weaker than on
+# GitHub. Deploys that need hard creator enforcement should rely on
+# MR approval state (final_approve) rather than status authorship.
 set -uo pipefail
 API_BIN="${API_BIN:-glab}"
 
@@ -40,12 +46,25 @@ if [ "$OP" = "signal_get" ]; then
   while [ $# -gt 0 ]; do
     case "$1" in --sha) SHA=$2;; *) usage;; esac; shift 2
   done
-  OUT=$("$API_BIN" api "projects/:id/statuses/$SHA" 2>/dev/null) || exit 1
+  # Read endpoint differs from the write endpoint: statuses are
+  # listed under repository/commits. --paginate + multi-document
+  # decode, same as the GitHub adapter.
+  OUT=$("$API_BIN" api --paginate \
+        "projects/:id/repository/commits/$SHA/statuses" 2>/dev/null) || exit 1
   OUT="$OUT" python3 - <<'PY'
 import json, os
-rows = json.loads(os.environ["OUT"])
+raw = os.environ["OUT"]
+dec = json.JSONDecoder()
+rows, idx = [], 0
+while idx < len(raw):
+    while idx < len(raw) and raw[idx].isspace():
+        idx += 1
+    if idx >= len(raw):
+        break
+    doc, idx = dec.raw_decode(raw, idx)
+    rows.extend(doc if isinstance(doc, list) else [])
 latest = {}
-for s in (rows if isinstance(rows, list) else []):
+for s in rows:
     ctx = s.get("name") or ""
     if not ctx.startswith("ccsdd/"):
         continue

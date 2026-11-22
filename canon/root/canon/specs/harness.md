@@ -190,18 +190,21 @@ An immutable record of a human decision that affects a gate
 - Fields: verdict, hash of the artifact/revision the decision
   applies to, verbatim supporting material, decider role,
   timestamp.
-- Mechanism (product gates): `canon/bin/human_sign.sh` — a TOTP
-  second factor (Google Authenticator). The secret lives at
-  `~/.config/ccsdd/human_totp_secret` (provisioned once by
-  `human_sign.sh init`, mode 600, outside the workspace); `sign`
-  prompts for the live 6-digit code and writes
-  `{verdict, artifact_hash, code, ts}` to
-  `canon/human_signoffs/<branch>.json`; the product gates run
-  `human_sign.sh verify` against the exact head SHA. A bare TOTP
-  code is an approval factor, not an asymmetric signature — it
-  binds {this artifact, this verdict, this timestep} and cannot
-  be replayed onto another artifact; it does not claim
-  non-repudiation.
+- Mechanism (product gates): `canon/bin/human_sign.sh` — an SSH
+  signature over the canonical message
+  `ccsdd-signoff v1|<verdict>|<artifact_sha>|<utc>|<nonce>` made by
+  an ssh-agent-resident key (`ssh-keygen -Y sign`); the private
+  key never enters the workspace filesystem, so a workspace agent
+  cannot mint a signoff. `human_sign.sh init` writes
+  `~/.config/ccsdd/allowed_signers` once; `sign` writes
+  `{format: ssh-sig-v1, verdict, artifact_hash, ts, nonce,
+  signature_b64}` to `canon/human_signoffs/<branch>.json`; the
+  product gates run `human_sign.sh verify` against the exact head
+  SHA. Verification enforces the artifact/verdict binding, a
+  7-day freshness window and nonce anti-replay
+  (`canon/human_signoffs/.used_nonces`) — a captured envelope
+  cannot approve a different artifact, a different verdict, or a
+  second merge.
 - Written into the instance STATE (managed mode) or into the cycle
   artifact journal (direct mode) — never passed as text through an
   LLM intermediary.
@@ -455,8 +458,15 @@ The version policy is fixed at roadmap approval, not at merge
   `epic_issue_<N>-<slug>` for an epic branch (no version in the
   name); a
   mandatory `.changes/<slug>.md` fragment with fields
-  `bump: patch|minor|major`, `user_visible:`, `issue:` — on the
-  branch BEFORE the PR merge. The fragment's `issue:` is verified
+  `bump: patch|minor|major|none`, `user_visible:`, `issue:` — on the
+  branch BEFORE the PR merge. `bump: none` is the merge-without-
+  release contract (internal tasks, contract drafts, refactors with
+  no user-visible delta): the merge lands, no version/tag/release
+  is cut, and the skip is journaled to `canon/cycle_log.jsonl` +
+  `canon/release_history.jsonl` (`merge_no_release` event) so a
+  forgotten `none` is a visible audit event. A `none` fragment
+  stays pending in `.changes/` and is folded by the next real
+  release's consumption. The fragment's `issue:` is verified
   mechanically: it must name an issue the PR is about — the
   `issue_<N>`/`epic_issue_<N>` of the head branch or any `#N`
   referenced by the PR body (an epic PR legitimately carries task
@@ -465,7 +475,7 @@ The version policy is fixed at roadmap approval, not at merge
   Optional `manual_gate: true` on an
   item with `manual_gate` in the roadmap: `repo_merge.sh` blocks
   the merge (`status=blocked`, `failure_class=manual_gate`) until
-  the developer signs the exact head SHA with the TOTP second
+  the developer signs the exact head SHA with the SSH signature
   factor: `human_sign.sh sign --verdict approve
   --artifact <head_sha> --out canon/human_signoffs/<branch>.json`
   — the gate mechanically verifies the envelope
@@ -658,15 +668,22 @@ The version policy is fixed at roadmap approval, not at merge
    > rework loop UNTIL an APPROVE verdict: REQUEST_CHANGES or
    COMMENT with blocking findings — the executor fixes and goes for
    another pass. APPROVED is set only by the reviewer (self-approve
-   does not count). The severity of findings in comments is
-   mechanical: the reviewer marks each finding `[CRITICAL]`,
-   `[WARNING]` or `[MINOR]` (the `[UNCERTAIN]` tag requests missing
-   facts and is not a verdict); COMMENT/REQUEST_CHANGES with at
-   least one `[CRITICAL]` or `[WARNING]` = merge block, COMMENT
-   with only `[MINOR]` (including from a human/third party) is
-   treated as consent. An APPROVE event carrying any
-   `[CRITICAL]`/`[WARNING]` finding is invalid and the gate
-   rejects it. A PR is not
+   does not count). The severity taxonomy is mechanical and
+   identical for every review actor (judge, domain reviewers,
+   aggregator): `[CRITICAL]` for any defect of correctness,
+   contract violation, uncovered G/W/T scenario, `may_edit`
+   breach, security or hygiene risk; `[UNCERTAIN]` when
+   correctness cannot be proven from the artifacts (doubt without
+   sufficient evidence - never softened into a lower tag);
+   `[WARNING]` only for non-functional remarks where the
+   implementation is provably conformant to contract and spec;
+   `[MINOR]` for trivia. COMMENT/REQUEST_CHANGES carrying at least
+   one `[CRITICAL]`/`[BLOCKER]`/`[UNCERTAIN]` = merge block;
+   `[WARNING]` and `[MINOR]` never block a merge (otherwise the
+   review loop degenerates into taste ping-pong and burns the
+   escalation round budget). An APPROVE event carrying any
+   `[CRITICAL]`/`[BLOCKER]`/`[UNCERTAIN]` finding is invalid and
+   the gate rejects it. A PR is not
    merge-ready without APPROVE. If review rounds > 3 — complaint to
    the arch committee ("many review cycles, what to fix"), action
    per its decision. If the arch committee is called on one PR 3

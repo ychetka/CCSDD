@@ -90,7 +90,8 @@ fi
 [ "$CMD" = "set" ] || usage
 [[ "$PR" =~ ^[0-9]+$ ]] || { json_err malformed_input "--pr must be numeric"; exit 2; }
 [ -f "$RECORD" ] || { json_err not_found "--record file missing"; exit 2; }
-RECORD=$(realpath -m "$RECORD")
+# realpath -m is GNU-only - python3 is the portable canonicalizer.
+RECORD=$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$RECORD")
 
 # Validate + derive the signal state + build the comment body.
 DERIVED=$(RECORD="$RECORD" REG="$REG" SHA="$SHA" CANON_DIR="$CANON_DIR" python3 - <<'PY'
@@ -112,6 +113,8 @@ if v.get("head") != os.environ["SHA"]:
     print(json.dumps({"status":"error","failure_class":"stale_input",
                       "message":"record.head must equal --sha"})); sys.exit(2)
 receipt = v.get("receipt")
+# Protocol requires min(3, files_in_diff) receipts; the wrapper can
+# only enforce the non-empty invariant - reviewers report honestly.
 if not isinstance(receipt, list) or not receipt or not all(isinstance(x,str) and x for x in receipt):
     print(json.dumps({"status":"error","failure_class":"malformed_input",
                       "message":"receipt must be a non-empty list of inspected files"})); sys.exit(2)
@@ -191,5 +194,27 @@ print((f"{b} blocking finding(s), {n} total" if n else "no findings")[:140])')
 
 bash "$ADAPTER" signal_set --sha "$SHA" --context "$SIG" --state "$ST" \
   --description "$DESCR" ${CURL:+--url "$CURL"} || { json_err upstream_error "signal_set failed"; exit 1; }
+
+# WARNING telemetry: non-blocking findings must not vanish silently
+# at auto-merge - count them into the cycle log so a risk:high human
+# sign-off summary shows the accumulated debt. Best-effort: the
+# merge workspace may lack the actor registry, never block on it.
+WARN_N=$(printf '%s' "$DERIVED" | python3 -c 'import json,sys
+d=json.loads(sys.stdin.read())
+print(sum(1 for f in d["findings"] if f["severity"]=="WARNING"))' 2>/dev/null || echo 0)
+VERDICT_C="ok"; [ "$ST" = "success" ] || VERDICT_C="failure"
+if [ "$VERDICT_C" = ok ]; then
+  "$CANON_DIR/bin/cycle_log.sh" append --item "panel_pr_${PR}" \
+    --actor "reviewer_${DOM}" --action panel_verdict \
+    --expected "domain ${DOM} signal" \
+    --result "state=${ST} warnings=${WARN_N}" \
+    --status closed --verdict ok --failure-class "" >/dev/null 2>&1 || true
+else
+  "$CANON_DIR/bin/cycle_log.sh" append --item "panel_pr_${PR}" \
+    --actor "reviewer_${DOM}" --action panel_verdict \
+    --expected "domain ${DOM} signal" \
+    --result "state=${ST} warnings=${WARN_N}" \
+    --status closed --verdict failure --failure-class panel_domain >/dev/null 2>&1 || true
+fi
 
 python3 -c 'import json,sys;print(json.dumps({"status":"ok","signal":sys.argv[1],"state":sys.argv[2],"sha":sys.argv[3]}))' "$SIG" "$ST" "$SHA"

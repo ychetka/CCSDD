@@ -34,20 +34,33 @@ if [ "$OP" = "signal_get" ]; then
   while [ $# -gt 0 ]; do
     case "$1" in --sha) SHA=$2;; *) usage;; esac; shift 2
   done
-  OUT=$("$API_BIN" api "repos/{owner}/{repo}/commits/$SHA/status" 2>/dev/null) || exit 1
+  # --paginate: a busy sha can exceed one page of statuses;
+  # concatenated pages are separate JSON documents, decoded via
+  # raw_decode - a truncated read would silently miss a domain.
+  OUT=$("$API_BIN" api --paginate "repos/{owner}/{repo}/commits/$SHA/status" 2>/dev/null) || exit 1
   OUT="$OUT" python3 - <<'PY'
 import json, os, sys
-d = json.loads(os.environ["OUT"])
+raw = os.environ["OUT"]
+dec = json.JSONDecoder()
+docs, idx = [], 0
+while idx < len(raw):
+    while idx < len(raw) and raw[idx].isspace():
+        idx += 1
+    if idx >= len(raw):
+        break
+    doc, idx = dec.raw_decode(raw, idx)
+    docs.append(doc)
 latest = {}
-for s in (d.get("statuses") or []):
-    ctx = s.get("context") or ""
-    if not ctx.startswith("ccsdd/"):
-        continue
-    if ctx not in latest or (s.get("updated_at") or "") > (latest[ctx].get("updated_at") or ""):
-        latest[ctx] = {"domain": ctx[6:], "state": s.get("state"),
-                       "creator": (s.get("creator") or {}).get("login"),
-                       "updated_at": s.get("updated_at"),
-                       "description": s.get("description")}
+for d in docs:
+    for s in (d.get("statuses") or []):
+        ctx = s.get("context") or ""
+        if not ctx.startswith("ccsdd/"):
+            continue
+        if ctx not in latest or (s.get("updated_at") or "") > (latest[ctx].get("updated_at") or ""):
+            latest[ctx] = {"domain": ctx[6:], "state": s.get("state"),
+                           "creator": (s.get("creator") or {}).get("login"),
+                           "updated_at": s.get("updated_at"),
+                           "description": s.get("description")}
 print(json.dumps({"status":"ok","signals":list(latest.values())}))
 PY
   exit 0

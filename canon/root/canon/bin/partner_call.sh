@@ -61,7 +61,7 @@ GATEWAY_DB="$GATEWAY_DB" POLICY="$POLICY" \
   ARGS_JSON="$ARGS_JSON" ARGS_FILE="$ARGS_FILE" \
   AUDIT_KEY="$AUDIT_KEY" REQ_CLASS="$REQ_CLASS" ROUND="$ROUND" \
   python3 - <<'PY'
-import datetime, hashlib, json, os, re, signal, sys
+import datetime, hashlib, json, os, re, signal, subprocess, sys
 
 sys.path.insert(0, os.path.join(os.environ["CANON_DIR"], "bin"))
 import gw_store
@@ -86,24 +86,16 @@ if not isinstance(call_args, dict):
     sys.exit(2)
 
 # --- sanitize: no secrets leave the boundary ---------------------
-# refuse credential-shaped ASSIGNMENTS and known key formats; bare
-# words like "token" appear all over spec text and are not secrets
-SECRET_RE = re.compile(
-    r"(BEGIN [A-Z ]*PRIVATE KEY|AKIA[0-9A-Z]{16}|"
-    r"ghp_[A-Za-z0-9]{36}|xox[baprs]-[A-Za-z0-9-]{10,}|"
-    r"sk-[A-Za-z0-9_-]{20,}|"
-    r"(?:api[_-]?key|secret|password|passwd|bearer)"
-    r"[\"'\s:=>-]{1,10}[A-Za-z0-9_/+\-.]{20,})",
-    re.IGNORECASE)
-def scan(obj):
-    if isinstance(obj, str):
-        return bool(SECRET_RE.search(obj))
-    if isinstance(obj, dict):
-        return any(SECRET_RE.search(str(k)) or scan(v) for k, v in obj.items())
-    if isinstance(obj, list):
-        return any(scan(v) for v in obj)
-    return False
-if scan(call_args):
+# the canonical scanner is canon/bin/secret_scan.py - one pattern
+# set shared with security_check so the two boundaries cannot
+# drift apart. Refuse credential-shaped ASSIGNMENTS and known key
+# formats; bare words like "token" appear all over spec text and
+# are not secrets.
+blob = json.dumps(call_args)
+scanner = os.path.join(os.environ["CANON_DIR"], "bin", "secret_scan.py")
+r = subprocess.run([sys.executable, scanner, "--quiet"],
+                   input=blob, capture_output=True, text=True)
+if r.returncode == 1:
     print("partner_call: REFUSED - args contain secret-looking material "
           "(gateway.md: secrets never cross the boundary)", file=sys.stderr)
     sys.exit(3)

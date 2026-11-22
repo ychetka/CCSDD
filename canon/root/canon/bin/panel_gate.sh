@@ -64,16 +64,27 @@ BREF=""
 for r in "origin/$BB" "$BB"; do
   git rev-parse --verify --quiet "$r" >/dev/null 2>&1 && { BREF=$r; break; }
 done
-FLOOR_FAIL=""
+FLOOR_FAIL=""; FLOOR_NOTES="{}"
 while IFS= read -r chk; do
   [ -z "$chk" ] && continue
-  if [ -n "$BREF" ] && git cat-file -e "$BREF:canon/bin/$chk.sh" 2>/dev/null; then
+  # Canon floors are static-only (no project argv) -> safe to run in
+  # the merge context. Source of truth: base-ref blob when canon is
+  # tracked, else the deploy-pinned $CANON_DIR script. Project argv
+  # floors (runner=project) are NEVER run here - only their prior
+  # credential-free journal attestations are verified.
+  if { [ -n "$BREF" ] && git cat-file -e "$BREF:canon/bin/$chk.sh" 2>/dev/null; } \
+     || [ -f "$CANON_DIR/bin/$chk.sh" ]; then
     (cd "$WT" && bash "$CANON_DIR/bin/gate_run.sh" run --check "$chk" --candidate "$SHA") >/dev/null 2>&1
   fi
-  # canon floor just ran (or a project floor was attested earlier):
-  # the journal is the verdict either way.
   bash "$CANON_DIR/bin/gate_run.sh" verify --check "$chk" --candidate "$SHA" >/dev/null 2>&1 \
     || FLOOR_FAIL="$FLOOR_FAIL $chk"
+  NREC=$(bash "$CANON_DIR/bin/gate_run.sh" status --check "$chk" --candidate "$SHA" 2>/dev/null)
+  FLOOR_NOTES=$(FN="$FLOOR_NOTES" NR="$NREC" CHK="$chk" python3 -c 'import json,os
+d = json.loads(os.environ["FN"])
+try: r = json.loads(os.environ["NR"])
+except Exception: r = None
+if r and r.get("note"): d[os.environ["CHK"]] = r["note"]
+print(json.dumps(d))')
 done < <(REG="$REG" python3 -c 'import json,os
 d = json.load(open(os.environ["REG"]))
 for name, e in (d.get("domains") or {}).items():
@@ -81,7 +92,7 @@ for name, e in (d.get("domains") or {}).items():
 
 # --- 2. domain signals on --sha ---
 SIG_JSON=$(bash "$ADAPTER" signal_get --sha "$SHA" 2>/dev/null || echo '{"signals":[]}')
-PANEL_REPORT=$(SIG_JSON="$SIG_JSON" REG="$REG" PJ="$PJ" SHA="$SHA" FLOOR_FAIL="$FLOOR_FAIL" INFO_FILE="$INFO_FILE" python3 - <<'PY'
+PANEL_REPORT=$(SIG_JSON="$SIG_JSON" REG="$REG" PJ="$PJ" SHA="$SHA" FLOOR_FAIL="$FLOOR_FAIL" FLOOR_NOTES="$FLOOR_NOTES" INFO_FILE="$INFO_FILE" python3 - <<'PY'
 import json, os
 reg = json.load(open(os.environ["REG"]))
 domains = reg.get("domains") or {}
@@ -92,9 +103,19 @@ except Exception:
     pj = {}
 rev = pj.get("review") or {}
 logins = {l.lower() for l in (rev.get("reviewer_logins") or [])}
-for prof in (rev.get("reviewer_profiles") or {}).values():
+# reviewer_profiles is keyed BY login (canonical schema).
+for k, prof in (rev.get("reviewer_profiles") or {}).items():
+    logins.add(k.lower())
     if isinstance(prof, dict) and prof.get("login"):
         logins.add(prof["login"].lower())
+# review.panel (optional) narrows which domains need an LLM signal;
+# mechanical floors above are unconditional either way.
+active = set(rev.get("panel") or domains.keys())
+floor_notes = {}
+try:
+    floor_notes = json.loads(os.environ.get("FLOOR_NOTES") or "{}")
+except Exception:
+    floor_notes = {}
 sha = os.environ["SHA"]
 sigs = {}
 try:
@@ -106,6 +127,13 @@ except Exception:
 missing, bad_creator, failed = [], [], []
 for name, e in domains.items():
     if e.get("class") == "ci" or not e.get("required", True):
+        continue
+    if name not in active:
+        continue
+    # deterministic auto-pass: a domain flagged auto_pass_when_no_axes
+    # whose floor attested axes=none on this head needs no LLM signal.
+    if e.get("auto_pass_when_no_axes") \
+       and floor_notes.get(e.get("gate_check") or "") == "axes=none":
         continue
     s = sigs.get(name)
     if s is None:

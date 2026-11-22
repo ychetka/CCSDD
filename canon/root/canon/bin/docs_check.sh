@@ -5,8 +5,7 @@
 #   2. Canon version sync (only when canon/MANIFEST.json exists in
 #      the repo): every explicit 'canon' version mention in README*
 #      must equal manifest canon_version.
-#   3. project.json gate_checks.docs argv (repo-specific doc linter)
-#      runs last and propagates its exit code.
+#   (repo doc linters run as a separate RUNNER=project check.)
 # CANON_DIR env is honored (gate_run executes the base-ref blob).
 set -uo pipefail
 CANON_DIR="${CANON_DIR:-$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)}"
@@ -105,16 +104,7 @@ PY
 fi
 
 # --- 3. project-declared docs linter ---
-DARGV=$(PJ="$PJ" python3 -c 'import json,os
-try:
-    v = (json.load(open(os.environ["PJ"])).get("gate_checks") or {}).get("docs")
-    print("\t".join(v) if isinstance(v, list) else "")
-except Exception: print("")' 2>/dev/null)
-if [ -n "$DARGV" ]; then
-  IFS=$'\t' read -r -a DV <<< "$DARGV"
-  if "${DV[@]}"; then echo "PASS: project docs linter"
-  else echo "FAIL: project docs linter ($DARGV)"; fails=$((fails+1)); fi
-fi
+# Project docs linter is RUNNER=project, not here.
 
 [ $fails -eq 0 ] && { echo "DOCS_CHECK: PASS"; exit 0; }
 echo "DOCS_CHECK: $fails FAILURES"; exit 1

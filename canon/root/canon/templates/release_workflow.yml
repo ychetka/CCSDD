@@ -21,19 +21,33 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Checkout the actual merge commit on main - never head.sha:
+      # the PR head may be stale or already deleted by the time the
+      # closed event fires; the tag must sit on the landed merge.
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
       - name: tag and release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
         run: |
           set -euo pipefail
-          TAG="${{ github.event.pull_request.head.ref }}"
-          TAG="${TAG#release/}"
-          echo "finalizing release $TAG"
+          # Branch names land in env, never inline - no run-script
+          # interpolation of untrusted refs. The -r<sha> uniqueness
+          # suffix repo_release.sh appends to collision-renamed
+          # release branches is stripped before tagging.
+          TAG="${HEAD_REF#release/}"
+          TAG="${TAG%%-r*}"
+          if ! printf '%s' "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "unexpected release ref '$HEAD_REF' - refusing to tag" >&2
+            exit 1
+          fi
+          echo "finalizing release $TAG on merge commit $MERGE_SHA"
           git config user.name "ccsdd-release[bot]"
           git config user.email "ccsdd-release[bot]@users.noreply.github.com"
-          git tag -a "$TAG" -m "release $TAG"
+          git tag -a "$TAG" -m "release $TAG" "$MERGE_SHA"
           git push origin "$TAG"
           gh release create "$TAG" --generate-notes

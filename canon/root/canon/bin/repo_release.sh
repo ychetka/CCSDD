@@ -35,15 +35,9 @@ TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-
 cd -P "$TOP" || json_error upstream_error "cannot cd to repo top"
 
 # Repository-agent credential for repository mutations (merge.gh_bin
-# -> review.gh_bin -> gh), never the reviewer identity.
-GH=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os,re
-try:
-    pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
-    gb = ((pj.get("merge") or {}).get("gh_bin")) \
-         or ((pj.get("review") or {}).get("gh_bin")) or "gh"
-    print(gb if isinstance(gb, str) and re.fullmatch(r"[A-Za-z0-9_-]+", gb) else "")
-except Exception:
-    print("gh")' 2>/dev/null)
+# -> gh), NEVER the reviewer identity (self-approve
+# deadlock + signal forgery).
+GH=$("$CANON_DIR/bin/gh_id.sh" merge)
 [ -n "$GH" ] || { echo "merge.gh_bin in project.json is not a bare binary basename" >&2; exit 2; }
 
 BUMP="" NOTES="" DRY=0 BASE=""
@@ -246,8 +240,22 @@ if [ -z "$BUMP" ] && [ -z "$FRAGS" ]; then
   echo '{"status":"nothing_pending","message":"no .changes fragments pending and no --bump override"}'
   exit 0
 fi
-[ -n "$BUMP" ] || \
-  json_error malformed_input "pending fragments carry no valid bump: field and no --bump override given"
+if [ -z "$BUMP" ]; then
+  # Distinguish "all bump:none" from "typo'd bump": the former is a
+  # contract (merge without release), the latter must fail loudly.
+  ALL_NONE=$(FRAG_META="$FRAG_META" python3 - <<'PY'
+import json, os
+meta = json.loads(os.environ["FRAG_META"])
+vals = [ (f.get("bump") or "") for f in meta.values() ]
+print("yes" if vals and all(v == "none" for v in vals) else "no")
+PY
+)
+  if [ "$ALL_NONE" = "yes" ]; then
+    echo '{"status":"nothing_releasable","message":"pending fragments all declare bump:none - merge without release by contract"}'
+    exit 0
+  fi
+  json_error malformed_input "pending fragments carry no valid bump: field (patch|minor|major|none) and no --bump override given"
+fi
 
 NEXT=$(BASE_VER="$BASE_VER" BUMP="$BUMP" python3 - <<'PY'
 import os, sys
@@ -439,14 +447,18 @@ else
     --body "Release-on-Merge commit for $TAG (version file + CHANGELOG fold + fragment consumption). Merging this lands the release commit; the next repo_release.sh run tags $TAG on the resulting head." 2>/dev/null || true)
   if [ -n "$PR_URL" ]; then
     # squash keeps 'release: vX.Y.Z' as the merge subject so the
-    # resume path detects it; auto-merge completes it unattended
-    # once protection allows. A failed auto-merge arm is reported,
-    # not hidden.
-    AM_OUT=$("$GH" pr merge "$PR_URL" --auto --squash 2>&1)
+    # resume path detects it. No --auto: unattended auto-merge is a
+    # provenance gap (the release would land on whatever head the
+    # branch happens to hold when checks go green - possibly after a
+    # force-push). Attempt an immediate head-bound merge; when
+    # protection still blocks it, the release waits for a human or
+    # the release workflow and the next repo_release.sh run tags the
+    # landed merge commit.
+    AM_OUT=$("$GH" pr merge "$PR_URL" --squash --match-head-commit "$REL_SHA" 2>&1)
     AM_RC=$?
     AUTO_FLAG=""
-    [ $AM_RC -ne 0 ] && AUTO_FLAG=",\"auto_merge_error\":$(python3 -c 'import json,sys;print(json.dumps(sys.argv[1][:300]))' "$AM_OUT")"
-    printf '{"status":"release_pr_opened","tag":"%s","sha":"%s","pr":"%s"%s,"message":"base protected - release lands via PR; rerun repo_release.sh after it merges to tag+publish"}\n' \
+    [ $AM_RC -ne 0 ] && AUTO_FLAG=",\"merge_error\":$(python3 -c 'import json,sys;print(json.dumps(sys.argv[1][:300]))' "$AM_OUT")"
+    printf '{"status":"release_pr_opened","tag":"%s","sha":"%s","pr":"%s"%s,"message":"base protected - release lands via PR; merge it (or let the release workflow finalize); rerun repo_release.sh after it merges to tag+publish"}\n' \
       "$TAG" "$REL_SHA" "$PR_URL" "$AUTO_FLAG"
     exit 0
   fi

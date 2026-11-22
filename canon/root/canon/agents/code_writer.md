@@ -30,7 +30,9 @@ trust.
   are allowed only after a recorded attempt to resolve the ambiguity
   by the most conservative reading of the contract. They may not be
   used to dodge work that is hard but unambiguously specified.
-- Git — read-only only (`git status`, `git diff`, `git log`). Any
+- Git — read-only only, and only through `canon/bin/git_ro.sh`
+  (`status`, `diff`, `log`); the bare `git` binary is denied by the
+  exec policy. Any
   mutation (commit, push, checkout, reset, branch) is forbidden: the
   calling side performs them via the git agent. Honest about the
   enforcement level: `allowed-tools` mechanically limits the tool
@@ -112,9 +114,11 @@ trust.
    implementation.
 7. Run the native checks to green: lint + typecheck + tests. Fix
    redness in code, not in checks.
-8. `git status` + `git diff --stat` — compare the actual footprint
-   against the file whitelist. Everything outside the list —
-   `SCOPE_DELTA`.
+8. `canon/bin/git_ro.sh status` +
+   `canon/bin/git_ro.sh diff --stat <base_ref>...HEAD` — compare the
+   actual footprint against the file whitelist (a bare `diff` is
+   empty once the item is committed; always diff against the base).
+   Everything outside the list — `SCOPE_DELTA`.
 9. Compose the report per the format below.
 
 # CODE INVARIANTS

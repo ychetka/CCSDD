@@ -61,7 +61,8 @@ done
 
 if [ -n "$JFILE" ]; then
   [ -f "$JFILE" ] || { echo '{"status":"error","failure_class":"not_found","message":"--json-file missing"}'; exit 2; }
-  JFILE=$(realpath -m "$JFILE")
+  # realpath -m is GNU-only - python3 is the portable canonicalizer.
+  JFILE=$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$JFILE")
   SANIT=$(mktemp "${TMPDIR:-/tmp}/review-payload.XXXXXX.json")
   trap 'rm -f "$SANIT"' EXIT INT TERM
   # Resolve the CURRENT head before validation: the submitted review
@@ -157,12 +158,27 @@ clean = {k: payload[k] for k in ("commit_id", "body", "event", "comments")
          if k in payload}
 clean["event"] = EVENT_MAP.get(clean["event"], clean["event"])
 # Severity invariant (harness.md): an APPROVE carrying blocking
-# findings is invalid - [CRITICAL]/[WARNING] anywhere in the body
-# or inline comments forces REQUEST_CHANGES/COMMENT instead.
-if clean["event"] == "APPROVE" and any(
-        "[CRITICAL]" in t or "[WARNING]" in t for t in texts):
+# findings is invalid - [CRITICAL]/[BLOCKER]/[UNCERTAIN] anywhere in
+# the body or inline comments forces REQUEST_CHANGES/COMMENT instead.
+# WARNING is non-blocking by taxonomy: a provably conformant
+# implementation with style/secondary notes still merges. The scan
+# is case-insensitive and tolerates markdown bold around the tag so
+# **[critical]** cannot smuggle a blocked verdict through.
+import re as _re
+BLOCK_RE = _re.compile(r"\**\[(?:CRITICAL|BLOCKER|UNCERTAIN)\]\**",
+                       _re.IGNORECASE)
+if clean["event"] == "APPROVE" and any(BLOCK_RE.search(t) for t in texts):
     print(json.dumps({"status":"error","failure_class":"malformed_input",
-                      "message":"APPROVE with [CRITICAL]/[WARNING] findings is invalid - submit REQUEST_CHANGES or COMMENT"}))
+                      "message":"APPROVE with [CRITICAL]/[BLOCKER]/[UNCERTAIN] findings is invalid - submit REQUEST_CHANGES or COMMENT"}))
+    sys.exit(2)
+# Structural sanity: an APPROVE payload whose own verdict marker
+# declares REQUEST_CHANGES (or any non-approve verdict) is a
+# contradiction - reject instead of trusting the event flag.
+if clean["event"] == "APPROVE" and _re.search(
+        r"(?im)^\s*(?:\*\*verdict:?\*\*\s*:?|verdict:)\s*REQUEST_CHANGES",
+        clean.get("body") or ""):
+    print(json.dumps({"status":"error","failure_class":"malformed_input",
+                      "message":"APPROVE event contradicts body's REQUEST_CHANGES verdict"}))
     sys.exit(2)
 # The review is bound to the resolved head unconditionally - absent
 # commit_id is filled, a matching one is kept.

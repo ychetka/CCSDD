@@ -65,8 +65,26 @@ echo "$PROT"
 if [ -z "$DRY" ]; then
   gh api -X PUT "repos/$REPO/branches/$BASE/protection" \
     --input - <<<"$PROT" >/dev/null \
-    && echo "setup_repo: protection applied" \
     || { echo "setup_repo: protection API failed (token lacks admin?)" >&2; exit 1; }
+  # Read-back verification: a 2xx PUT can still leave the branch
+  # differently protected than requested (API silently drops
+  # unknown fields, org rulesets may override). Fail loudly rather
+  # than report a phantom protection.
+  APPLIED=$(gh api "repos/$REPO/branches/$BASE/protection" 2>/dev/null || true)
+  echo "$APPLIED" | python3 -c 'import json,sys
+try:
+    d = json.loads(sys.stdin.read())
+except Exception:
+    sys.exit("setup_repo: protection read-back failed")
+r = d.get("required_pull_request_reviews") or {}
+if not r.get("dismiss_stale_reviews") \
+        or (r.get("required_approving_review_count") or 0) < 1 \
+        or d.get("allow_force_pushes", {}).get("enabled") \
+        or d.get("allow_deletions", {}).get("enabled"):
+    sys.exit("setup_repo: protection read-back mismatch - "
+             "applied settings do not match the canonical payload")' \
+    && echo "setup_repo: protection applied and verified" \
+    || exit 1
 fi
 
 # --- 2. canonical release workflow ---------------------------------------
@@ -85,7 +103,8 @@ else
     gh api -X POST "repos/$REPO/git/refs" \
       -f ref="refs/heads/canon/bootstrap-release" -f sha="$BASE_SHA" \
       >/dev/null 2>&1 || true   # exists already - fine
-    B64=$(printf '%s' "$WF" | base64 -w0)
+    # macOS base64 has no -w flag - tr-fold is the portable form.
+    B64=$(printf '%s' "$WF" | base64 | tr -d '\n')
     gh api -X PUT "repos/$REPO/contents/.github/workflows/release.yml" \
       -f message="canon: serialized release workflow" \
       -f content="$B64" -f branch="canon/bootstrap-release" >/dev/null \

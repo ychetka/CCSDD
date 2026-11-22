@@ -87,6 +87,7 @@ import json, sys
 p = sys.argv[1]; d = json.load(open(p))
 d["forge"] = "test"
 d["review"] = {"reviewer_logins": ["panel-test"]}
+d.setdefault("gate_checks", {})["test_suite_optional"] = True
 json.dump(d, open(p, "w"), indent=2)
 PY
 
@@ -108,7 +109,7 @@ json.dump(d, open(p, "w"), indent=2)
 PY
   (cd "$WS" && git worktree add -q --force "$SCRATCH/pwt" "$sha" 2>/dev/null)
   for chk in spec_anchor_check docs_check security_check quality_check \
-             fidelity_check test_suite; do
+             fidelity_check; do
     (cd "$SCRATCH/pwt" && bash "$WS/canon/bin/gate_run.sh" run \
        --check "$chk" --candidate "$sha") >/dev/null 2>&1
   done
@@ -677,7 +678,9 @@ expect M10b-missing-issue 1 $? "missing_issue_field"
 # no bump, no tag.
 # canon/roadmap.md is a deployed working doc (canon/ is gitignored
 # in the workspace) - the completeness gate reads the live copy.
-printf '## Item: feature\n- id: feature\n- type: epic\n- issue: 9\n- tasks: [10]\n\n## Item: pay\n- id: pay\n- type: epic\n- issue: 12\n- tasks: [13, 14]\n\n## Item: mix\n- id: mix\n- type: epic\n- issue: 15\n- tasks: [16]\n' > "$WS/canon/roadmap.md"
+printf '## Item: feature\n- id: feature\n- type: epic\n- issue: 9\n- tasks: [10]\n- frozen_hash: <sha256>\n\n## Item: pay\n- id: pay\n- type: epic\n- issue: 12\n- tasks: [13, 14]\n- frozen_hash: <sha256>\n\n## Item: mix\n- id: mix\n- type: epic\n- issue: 15\n- tasks: [16]\n- frozen_hash: <sha256>\n' > "$WS/canon/roadmap.md"
+# Freeze the fixture plan: verify is fail-closed on missing hashes.
+(cd "$WS" && canon/bin/roadmap_hash.sh --fill >/dev/null 2>&1) || true
 (cd "$WS" && git checkout -q -b epic_issue_9-feature main \
   && git push -q origin epic_issue_9-feature \
   && git checkout -q -b issue_10-auth epic_issue_9-feature \

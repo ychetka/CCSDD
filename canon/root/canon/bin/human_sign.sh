@@ -1,146 +1,180 @@
 #!/usr/bin/env bash
-# human_sign.sh - human approval envelopes via a TOTP second factor
-# (Google Authenticator compatible).
+# human_sign.sh - human approval envelopes via an SSH signature
+# (ssh-agent resident key - the private key never enters the
+# workspace filesystem, so a workspace agent under the same UID
+# cannot mint a signoff).
 #
-#   human_sign.sh init                 # provision: secret -> ~/.config/ccsdd/
-#   human_sign.sh sign  --verdict <v> --artifact <sha256|file>
+#   human_sign.sh init  [--key <pubkey-file>]
+#   human_sign.sh sign  --verdict <v> --artifact <sha256|sha1|file>
 #                       --out <envelope.json>
-#   human_sign.sh verify --envelope <file> --artifact <sha256>
-#                       [--verdict <v>]
+#   human_sign.sh verify --envelope <file> --artifact <sha256|sha1|file>
+#                        [--verdict <v>] [--nonce-store <file>]
 #
-# A bare TOTP code is an approval FACTOR, not an asymmetric
-# signature: it proves the holder of the secret saw this exact
-# artifact digest at this timestamp and typed the live code - it
-# does not give transferable non-repudiation. The envelope binds
-# {verdict, artifact_sha, code, ts}; verification recomputes the
-# TOTP for the recorded timestep and requires the artifact digest
-# to match, so a recorded code cannot be replayed onto a different
-# artifact and a different verdict.
+# Model: `ssh-keygen -Y sign -n ccsdd-signoff` signs the canonical
+# message `ccsdd-signoff v1|<verdict>|<artifact_sha>|<utc>|<nonce>`
+# through the agent; `ssh-keygen -Y verify` checks it against an
+# allowed_signers file that lives OUTSIDE the workspace at
+# ~/.config/ccsdd/allowed_signers (env CCSDD_ALLOWED_SIGNERS).
 #
-# The secret lives OUTSIDE the workspace at
-# ~/.config/ccsdd/human_totp_secret (mode 600) - workspace agents
-# neither mint nor verify codes. The human runs `init` once, scans
-# the otpauth:// URI into any TOTP app, then `sign` prompts for the
-# current 6-digit code interactively.
+# Envelope safety properties: the signature cryptographically binds
+# verdict + artifact hash + timestamp + nonce; verify() enforces
+# artifact/verdict equality, a 7-day freshness window, and records
+# nonces into a store (default canon/human_signoffs/.used_nonces)
+# so a captured envelope cannot be replayed onto a later merge.
 set -euo pipefail
+CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+CONF_DIR="${CCSDD_CONF_DIR:-$HOME/.config/ccsdd}"
+SIGNERS="${CCSDD_ALLOWED_SIGNERS:-$CONF_DIR/allowed_signers}"
+NS="ccsdd-signoff"
+WINDOW=$((7 * 86400))   # envelope freshness: 7 days
 
-SECRET_FILE="${CCSDD_TOTP_SECRET:-$HOME/.config/ccsdd/human_totp_secret}"
-MODE=""; VERDICT=""; ARTIFACT=""; ENVELOPE=""
+MODE=""; VERDICT=""; ARTIFACT=""; ENVELOPE=""; KEYFILE=""; NONCE_STORE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     init|sign|verify) MODE=$1; shift;;
     --verdict)  VERDICT=$2;  shift 2;;
     --artifact) ARTIFACT=$2; shift 2;;
-    --code)     CODE=$2;     shift 2;;
+    --key)      KEYFILE=$2;  shift 2;;
     --envelope|--out) ENVELOPE=$2; shift 2;;
+    --nonce-store) NONCE_STORE=$2; shift 2;;
     *) echo "usage: human_sign.sh init|sign|verify ..." >&2; exit 2;;
   esac
 done
 
-MODE="$MODE" SECRET_FILE="$SECRET_FILE" VERDICT="$VERDICT" \
-ARTIFACT="$ARTIFACT" ENVELOPE="$ENVELOPE" CODE="${CODE:-}" python3 - <<'PY'
-import base64, getpass, hashlib, hmac, json, os, struct, sys, time
+die() { echo "human_sign: $1" >&2; exit 2; }
 
-mode, sf = os.environ["MODE"], os.environ["SECRET_FILE"]
-verdict, art, env, code_arg = (os.environ.get(x) or "" for x in
-                     ("VERDICT", "ARTIFACT", "ENVELOPE", "CODE"))
+artifact_sha() {  # file path | 40-hex sha1 | 64-hex sha256 -> hex digest
+  local a="$1"
+  if [ -f "$a" ]; then
+    python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$a"
+  elif [[ "$a" =~ ^[0-9a-fA-F]{40}$ ]] || [[ "$a" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    printf '%s' "${a,,}"
+  else
+    die "--artifact must be a file, sha256 or git sha, got: ${a:0:40}"
+  fi
+}
 
-def load_secret():
-    try:
-        raw = open(sf, encoding="ascii").read().strip()
-        return base64.b32decode(raw)
-    except Exception:
-        sys.exit(f"human_sign: cannot read TOTP secret at {sf} - "
-                 f"run 'human_sign.sh init' first")
+case "$MODE" in
+init)
+  [ -n "$KEYFILE" ] || {
+    if ssh-add -L >/dev/null 2>&1; then
+      KEYFILE=$(mktemp -t ccsdd-pubkey.XXXXXX)
+      ssh-add -L | head -1 > "$KEYFILE"
+      echo "human_sign: using first ssh-agent identity: $(cut -c1-32 "$KEYFILE")..."
+    else
+      die "no --key given and ssh-agent has no identities (ssh-add first)"
+    fi
+  }
+  [ -f "$KEYFILE" ] || die "pubkey file not found: $KEYFILE"
+  mkdir -p "$CONF_DIR"; chmod 700 "$CONF_DIR"
+  printf 'human %s\n' "$(cat "$KEYFILE")" > "$SIGNERS"
+  chmod 600 "$SIGNERS"
+  echo "human_sign: allowed_signers written: $SIGNERS"
+  echo "human_sign: keep the private key in ssh-agent only - it must"
+  echo "            NOT live inside any project workspace."
+  ;;
 
-def totp(secret, counter):
-    ctr = struct.pack(">Q", int(counter))
-    d = hmac.new(secret, ctr, hashlib.sha1).digest()
-    o = d[-1] & 0x0F
-    return "%06d" % (struct.unpack(">I", d[o:o+4])[0] & 0x7FFFFFFF)
-
-def artifact_sha(a):
-    if os.path.isfile(a):
-        return hashlib.sha256(open(a, "rb").read()).hexdigest()
-    if len(a) in (40, 64) and all(c in "0123456789abcdef" for c in a.lower()):
-        return a.lower()          # sha256 or git sha1 - opaque binding
-    sys.exit(f"human_sign: --artifact must be a file, sha256 or git sha, got: {a[:40]}")
-
-if mode == "init":
-    os.makedirs(os.path.dirname(sf), mode=0o700, exist_ok=True)
-    secret = os.urandom(20)
-    b32 = base64.b32encode(secret).decode()
-    fd = os.open(sf, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as fh:
-        fh.write(b32 + "\n")
-    user = getpass.getuser()
-    print(f"human_sign: TOTP secret written to {sf} (mode 600)")
-    print(f"add to your authenticator app:")
-    print(f"  otpauth://totp/CCSDD:{user}?secret={b32}&issuer=CCSDD")
-    sys.exit(0)
-
-if mode == "sign":
-    if not verdict or not art or not env:
-        sys.exit("usage: human_sign.sh sign --verdict <v> --artifact <sha|file> --out <envelope.json>")
-    secret = load_secret()
-    sha = artifact_sha(art)
-    if code_arg:
-        code = code_arg
-    else:
-        # the heredoc occupies stdin - the human types on the tty
-        try:
-            with open("/dev/tty") as tty:
-                tty.write(f"approve '{verdict}' for artifact "
-                          f"{sha[:16]}.. - enter the current "
-                          f"6-digit TOTP code: ")
-                tty.flush()
-                code = tty.readline().strip()
-        except OSError:
-            sys.exit("human_sign: no tty and no --code given")
-    now = time.time()
-    step = int(now // 30)
-    if code not in {totp(secret, s) for s in (step - 1, step, step + 1)}:
-        sys.exit("human_sign: TOTP code rejected - envelope NOT written")
-    os.makedirs(os.path.dirname(os.path.abspath(env)), exist_ok=True)
-    envelope = {
-        "type": "human_signoff",
-        "signer": "human",
-        "verdict": verdict,
-        "artifact_hash": sha,
-        "artifact_alg": "sha256" if len(sha) == 64 else "sha1",
-        "code": code,
-        "ts": step * 30,      # recorded timestep - verifies offline
-    }
-    with open(env, "w", encoding="utf-8") as fh:
-        json.dump(envelope, fh, indent=2)
-        fh.write("\n")
-    print(f"human_sign: envelope written: {env} (artifact {sha[:16]}..)")
-    sys.exit(0)
-
-if mode == "verify":
-    if not env or not art:
-        sys.exit("usage: human_sign.sh verify --envelope <file> --artifact <sha> [--verdict <v>]")
-    secret = load_secret()
-    sha = artifact_sha(art)
-    try:
-        e = json.load(open(env, encoding="utf-8"))
-    except Exception as ex:
-        sys.exit(f"human_sign: cannot parse envelope {env}: {ex}")
-    for k in ("verdict", "artifact_hash", "code", "ts"):
-        if k not in e:
-            sys.exit(f"human_sign: envelope missing field '{k}'")
-    if e["artifact_hash"].lower() != sha:
-        sys.exit(f"human_sign: envelope artifact mismatch "
-                 f"({e['artifact_hash'][:16]}.. != {sha[:16]}..)")
-    if verdict and e["verdict"] != verdict:
-        sys.exit(f"human_sign: envelope verdict '{e['verdict']}' != required '{verdict}'")
-    step = int(e["ts"]) // 30
-    if e["code"] not in {totp(secret, s) for s in (step - 1, step, step + 1)}:
-        sys.exit("human_sign: envelope TOTP code does not verify")
-    if abs(time.time() - e["ts"]) > 86400 * 365 * 50:
-        sys.exit("human_sign: envelope timestamp implausible")
-    print(f"human_sign: envelope OK - '{e['verdict']}' for artifact {sha[:16]}..")
-    sys.exit(0)
-
-sys.exit("usage: human_sign.sh init|sign|verify ...")
+sign)
+  [ -n "$VERDICT" ] && [ -n "$ARTIFACT" ] && [ -n "$ENVELOPE" ] \
+    || die "usage: human_sign.sh sign --verdict <v> --artifact <sha|file> --out <env.json>"
+  [ -f "$SIGNERS" ] || die "no allowed_signers at $SIGNERS - run 'human_sign.sh init'"
+  SHA=$(artifact_sha "$ARTIFACT")
+  TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  NONCE=$(python3 -c 'import secrets;print(secrets.token_hex(16))')
+  MSG="ccsdd-signoff v1|${VERDICT}|${SHA}|${TS}|${NONCE}"
+  TMPD=$(mktemp -d); trap 'rm -rf "$TMPD"' EXIT INT TERM
+  printf '%s' "$MSG" > "$TMPD/msg"
+  PUBKEY=$(awk '$1=="human"{print $2" "$3}' "$SIGNERS")
+  [ -n "$PUBKEY" ] || die "no 'human' principal in $SIGNERS"
+  printf '%s\n' "$PUBKEY" > "$TMPD/key.pub"
+  ssh-keygen -Y sign -f "$TMPD/key.pub" -n "$NS" "$TMPD/msg" 2>/dev/null \
+    || die "signing failed - is the key loaded in ssh-agent? (ssh-add -l)"
+  MSG="$MSG" SHA="$SHA" VERDICT="$VERDICT" TS="$TS" NONCE="$NONCE" \
+  SIG="$TMPD/msg.sig" ENVELOPE="$ENVELOPE" python3 - <<'PY'
+import base64, json, os
+sig = base64.b64encode(open(os.environ["SIG"], "rb").read()).decode()
+e = {"type": "human_signoff", "format": "ssh-sig-v1",
+     "signer": "human", "verdict": os.environ["VERDICT"],
+     "artifact_hash": os.environ["SHA"],
+     "artifact_alg": "sha256" if len(os.environ["SHA"]) == 64 else "sha1",
+     "ts": os.environ["TS"], "nonce": os.environ["NONCE"],
+     "message": os.environ["MSG"], "signature_b64": sig}
+out = os.environ["ENVELOPE"]
+os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+with open(out, "w", encoding="utf-8") as fh:
+    json.dump(e, fh, indent=2); fh.write("\n")
+print(f"human_sign: envelope written: {out} (artifact {os.environ['SHA'][:16]}..)")
 PY
+  ;;
+
+verify)
+  [ -n "$ARTIFACT" ] && [ -n "$ENVELOPE" ] \
+    || die "usage: human_sign.sh verify --envelope <f> --artifact <sha|file> [--verdict <v>]"
+  [ -f "$SIGNERS" ] || die "no allowed_signers at $SIGNERS - human_sign.sh init was never run"
+  SHA=$(artifact_sha "$ARTIFACT")
+  E=$(ENVELOPE="$ENVELOPE" SHA="$SHA" VERDICT="$VERDICT" WINDOW="$WINDOW" \
+      NONCE_STORE="${NONCE_STORE:-$CANON_DIR/human_signoffs/.used_nonces}" \
+      SIGNERS_ENV="$SIGNERS" NS_ENV="$NS" \
+      python3 - <<'PY'
+import base64, json, os, sys, tempfile, subprocess, time
+env, sha, want_v = (os.environ.get(k) or "" for k in
+                    ("ENVELOPE", "SHA", "VERDICT"))
+try:
+    e = json.load(open(env, encoding="utf-8"))
+except Exception as ex:
+    sys.exit(f"human_sign: cannot parse envelope {env}: {ex}")
+if e.get("format") != "ssh-sig-v1":
+    sys.exit("human_sign: unsupported envelope format "
+             f"{e.get('format')!r} (legacy TOTP envelopes are not "
+             "accepted - re-sign with human_sign.sh sign)")
+for k in ("verdict","artifact_hash","ts","nonce","message","signature_b64"):
+    if k not in e:
+        sys.exit(f"human_sign: envelope missing field '{k}'")
+if e["artifact_hash"].lower() != sha:
+    sys.exit(f"human_sign: envelope artifact mismatch "
+             f"({e['artifact_hash'][:16]}.. != {sha[:16]}..)")
+if want_v and e["verdict"] != want_v:
+    sys.exit(f"human_sign: envelope verdict '{e['verdict']}' != required '{want_v}'")
+expect = "ccsdd-signoff v1|%s|%s|%s|%s" % (
+    e["verdict"], e["artifact_hash"].lower(), e["ts"], e["nonce"])
+if e["message"] != expect:
+    sys.exit("human_sign: signed message does not match envelope fields")
+# Freshness window: an old envelope approves nothing.
+try:
+    ts = time.strptime(e["ts"], "%Y-%m-%dT%H:%M:%SZ")
+    age = time.time() - time.mktime(ts)
+except Exception:
+    sys.exit("human_sign: unparseable ts in envelope")
+if not (0 <= age <= float(os.environ["WINDOW"])):
+    sys.exit(f"human_sign: envelope stale ({int(age//86400)}d old, window 7d)")
+# Anti-replay: a nonce may certify exactly one acceptance.
+store = os.environ["NONCE_STORE"]
+used = set()
+if os.path.isfile(store):
+    used = {ln.strip() for ln in open(store) if ln.strip()}
+if e["nonce"] in used:
+    sys.exit("human_sign: envelope nonce already consumed (replay)")
+sig_raw = base64.b64decode(e["signature_b64"])
+tmp = tempfile.mkdtemp(prefix="ccsdd-verify.")
+sig_f = os.path.join(tmp, "msg.sig")
+open(sig_f, "wb").write(sig_raw)
+# -Y verify reads the SIGNED DATA FROM STDIN - a positional file
+# argument is not the message and fails verification outright.
+r = subprocess.run(["ssh-keygen", "-Y", "verify", "-f",
+                    os.environ["SIGNERS_ENV"], "-I", "human",
+                    "-n", os.environ["NS_ENV"], "-s", sig_f],
+                   input=e["message"], capture_output=True, text=True)
+if r.returncode != 0:
+    sys.exit("human_sign: signature does not verify: " +
+             (r.stderr or r.stdout).strip()[:200])
+os.makedirs(os.path.dirname(store), exist_ok=True)
+with open(store, "a") as fh:
+    fh.write(e["nonce"] + "\n")
+print(f"human_sign: envelope OK - '{e['verdict']}' for artifact {sha[:16]}..")
+PY
+  ) || exit 2
+  echo "$E"
+  ;;
+
+*) die "usage: human_sign.sh init|sign|verify ...";;
+esac

@@ -4,6 +4,8 @@
 # Output JSON: {issue_id, url, status}
 set -uo pipefail
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+
+GH=$("$CANON_DIR/bin/gh_id.sh" merge)
 TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
 cd "$TOP"
 

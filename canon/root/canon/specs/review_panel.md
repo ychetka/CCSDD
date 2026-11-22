@@ -36,8 +36,13 @@ false-positive rate).
 ## Mechanical floors and attestation
 
 A `gate_check` resolves to `canon/bin/<check>.sh` (taken from the
-BASE ref, never the candidate's copy) or to a project argv from
-`gate_checks.<name>` in project.json.
+BASE ref when canon is tracked, else from the deployed canon whose
+per-file sha is pinned by the deploy manifest - never the
+candidate's copy) or to a project argv from `gate_checks.<name>`
+in project.json. A check that resolves to nothing may be declared
+`gate_checks.<name>_optional: true` - an explicit opt-out recorded
+in config (verify then reports N/A instead of missing evidence);
+absent that flag an unresolved check fails closed.
 
 `canon/bin/gate_run.sh run --check <c> --candidate <sha>` requires
 HEAD==candidate and a clean tree, executes the check and appends a
@@ -51,7 +56,11 @@ record to `canon/gate_runs.jsonl`:
 The journal entry is written by the tool itself - the agent calls
 the wrapper, it cannot author the record. `gate_run verify`
 re-checks exit_code==0 and (canon runner) `script_sha256` equal to
-the base-ref blob hash.
+the base-ref blob hash (or the deployed-canon hash when canon is
+untracked). Runtime journals the harness itself appends
+(gate_runs.jsonl, cycle_log.jsonl, panel fixtures, signoff stores)
+are exempt from gate_run's clean-tree check - they are
+bookkeeping, not candidate content.
 
 Project-argv floors (test suite, lint, SAST) EXECUTE PR code: they
 run only in credential-free contexts (item worktree, merge-runner
@@ -72,6 +81,14 @@ A domain reviewer publishes via
  "receipt":["<files actually inspected>"],
  "findings":[{"severity":"CRITICAL|WARNING|MINOR|UNCERTAIN","text":"..."}]}
 ```
+
+Severity taxonomy (identical to harness.md §4.6): CRITICAL/UNCERTAIN
+are blocking and force `failure` mechanically; WARNING and MINOR
+never block - a provably conformant implementation with secondary
+remarks still merges. The verdict's WARNING count is journaled to
+`canon/cycle_log.jsonl` per domain so accumulated non-blocking debt
+surfaces in the risk:high human sign-off summary instead of
+vanishing at auto-merge.
 
 The signal state is computed MECHANICALLY (the record's own
 verdict field is never trusted):

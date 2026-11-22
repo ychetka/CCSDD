@@ -330,6 +330,12 @@ cfg = {
     "text_language": lang,
     "protected_paths": ["canon/", ".devin/", ".windsurfrules", "AGENTS.md",
                       "partners/config.json"],
+    # Fresh repo default: no project test suite is configured yet, so
+    # the tester floor is explicitly opted out (visible in config,
+    # not silently skipped). Point gate_checks.test_suite at the real
+    # test command to activate it - attested via gate_run in the
+    # credential-free worktree before merge.
+    "gate_checks": {"test_suite_optional": True},
 }
 if rlang:
     cfg["repo_language"] = rlang
@@ -363,4 +369,7 @@ Next steps for the operator:
      (per roadmap item, before its implementation), escalation
      decisions. Merge is objective (reviewer APPROVEs + checks);
      a .changes fragment with manual_gate: true parks a PR for you.
+  4. Provision the human sign-off identity once (outside the
+     workspace, ssh-agent key only):
+       canon/bin/human_sign.sh init
 EOF

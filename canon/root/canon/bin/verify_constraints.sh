@@ -4,6 +4,8 @@
 # cited authorization).
 set -uo pipefail
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+
+GH=$("$CANON_DIR/bin/gh_id.sh" merge)
 TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
 cd -P "$TOP" 2>/dev/null || { echo "FAIL: not a git repo"; exit 1; }
 
@@ -159,7 +161,7 @@ if [ -n "$ISSUE_LIST" ] || [ -n "$VERIFY_PR" ]; then
     # --json number: a plain `gh issue view` queries the deprecated
     # projectCards field and exits 1 on every issue (gh 2.46+), which
     # this check would misread as "not found"
-    gh issue view "$ISSUE_NUM" --json number >/dev/null 2>&1 \
+    "$GH" issue view "$ISSUE_NUM" --json number >/dev/null 2>&1 \
       && pass "issue #$ISSUE_NUM exists" \
       || fail "issue #$ISSUE_NUM not found" \
               "create it via repository-agent"
@@ -396,13 +398,13 @@ if [ -n "$ISSUE_N" ] && [ -n "$BASE" ]; then
     git -c core.quotepath=false diff --name-only "$BASE"...HEAD 2>/dev/null \
       | grep -qx 'CHANGELOG.md' && EXEMPT="changelog-diff"
     if [ -z "$EXEMPT" ] && [ -n "$VERIFY_PR" ] && [ "${VERIFY_PR:-0}" != "0" ]; then
-      gh pr view "$VERIFY_PR" --json labels --jq '.labels[].name' 2>/dev/null \
+      "$GH" pr view "$VERIFY_PR" --json labels --jq '.labels[].name' 2>/dev/null \
         | grep -qx 'no-changes-entry' && EXEMPT="no-changes-entry label"
     fi
     [ -n "$EXEMPT" ] \
       && pass "no .changes fragment - exempt via $EXEMPT" \
       || fail "no .changes fragment on branch" \
-              "add .changes/<slug>.md with bump:/user_visible:/issue:, or use the documented no-changes-entry PR label path"
+              "add .changes/<slug>.md with bump:/user_visible:/issue: (bump: none for a merge without release), or use the documented no-changes-entry PR label path"
   fi
 fi
 

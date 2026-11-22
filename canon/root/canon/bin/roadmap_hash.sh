@@ -11,7 +11,9 @@
 #
 # --verify: recompute every item carrying a frozen_hash field and
 #   compare. Exit 0 when all recorded hashes match; exit 1 naming
-#   drifted items; items without the field are reported and skipped.
+#   drifted items. FAIL-CLOSED: an item whose frozen_hash field is
+#   missing or still a placeholder fails verification - a deleted
+#   field would otherwise hide post-freeze edits.
 # --fill: write the computed hash into items whose frozen_hash is
 #   empty or a placeholder (<sha256...>); never overwrites a
 #   recorded hash - drift is for --verify to surface, not to hide.
@@ -80,7 +82,11 @@ for start, end, slug in blocks:
         print(computed); sys.exit(0)
     if mode == "verify":
         if recorded is None:
-            print(f"roadmap_hash: item '{slug}' has no frozen_hash - skipped")
+            # fail-closed: an unfrozen (or field-deleted) item means
+            # the plan was never frozen or was tampered with.
+            print(f"roadmap_hash: UNFROZEN item '{slug}': no recorded "
+                  f"frozen_hash - run --fill via the freeze flow")
+            rc = 1
             continue
         if recorded != computed:
             print(f"roadmap_hash: DRIFT item '{slug}': recorded {recorded[:16]}.. != computed {computed[:16]}..")

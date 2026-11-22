@@ -1,36 +1,207 @@
 {
   "exec": {
     "deny": [
-      "git", "gh", "sudo",
-      "bash -", "sh -", "zsh -", "dash -",
-      "eval", "env ", "xargs ", "time ", "nohup ",
-      "command ", "source "
+      "git",
+      "gh",
+      "sudo",
+      "bash -",
+      "sh -",
+      "zsh -",
+      "dash -",
+      "eval",
+      "env ",
+      "xargs ",
+      "time ",
+      "nohup ",
+      "command ",
+      "source "
     ],
     "allow": [
       "canon/bin/"
     ],
     "roles": {
       "_comment": "Capability matrix. deny/allow above is GLOBAL: it binds every actor incl. subagents. Bare git/gh stay denied for ALL roles - git ops go only through canon/bin wrappers (ship_*/git_ro.sh) run by the git agent, gh ops only through repo_*.sh wrappers run by the repository agent. 'tools' below mirrors each profile's allowed-tools frontmatter; 'exec_extra' lists non-wrapper commands the role legitimately runs inside its worktree (project-native checks - NOT git/gh, which are never permitted).",
-      "root":        {"tools": ["read","grep","glob","exec","mcp"],
-                      "exec_extra": []},
-      "code_writer": {"tools": ["read","grep","glob","exec","edit"],
-                      "exec_extra": ["<project lint/tests/typecheck per manifests>"]},
-      "judge":       {"tools": ["read","grep","glob","exec"],
-                      "exec_extra": ["<project lint/tests/typecheck on the candidate worktree>"]},
-      "reviewer":    {"tools": ["read","grep","glob","exec"],
-                      "exec_extra": ["canon/bin/repo_pr_review.sh - aggregator ONLY; canon/bin/panel_verdict.sh and canon/bin/gate_run.sh status for domain reviewers - NEVER native PR code, no gate_run run, no checkout with credentials"]},
-      "resolver":    {"tools": ["read","grep","glob"],
-                      "exec_extra": []},
-      "designer":    {"tools": ["read","grep","glob"],
-                      "exec_extra": []},
-      "reader":      {"tools": ["read","grep","glob","exec"],
-                      "exec_extra": ["canon/bin/reader_digest.sh, read-only pagers/cat"]},
-      "git":         {"tools": ["read","grep","glob","exec"],
-                      "exec_extra": ["canon/bin/ship_*.sh", "canon/bin/git_ro.sh"]},
-      "repository":  {"tools": ["read","grep","glob","exec"],
-                      "exec_extra": ["canon/bin/repo_*.sh"]},
-      "hygiene":     {"tools": [],
-                      "exec_extra": ["deterministic canon/bin/hygiene_check.sh inside wrappers - not an agent"]}
+      "root": {
+        "tools": [
+          "read",
+          "grep",
+          "glob",
+          "exec",
+          "mcp"
+        ],
+        "exec_extra": []
+      },
+      "code_writer": {
+        "tools": [
+          "read",
+          "grep",
+          "glob",
+          "exec",
+          "write",
+          "edit"
+        ],
+        "exec_extra": [
+          "<project lint/tests/typecheck per manifests>"
+        ]
+      },
+      "judge": {
+        "tools": [
+          "read",
+          "grep",
+          "glob",
+          "exec"
+        ],
+        "exec_extra": [
+          "<project lint/tests/typecheck on the candidate worktree>"
+        ]
+      },
+      "reviewer": {
+        "tools": [
+          "read",
+          "grep",
+          "glob",
+          "exec"
+        ],
+        "exec_extra": [
+          "canon/bin/repo_pr_review.sh - aggregator ONLY; canon/bin/panel_verdict.sh and canon/bin/gate_run.sh status for domain reviewers - NEVER native PR code, no gate_run run, no checkout with credentials"
+        ]
+      },
+      "resolver": {
+        "tools": [
+          "read",
+          "grep",
+          "glob",
+          "exec"
+        ],
+        "exec_extra": [
+          "canon/bin/git_ro.sh - read-only repo introspection only"
+        ]
+      },
+      "designer": {
+        "tools": [
+          "read",
+          "grep",
+          "glob"
+        ],
+        "exec_extra": []
+      },
+      "reader": {
+        "tools": [
+          "read",
+          "grep",
+          "glob",
+          "exec"
+        ],
+        "exec_extra": [
+          "canon/bin/reader_digest.sh, read-only pagers/cat"
+        ]
+      },
+      "git": {
+        "tools": [
+          "read",
+          "grep",
+          "glob",
+          "exec"
+        ],
+        "exec_extra": [
+          "canon/bin/ship_*.sh",
+          "canon/bin/git_ro.sh"
+        ]
+      },
+      "repository": {
+        "tools": [
+          "read",
+          "grep",
+          "glob",
+          "exec"
+        ],
+        "exec_extra": [
+          "canon/bin/repo_*.sh"
+        ]
+      },
+      "hygiene": {
+        "tools": [],
+        "exec_extra": [
+          "deterministic canon/bin/hygiene_check.sh inside wrappers - not an agent"
+        ]
+      },
+      "reviewer_design": {
+        "tools": [
+          "read",
+          "grep",
+          "glob",
+          "exec"
+        ],
+        "exec_extra": [
+          "canon/bin/panel_verdict.sh, canon/bin/gate_run.sh status, canon/bin/review_worktree.sh - NEVER repo_pr_review.sh, never native PR code, no checkout with credentials"
+        ]
+      },
+      "reviewer_docs": {
+        "tools": [
+          "read",
+          "grep",
+          "glob",
+          "exec"
+        ],
+        "exec_extra": [
+          "canon/bin/panel_verdict.sh, canon/bin/gate_run.sh status, canon/bin/review_worktree.sh - NEVER repo_pr_review.sh, never native PR code, no checkout with credentials"
+        ]
+      },
+      "reviewer_fidelity": {
+        "tools": [
+          "read",
+          "grep",
+          "glob",
+          "exec"
+        ],
+        "exec_extra": [
+          "canon/bin/panel_verdict.sh, canon/bin/gate_run.sh status, canon/bin/review_worktree.sh - NEVER repo_pr_review.sh, never native PR code, no checkout with credentials"
+        ]
+      },
+      "reviewer_product": {
+        "tools": [
+          "read",
+          "grep",
+          "glob",
+          "exec"
+        ],
+        "exec_extra": [
+          "canon/bin/panel_verdict.sh, canon/bin/gate_run.sh status, canon/bin/review_worktree.sh - NEVER repo_pr_review.sh, never native PR code, no checkout with credentials"
+        ]
+      },
+      "reviewer_quality": {
+        "tools": [
+          "read",
+          "grep",
+          "glob",
+          "exec"
+        ],
+        "exec_extra": [
+          "canon/bin/panel_verdict.sh, canon/bin/gate_run.sh status, canon/bin/review_worktree.sh - NEVER repo_pr_review.sh, never native PR code, no checkout with credentials"
+        ]
+      },
+      "reviewer_security": {
+        "tools": [
+          "read",
+          "grep",
+          "glob",
+          "exec"
+        ],
+        "exec_extra": [
+          "canon/bin/panel_verdict.sh, canon/bin/gate_run.sh status, canon/bin/review_worktree.sh - NEVER repo_pr_review.sh, never native PR code, no checkout with credentials"
+        ]
+      },
+      "reviewer_tester": {
+        "tools": [
+          "read",
+          "grep",
+          "glob",
+          "exec"
+        ],
+        "exec_extra": [
+          "canon/bin/panel_verdict.sh, canon/bin/gate_run.sh status, canon/bin/review_worktree.sh - NEVER repo_pr_review.sh, never native PR code, no checkout with credentials"
+        ]
+      }
     }
   },
   "gateway": {

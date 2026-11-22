@@ -41,14 +41,7 @@ case "$METHOD" in
 esac
 
 # GitHub CLI resolution (same contract as repo_merge.sh).
-GH=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os,re
-try:
-    pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
-    gb = ((pj.get("merge") or {}).get("gh_bin")) \
-         or ((pj.get("review") or {}).get("gh_bin")) or "gh"
-    print(gb if isinstance(gb, str) and re.fullmatch(r"[A-Za-z0-9_-]+", gb) else "")
-except Exception:
-    print("gh")' 2>/dev/null)
+GH=$("$CANON_DIR/bin/gh_id.sh" merge)
 [ -n "$GH" ] || json_error malformed_input "merge.gh_bin in project.json is not a bare binary basename"
 command -v "$GH" >/dev/null 2>&1 || json_error upstream_error "github cli '$GH' not found on PATH"
 

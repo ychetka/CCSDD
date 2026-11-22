@@ -6,19 +6,14 @@
 # Usage: repo_branch_delete.sh <branch> [--remote-only|--local-only] [--force]
 # Output JSON: {branch, deleted, status}
 set -uo pipefail
+CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
 cd "$TOP"
 
 # Repository-agent credential for repository mutations (merge.gh_bin
-# -> review.gh_bin -> gh), never the reviewer identity.
-GH=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os,re
-try:
-    pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
-    gb = ((pj.get("merge") or {}).get("gh_bin")) \
-         or ((pj.get("review") or {}).get("gh_bin")) or "gh"
-    print(gb if isinstance(gb, str) and re.fullmatch(r"[A-Za-z0-9_-]+", gb) else "")
-except Exception:
-    print("gh")' 2>/dev/null)
+# -> gh), NEVER the reviewer identity (self-approve
+# deadlock + signal forgery).
+GH=$("$CANON_DIR/bin/gh_id.sh" merge)
 [ -n "$GH" ] || { echo "merge.gh_bin in project.json is not a bare binary basename" >&2; exit 2; }
 
 BRANCH="${1:?usage: repo_branch_delete.sh <branch> [--remote-only|--local-only] [--force]}"

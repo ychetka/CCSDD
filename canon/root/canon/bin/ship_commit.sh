@@ -24,6 +24,8 @@
 #      the gated index/message - any divergence fails hard.
 # Exit codes: 1 usage/env, 2 scope or hygiene reject, 3 migration gate.
 set -euo pipefail
+SHA256_BIN=$(command -v sha256sum || true)
+[ -z "$SHA256_BIN" ] && SHA256_BIN="shasum -a 256"
 # canon may live outside the git toplevel (nested workspace layout) -
 # resolve it from this script's own location BEFORE cd changes CWD.
 # pwd -P: physical paths - a symlinked canon ancestor must not break
@@ -74,15 +76,28 @@ try:
     mf = json.load(open(os.path.join(canon_dir, "canon_manifest.json")))
     sha = mf.get("sha256", {})
 except Exception:
-    sys.exit(0)  # unreadable stamp: check_setup owns that complaint
+    # FAIL-CLOSED: a corrupt stamp is indistinguishable from a
+    # forged one - refuse, let check_setup diagnose.
+    sys.exit(1)
 if not isinstance(sha, dict):
-    sys.exit(0)
+    sys.exit(1)
 bad = []
+# The unpinned check only fires when the stamp already purports to
+# cover bin/ - a partial legacy stamp is check_setup's complaint,
+# not a forgery proof.
+claims_bin = any(k.startswith("canon/bin/") for k in sha)
 for rel in ("bin/ship_commit.sh", "bin/migration_gate.sh",
             "bin/migration_pattern.sh", "bin/hygiene_check.sh",
-            "bin/verify_constraints.sh"):
+            "bin/verify_constraints.sh", "bin/verify_worktree.sh",
+            "bin/git_ro.sh", "bin/gh_id.sh",
+            "bin/gate_run.sh", "bin/panel_gate.sh",
+            "bin/panel_verdict.sh"):
     want = sha.get("canon/" + rel)
     if not isinstance(want, str):
+        # A pinned script absent from a bin-covering manifest cannot
+        # be trusted - the stamp predates the panel or was tampered.
+        if claims_bin and os.path.isfile(os.path.join(canon_dir, rel)):
+            bad.append(rel + " (unpinned)")
         continue
     p = os.path.join(canon_dir, rel)
     got = ""
@@ -303,13 +318,13 @@ git -c diff.external= diff --cached --text --no-ext-diff | "$CANON_DIR/bin/hygie
 # --- Commit: hooks are untrusted repo code. --no-verify keeps a
 # commit-msg/pre-commit hook from mutating the index or message after
 # the gates passed; the post-checks below detect any residual drift.
-STAGED_LIST=$(tr '\0' '\n' < "$STAGED_Z" | LC_ALL=C sort | sha256sum | cut -d' ' -f1)
+STAGED_LIST=$(tr '\0' '\n' < "$STAGED_Z" | LC_ALL=C sort | $SHA256_BIN | cut -d' ' -f1)
 git commit --no-verify -m "$MSG" || { echo "git commit failed" >&2; exit 1; }
 
 # TOCTOU verification: the committed file set and message must equal
 # exactly what the gates evaluated. A hook that re-staged files or
 # rewrote the message is caught here, never silently shipped.
-COMMIT_LIST=$(git diff-tree --no-commit-id --name-only -z -r --no-renames HEAD | tr '\0' '\n' | LC_ALL=C sort | sha256sum | cut -d' ' -f1)
+COMMIT_LIST=$(git diff-tree --no-commit-id --name-only -z -r --no-renames HEAD | tr '\0' '\n' | LC_ALL=C sort | $SHA256_BIN | cut -d' ' -f1)
 if [ "$COMMIT_LIST" != "$STAGED_LIST" ]; then
   echo "TOCTOU: committed file set differs from the gated index" >&2
   git diff-tree --no-commit-id --name-status -r --no-renames HEAD >&2

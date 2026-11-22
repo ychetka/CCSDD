@@ -26,7 +26,11 @@ if [ "$OP" = "signal_set" ]; then
       --description) DSC=$2;; --url) URL=$2;; *) usage;;
     esac; shift 2
   done
-  SIG="$SIG" SHA="$SHA" CTX="$CTX" ST="$ST" DSC="$DSC" URL="$URL" python3 - <<'PY'
+  # Read-modify-write under flock: parallel panel_verdict runs (one
+  # per domain) would otherwise last-writer-win the fixture file.
+  (
+    flock -x 9
+    SIG="$SIG" SHA="$SHA" CTX="$CTX" ST="$ST" DSC="$DSC" URL="$URL" python3 - <<'PY'
 import datetime, json, os
 path = os.environ["SIG"]
 try:
@@ -43,6 +47,7 @@ with open(tmp, "w") as f:
     json.dump(data, f, indent=2); f.flush(); os.fsync(f.fileno())
 os.replace(tmp, path)
 PY
+  ) 9>"$SIG.lock"
   exit 0
 fi
 
@@ -75,13 +80,16 @@ if [ "$OP" = "finding_post" ]; then
     case "$1" in --pr) PR=$2;; --body-file) BF=$2;; *) usage;; esac; shift 2
   done
   [ -n "$PR" ] && [ -f "$BF" ] || usage
-  CMT="$CMT" PR="$PR" python3 - "$BF" <<'PY'
+  (
+    flock -x 9
+    CMT="$CMT" PR="$PR" python3 - "$BF" <<'PY'
 import json, os, sys
 rec = {"pr": int(os.environ["PR"]), "body": open(sys.argv[1], encoding="utf-8").read()}
 with open(os.environ["CMT"], "a", encoding="utf-8") as f:
     f.write(json.dumps(rec) + "\n")
 print(json.dumps({"url": f"fixture://comment/{os.environ['PR']}"}))
 PY
+  ) 9>"$CMT.lock"
   exit 0
 fi
 

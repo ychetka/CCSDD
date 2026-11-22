@@ -133,6 +133,31 @@ if isinstance(m, dict) and "gh_bin" in m:
     gb = m["gh_bin"]
     if not isinstance(gb, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", gb or ""):
         errs.append("merge.gh_bin must be a bare binary basename (no path separators)")
+# Identity separation: the merge/author binary must differ from the
+# reviewer binary when both are configured. Same binary => PR author
+# == reviewer => forge self-approve rejection and a merge identity
+# able to publish review signals.
+if isinstance(m, dict) and isinstance(r, dict) \
+   and m.get("gh_bin") and r.get("gh_bin") \
+   and m["gh_bin"] == r["gh_bin"]:
+    errs.append("merge.gh_bin must differ from review.gh_bin "
+                "(author and reviewer identities must be separate)")
+# reviewer_profiles: {<login>: {"gh_bin": <basename>, ...}} - keys are
+# the panel logins (canonical schema, also read by panel_gate.sh).
+rp = r.get("reviewer_profiles") if isinstance(r, dict) else None
+if rp is not None:
+    if not isinstance(rp, dict):
+        errs.append("review.reviewer_profiles must be an object keyed by reviewer login")
+    else:
+        for login, prof in rp.items():
+            if not re.fullmatch(r"[A-Za-z0-9-]+(\[bot\])?", login or ""):
+                errs.append(f"review.reviewer_profiles key {login!r} is not a valid GitHub login")
+            if isinstance(prof, dict):
+                gb2 = prof.get("gh_bin")
+                if gb2 is not None and not re.fullmatch(r"[A-Za-z0-9_-]+", str(gb2)):
+                    errs.append(f"review.reviewer_profiles.{login}.gh_bin must be a bare binary basename")
+            elif prof is not None:
+                errs.append(f"review.reviewer_profiles.{login} must be an object")
 fr = cfg.get("forge")
 if isinstance(fr, str) and not re.fullmatch(r"[a-z][a-z0-9_]*", fr):
     errs.append("forge must be a lowercase adapter name")
@@ -141,6 +166,11 @@ if isinstance(gc, dict):
     for name, argv in gc.items():
         if not re.fullmatch(r"[a-z][a-z0-9_]*", name or ""):
             errs.append(f"gate_checks key {name!r} is not a valid check name")
+        if name.endswith("_optional"):
+            # opt-out flag for an unconfigured project floor
+            if not isinstance(argv, bool):
+                errs.append(f"gate_checks.{name} must be a bool")
+            continue
         if not isinstance(argv, list) or not argv \
                 or not all(isinstance(x, str) and x for x in argv):
             errs.append(f"gate_checks.{name} must be a non-empty argv array")
@@ -210,9 +240,11 @@ for name, e in domains.items():
         if not isinstance(gc, str) or not re.fullmatch(r"[a-z][a-z0-9_]*", gc):
             errs.append(f"domain {name}: gate_check name invalid")
         elif not (os.path.isfile(os.path.join(canon_dir, "bin", gc + ".sh"))
-                  or gc in gate_checks):
+                  or gc in gate_checks
+                  or gate_checks.get(gc + "_optional") is True):
             errs.append(f"domain {name}: gate_check '{gc}' resolves to nothing "
-                        f"(canon/bin/{gc}.sh absent, no gate_checks.{gc})")
+                        f"(canon/bin/{gc}.sh absent, no gate_checks.{gc}, "
+                        f"no gate_checks.{gc}_optional)")
     if cls in ("llm", "hybrid") and e.get("required", True):
         prof = e.get("profile") or f"reviewer_{name}"
         if not os.path.isfile(os.path.join(canon_dir, "agents", prof + ".md")):

@@ -34,7 +34,7 @@
       "gate_check": "test_suite",
       "required": true,
       "profile": "reviewer_tester",
-      "floor": "test compilation + pass/fail execution on the candidate"
+      "floor": "RUNNER=project: gate_checks.test_suite argv (fail-closed; gate_checks.test_suite_optional=true allows recorded skip)"
     },
     "fidelity": {
       "class": "hybrid",

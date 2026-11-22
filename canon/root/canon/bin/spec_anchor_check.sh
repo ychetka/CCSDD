@@ -19,6 +19,20 @@ cd -P "$TOP"
 BASE="${BASE:-}"; BASE_REF="${BASE_REF:-}"
 ISSUE_LIST="${ISSUE_LIST:-}"; FRAG_LIST="${FRAG_LIST:-}"
 
+# Auto-resolve the base when the caller (e.g. gate_run) did not pass
+# it: without BASE_REF the base-existence checks below are blind.
+PJ="$CANON_DIR/project.json"
+if [ -z "$BASE_REF" ]; then
+  BB=$(PJ="$PJ" python3 -c 'import json,os
+try: print(json.load(open(os.environ["PJ"])).get("base_branch") or "main")
+except Exception: print("main")' 2>/dev/null)
+  for r in "origin/$BB" "$BB"; do
+    git rev-parse --verify --quiet "$r" >/dev/null 2>&1 && { BASE_REF=$r; break; }
+  done
+fi
+[ -n "$BASE_REF" ] && [ -z "$BASE" ] \
+  && BASE=$(git merge-base HEAD "$BASE_REF" 2>/dev/null || true)
+
 if ! compgen -G "$TOP/.changes/*.md" >/dev/null 2>&1; then
   echo "SKIP: no pending .changes entries"
   exit 0
@@ -66,8 +80,8 @@ for rel in frags:
     body = open(path, encoding="utf-8", errors="replace").read()
     name = os.path.basename(path)
     flds = front_fields(body)
-    if flds.get("bump") not in ("patch","minor","major"):
-        bad.append(f"{name}: missing/invalid 'bump: patch|minor|major'")
+    if flds.get("bump") not in ("patch","minor","major","none"):
+        bad.append(f"{name}: missing/invalid 'bump: patch|minor|major|none'")
     if flds.get("user_visible") not in ("true","false"):
         bad.append(f"{name}: missing 'user_visible: true|false'")
     iss = flds.get("issue","")
@@ -168,7 +182,10 @@ def anchor_resolves(path, anchor):
 
 def existed_at_base(rel, anchor):
     if not base_ref:
-        return True   # no base known - cannot prove; do not fail on this
+        # fail-closed: without a base ref the check cannot prove
+        # prior existence - report as non-existent so modifies/
+        # removes claims against phantom anchors are caught.
+        return False
     r = subprocess.run(["git","show",base_ref+":"+rel],
                        capture_output=True, text=True)
     if r.returncode != 0:
@@ -222,6 +239,32 @@ def introduced_in_delta(norm_fp, anchor):
             return True
     return False
 
+# Targets another fragment of the SAME delta removes (intra-epic
+# add-then-remove): task 1 adds spec.md#r1, task 2 removes it before
+# the epic reaches main. An adds/modifies target that the delta
+# itself removes must not be required to resolve in the final tree.
+removed = []
+for rel in frags:
+    path = os.path.join(top, rel)
+    if not os.path.isfile(path):
+        continue
+    body = open(path, encoding="utf-8", errors="replace").read()
+    for kind, targets in spec_impact_lines(body):
+        if kind != "removes":
+            continue
+        for t in re.split(r"[,\s]+", targets.strip()):
+            t = t.strip().strip("`")
+            if not t or t.lower() in ("none", "-", "n/a"):
+                continue
+            fp, anch = norm_target(t)
+            removed.append((fp, anch or None))
+
+def removed_in_delta(norm_fp, anchor):
+    for fp, anch in removed:
+        if fp == norm_fp and (anch is None or anch == anchor):
+            return True
+    return False
+
 for rel in frags:
     path = os.path.join(top, rel)
     if not os.path.isfile(path):
@@ -248,6 +291,8 @@ for rel in frags:
                 continue
             p = os.path.join(top, norm_fp)
             if kind in ("adds", "modifies"):
+                if removed_in_delta(norm_fp, anchor or None):
+                    continue  # removed later in the same delta
                 if not os.path.isfile(p):
                     bad.append(f"{name}: {kind} target missing: {t}")
                 elif os.path.isdir(p):

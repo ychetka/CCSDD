@@ -4,7 +4,7 @@
 #      tokens, private-key blocks, common credential assignments).
 #   2. Forbidden-API pattern list from project.json
 #      `security.forbidden_patterns` (regexes, applied to added lines).
-#   3. Project-declared SAST: project.json `gate_checks.security`
+#   (project SAST runs as a separate RUNNER=project check.)
 #      argv (semgrep/bandit/etc.) - runs last, propagates exit code.
 # Base: BASE env or origin/<base_branch>. CANON_DIR env honored.
 set -uo pipefail
@@ -26,30 +26,13 @@ fi
 if [ -n "$BASE" ]; then
   DIFF=$(git diff --unified=0 "$BASE"...HEAD 2>/dev/null | grep -E '^\+' | grep -v '^\+\+\+')
 else
-  DIFF=$(git diff --unified=0 --cached 2>/dev/null | grep -E '^\+' | grep -v '^\+\+\+'; git status --porcelain | awk '$1=="??"{print $2}' | xargs -r cat 2>/dev/null)
+  DIFF=$(git diff --unified=0 --cached 2>/dev/null | grep -E '^\+' | grep -v '^\+\+\+'; git ls-files -z --others --exclude-standard | xargs -0 cat 2>/dev/null)
 fi
 
 # --- 1. secret patterns on added lines ---
-SECRET_BAD=$(printf '%s\n' "$DIFF" | python3 - <<'PY'
-import re, sys
-pats = [
-    (r"(?i)(api[_-]?key|secret|token|password|passwd)\s*[:=]\s*['\"][^'\"]{8,}['\"]", "hardcoded credential assignment"),
-    (r"-----BEGIN [A-Z ]*PRIVATE KEY-----", "private key material"),
-    (r"(?i)bearer\s+[a-z0-9._~+/=-]{20,}", "bearer token literal"),
-    (r"ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}", "github token literal"),
-    (r"sk-[A-Za-z0-9_-]{20,}", "api key literal (sk-*)"),
-    (r"AKIA[0-9A-Z]{16}", "aws access key id"),
-]
-bad = []
-for line in sys.stdin:
-    for rx, label in pats:
-        if re.search(rx, line):
-            bad.append(f"{label}: {line.strip()[:120]}")
-            break
-for b in bad[:30]:
-    print(b)
-PY
-)
+# Unified scanner (bin/secret_scan.py) - the same pattern set the
+# partner gateway enforces on outbound args.
+SECRET_BAD=$(printf '%s\n' "$DIFF" | python3 "$CANON_DIR/bin/secret_scan.py" || true)
 if [ -n "$SECRET_BAD" ]; then
   printf '%s\n' "$SECRET_BAD" | sed 's/^/  secret: /'
   echo "FAIL: possible secrets in the delta"; fails=$((fails+1))
@@ -88,17 +71,8 @@ PY
   fi
 fi
 
-# --- 3. project-declared SAST ---
-SARGV=$(PJ="$PJ" python3 -c 'import json,os
-try:
-    v = (json.load(open(os.environ["PJ"])).get("gate_checks") or {}).get("security")
-    print("\t".join(v) if isinstance(v, list) else "")
-except Exception: print("")' 2>/dev/null)
-if [ -n "$SARGV" ]; then
-  IFS=$'\t' read -r -a SV <<< "$SARGV"
-  if "${SV[@]}"; then echo "PASS: project SAST"
-  else echo "FAIL: project SAST ($SARGV)"; fails=$((fails+1)); fi
-fi
+# --- 3. project SAST lives in RUNNER=project (gate_run),
+# never here - canon checks are static-only.
 
 [ $fails -eq 0 ] && { echo "SECURITY_CHECK: PASS"; exit 0; }
 echo "SECURITY_CHECK: $fails FAILURES"; exit 1

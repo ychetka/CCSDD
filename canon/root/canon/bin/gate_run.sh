@@ -25,6 +25,8 @@
 # `verify` exits 0 iff the newest record has exit_code==0 AND (canon
 # runner) script_sha256 equals the base blob hash.
 set -uo pipefail
+SHA256_BIN=$(command -v sha256sum || true)
+[ -z "$SHA256_BIN" ] && SHA256_BIN="shasum -a 256"
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
 cd -P "$TOP"
@@ -72,10 +74,10 @@ BASE_SHA=""
 DEPLOYED="$CANON_DIR/bin/$CHECK.sh"
 if [ -n "$BASE_REF" ] && git cat-file -e "$BASE_REF:$CANON_PATH" 2>/dev/null; then
   RUNNER=canon
-  BASE_SHA=$(git show "$BASE_REF:$CANON_PATH" | sha256sum | cut -d' ' -f1)
+  BASE_SHA=$(git show "$BASE_REF:$CANON_PATH" | $SHA256_BIN | cut -d' ' -f1)
 elif [ -f "$DEPLOYED" ]; then
   RUNNER=canon
-  BASE_SHA=$(sha256sum "$DEPLOYED" | cut -d' ' -f1)
+  BASE_SHA=$($SHA256_BIN "$DEPLOYED" | cut -d' ' -f1)
 else
   ARGV=$(PJ="$PJ" CHECK="$CHECK" python3 -c 'import json,os
 try:
@@ -84,6 +86,18 @@ try:
     print("\t".join(v) if isinstance(v, list) else "")
 except Exception: print("")' 2>/dev/null)
   [ -n "$ARGV" ] && RUNNER=project
+fi
+# An unresolved check may be explicitly optional: gate_checks.<name>
+# absent + gate_checks.<name>_optional=true -> a recorded skip-pass
+# (exit 0, note="optional"). Default is fail-closed.
+OPTIONAL=""
+if [ -z "$RUNNER" ]; then
+  OPTIONAL=$(PJ="$PJ" CHECK="$CHECK" python3 -c 'import json,os
+try:
+    pj = json.load(open(os.environ["PJ"]))
+    v = (pj.get("gate_checks") or {}).get(os.environ["CHECK"] + "_optional")
+    print("yes" if v is True else "")
+except Exception: print("")' 2>/dev/null)
 fi
 
 latest_record() {
@@ -114,14 +128,26 @@ fi
 
 if [ "$CMD" = "verify" ]; then
   REC=$(latest_record)
+  if [ -z "$REC" ] && [ "$OPTIONAL" = "yes" ]; then
+    # optional + unconfigured + never run = the floor is N/A here,
+    # not missing evidence. A recorded failure still fails below.
+    echo "gate_run verify: $CHECK optional/unconfigured - N/A"
+    exit 0
+  fi
   [ -n "$REC" ] || { echo "gate_run verify: no record for $CHECK @ ${CAND:0:8}" >&2; exit 4; }
-  echo "$REC" | REC_SHA="$BASE_SHA" python3 -c 'import json,os,sys
+  echo "$REC" | REC_SHA="$BASE_SHA" ARGV="${ARGV:-}" python3 -c 'import json,os,sys
 r = json.loads(sys.stdin.read() or "null") or {}
 if r.get("exit_code") != 0:
     print("gate_run verify: %s recorded exit_code=%s" % (r.get("check"), r.get("exit_code")), file=sys.stderr); sys.exit(1)
 want = os.environ.get("REC_SHA") or ""
 if r.get("runner") == "canon" and want and r.get("script_sha256") != want:
     print("gate_run verify: script_sha256 drift vs base for %s" % r.get("check"), file=sys.stderr); sys.exit(1)
+# project runner: the recorded argv must still match project.json -
+# a config change after attestation invalidates the record.
+if r.get("runner") == "project" and "argv" in r:
+    cur = [a for a in os.environ.get("ARGV","").split("\t") if a]
+    if r.get("argv") != cur:
+        print("gate_run verify: argv drift vs project.json for %s" % r.get("check"), file=sys.stderr); sys.exit(1)
 sys.exit(0)' || exit $?
   echo "gate_run verify: $CHECK @ ${CAND:0:8} OK"
   exit 0
@@ -129,12 +155,27 @@ fi
 
 if [ "$CMD" != "run" ]; then usage; fi
 
-[ -n "$RUNNER" ] || { echo "gate_run: check '$CHECK' resolves to nothing (no canon script at base, no project.json gate_checks.$CHECK)" >&2; exit 2; }
+if [ -z "$RUNNER" ]; then
+  if [ "$OPTIONAL" = "yes" ]; then
+    RUNNER=project; ARGV=""
+  else
+    echo "gate_run: check '$CHECK' resolves to nothing (no canon script, no project.json gate_checks.$CHECK; set gate_checks.${CHECK}_optional=true to allow skip)" >&2
+    exit 2
+  fi
+fi
 
 # Binding preconditions: the attested tree is exactly --candidate.
 HEAD=$(git rev-parse HEAD 2>/dev/null)
 [ "$HEAD" = "$CAND" ] || { echo "gate_run: HEAD($HEAD) != candidate($CAND) - refuse to attest a different tree" >&2; exit 1; }
-[ -z "$(git status --porcelain 2>/dev/null)" ] || { echo "gate_run: dirty worktree - refuse to attest" >&2; exit 1; }
+# The clean-tree requirement binds the attestation to the exact
+# candidate content. Runtime journals the harness itself appends
+# (gate_runs.jsonl, cycle_log, panel fixtures, signoff stores) are
+# bookkeeping, not candidate content - in tracked-canon test
+# fixtures they would otherwise dirty the tree reflexively.
+DIRTY=$(git status --porcelain 2>/dev/null | grep -v -E \
+  'canon/(gate_runs\.jsonl.*|cycle_log\.jsonl.*|actors\.json|panel_signals_fixture\.json.*|panel_comments_fixture\.jsonl.*|release_history\.jsonl|human_signoffs/|quota_park\.json|gateway|harness_log\.jsonl|migration_ok|scope_whitelist\.txt|canon_manifest\.json)' \
+  || true)
+[ -z "$DIRTY" ] || { echo "gate_run: dirty worktree - refuse to attest" >&2; printf '%s\n' "$DIRTY" >&2; exit 1; }
 
 OUT=$(mktemp); SCRIPT_TMP=""
 if [ "$RUNNER" = canon ]; then
@@ -146,17 +187,23 @@ if [ "$RUNNER" = canon ]; then
   fi
   CANON_DIR="$CANON_DIR" bash "$SCRIPT_TMP" ${EXTRA[@]+"${EXTRA[@]}"} > "$OUT" 2>&1
   RC=$?
+elif [ "$OPTIONAL" = "yes" ]; then
+  echo "SKIP: $CHECK optional and unconfigured" > "$OUT"; RC=0
 else
   IFS=$'\t' read -r -a PARGV <<< "$ARGV"
   "${PARGV[@]}" ${EXTRA[@]+"${EXTRA[@]}"} > "$OUT" 2>&1
   RC=$?
 fi
-OUT_SHA=$(sha256sum "$OUT" | cut -d' ' -f1)
+OUT_SHA=$($SHA256_BIN "$OUT" | cut -d' ' -f1)
+# Checks may emit structured annotations consumed by other gates:
+#   GATE_NOTE: <text>  -> recorded as rec.note (e.g. axes=none)
+NOTE=$(grep -m1 '^GATE_NOTE: ' "$OUT" 2>/dev/null | sed 's/^GATE_NOTE: //')
 
 exec 9>"$JOURNAL.lock"
 flock 9 || { echo "gate_run: cannot acquire lock" >&2; rm -f "$OUT" "$SCRIPT_TMP"; exit 1; }
 CANON_DIR="$CANON_DIR" OUT_SHA="$OUT_SHA" RC="$RC" CHECK="$CHECK" CAND="$CAND" \
-  RUNNER="$RUNNER" BASE_SHA="$BASE_SHA" BASE_REF="$BASE_REF" ARGV="${ARGV:-}" python3 - <<'PY' >> "$JOURNAL"
+  RUNNER="$RUNNER" BASE_SHA="$BASE_SHA" BASE_REF="$BASE_REF" ARGV="${ARGV:-}" \
+  NOTE="${NOTE:-}" python3 - <<'PY' >> "$JOURNAL"
 import datetime, hashlib, json, os, sys
 rec = {"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
        "check": os.environ["CHECK"],
@@ -169,6 +216,8 @@ if os.environ["RUNNER"] == "canon":
     rec["script_sha256"] = os.environ["BASE_SHA"]
 else:
     rec["argv"] = [a for a in os.environ["ARGV"].split("\t") if a]
+if os.environ.get("NOTE"):
+    rec["note"] = os.environ["NOTE"]
 print(json.dumps(rec))
 PY
 

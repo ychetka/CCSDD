@@ -8,7 +8,12 @@ cd "$TOP"
 
 PR="${1:?usage: repo_status_check.sh <pr_number>}"
 
-GH_OUT=$(gh pr view "$PR" --json statusCheckRollup,mergeable,reviews,headRefOid 2>/dev/null) || {
+# Merge-context read: the merge identity binary, never the review
+# one - status reporting must not borrow reviewer credentials.
+CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+GH_BIN="$("$CANON_DIR/bin/gh_id.sh" merge)"
+
+GH_OUT=$("$GH_BIN" pr view "$PR" --json statusCheckRollup,mergeable,reviews,headRefOid 2>/dev/null) || {
   echo '{"status":"error","failure_class":"upstream_error","message":"gh pr view failed"}'
   exit 1
 }

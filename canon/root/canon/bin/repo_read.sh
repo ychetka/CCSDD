@@ -3,6 +3,8 @@
 # Usage: repo_read.sh <pr|issue|checks|reviews|diff|releases|tags> <ref>
 # Output: raw gh json/text under {data, status} envelope.
 set -uo pipefail
+CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+GH=$("$CANON_DIR/bin/gh_id.sh" merge)
 TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
 cd "$TOP"
 
@@ -34,18 +36,18 @@ else:
 }
 
 case "$WHAT" in
-  pr)      run gh pr view "$REF" --json number,title,body,state,headRefName,baseRefName,headRefOid,mergeable,mergeCommit,reviews,comments ;;
-  issue)   run gh issue view "$REF" --json number,title,body,state,labels,comments ;;
-  checks)  run gh pr view "$REF" --json statusCheckRollup ;;
-  reviews) run gh pr view "$REF" --json reviews,latestReviews,reviewRequests ;;
-  diff)    run gh pr diff "$REF" ;;
+  pr)      run "$GH" pr view "$REF" --json number,title,body,state,headRefName,baseRefName,headRefOid,mergeable,mergeCommit,reviews,comments ;;
+  issue)   run "$GH" issue view "$REF" --json number,title,body,state,labels,comments ;;
+  checks)  run "$GH" pr view "$REF" --json statusCheckRollup ;;
+  reviews) run "$GH" pr view "$REF" --json reviews,latestReviews,reviewRequests ;;
+  diff)    run "$GH" pr diff "$REF" ;;
   # release/tag reads take no ref: `latest` narrows releases to the
   # newest one, anything else lists all
   releases)
     if [ "$REF" = "latest" ]; then
-      run gh release list --limit 1
+      run "$GH" release list --limit 1
     else
-      run gh release list
+      run "$GH" release list
     fi ;;
   tags)
     run git tag --list 'v*' --sort=-v:refname ;;

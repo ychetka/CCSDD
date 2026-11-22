@@ -188,7 +188,7 @@ git reset -q; rm -f db/migrations/004_up.sql db/migrations/004_file_downloads.sq
 # ignores the stamp file entirely.
 printf 'CREATE TABLE x(id int);\n' > db/migrations/005_up.sql
 git add db/migrations/005_up.sql
-want=$(git ls-files -s -- db/migrations/005_up.sql | awk '{print $2}' | sort | sha256sum | cut -d' ' -f1)
+want=$(git ls-files -s -- db/migrations/005_up.sql | awk '{print $2}' | sort | ${SHA256_BIN:-sha256sum} | cut -d' ' -f1)
 printf 'files=%s\n' "$want" > "$SCRATCH/canon/migration_ok"
 "$SHIP" "uncovered migration with forged stamp" >"$SCRATCH/out" 2>&1; expect T14-forged-stamp 3 $? "MIGRATION_GATE"
 git reset -q; rm -f "$SCRATCH/canon/migration_ok" db/migrations/005_up.sql
@@ -618,7 +618,7 @@ mkdir -p "$PANEL_DIR/canon/bin" "$PANEL_DIR/canon/forge" \
          "$PANEL_DIR/canon/config" "$PANEL_DIR/docs/specs" "$PANEL_DIR/.changes"
 (cd "$PANEL_DIR" && git init -q -b main . && git config user.email t@t && git config user.name t)
 for f in gate_run panel_verdict panel_gate spec_anchor_check docs_check \
-         security_check quality_check fidelity_check test_suite hygiene_check; do
+         security_check quality_check fidelity_check hygiene_check; do
   cp "$CANON_DIR/bin/$f.sh" "$PANEL_DIR/canon/bin/"
 done
 cp "$CANON_DIR/forge/test.sh" "$CANON_DIR/forge/github.sh" \
@@ -628,6 +628,7 @@ chmod +x "$PANEL_DIR"/canon/bin/*.sh "$PANEL_DIR"/canon/forge/*.sh
 cat > "$PANEL_DIR/canon/project.json" <<'EOF'
 {"repo":"t/panel","text_language":"en","protected_paths":[],
  "forge":"test","base_branch":"main",
+ "gate_checks":{"test_suite_optional":true},
  "review":{"reviewer_logins":["panel-test"]}}
 EOF
 printf 'canon/gate_runs.jsonl\ncanon/gate_runs.jsonl.lock\ncanon/panel_*\n' \

@@ -21,18 +21,20 @@ findings go back to the executor.
 
 - You do not trust the report text. Commands, exit codes and output
   tails in `GATES` are the writer's claims; verify them by re-running.
-- Git — read-only only (`git status`, `git diff`, `git log`). You do
-  not mutate the tree: your runs must not change sources
-  (caches/build artifacts are fine, file edits are not). Honest about
-  the enforcement level: `allowed-tools` mechanically limits the tool
-  calls issued (the judge has no edit/write), but `exec` can still
-  run shell mutations (git commit, file writes) — the git/file
+- Git — read-only only, and only through `canon/bin/git_ro.sh`
+  (`status`, `diff`, `log`, `show`, `rev-parse`...). The bare `git`
+  binary is denied to every actor by the exec policy; do not try to
+  call it. You do not mutate the tree: your runs must not change
+  sources (caches/build artifacts are fine, file edits are not).
+  Honest about the enforcement level: `allowed-tools` mechanically
+  limits the tool calls issued (the judge has no edit/write), but
+  `exec` can still run shell mutations (file writes) — the file
   boundary for shell effects holds at the convention level, while
   the mechanical gates at commit time remain ship_commit and
   hygiene.
-- Exec — only the project's native checks and read-only git. Through
+- Exec — only the project's native checks and `git_ro.sh`. Through
   exec you may run exclusively lint/typecheck/tests declared by the
-  project's manifests, and the git commands listed above. Forbidden:
+  project's manifests, and `canon/bin/git_ro.sh`. Forbidden:
   installing packages/dependencies, network calls (curl/wget/fetch
   to external services), writing files via shell (>, >>, tee,
   sed -i), any commands mutating the repository or environment. If
@@ -71,14 +73,19 @@ findings go back to the executor.
    envelope (harness.md §3): the verdict is issued only against the
    frozen version — a hash mismatch = the contract changed after
    approval, a [CRITICAL] finding.
-2. **Scope**: `git status` + `git diff --name-only` — the actual
+2. **Scope**: `canon/bin/git_ro.sh status` +
+   `canon/bin/git_ro.sh diff --name-only <base_ref>...HEAD` — the
+   candidate worktree is clean after the ship commit, so a bare
+   `diff` is empty; always diff the candidate commit against its
+   base. The actual
    list of changed files must be a subset of the item's whitelist.
    Compare with the report's `SCOPE_ACTUAL`: a report/reality
    mismatch is a [CRITICAL] finding.
 3. **AC_MAPPING**: for every G/W/T criterion verify that the test
    named in the mapping exists in the diff and actually checks the
    criterion (not just bears a similar name). A criterion without a
-   test or with a fictitious test — at minimum a [WARNING] finding.
+   test or with a fictitious test — a [CRITICAL] finding (uncovered
+   G/W/T scenario / falsified coverage claim).
 4. **Baseline**: match the report's `BASELINE` against reality — if
    the writer claimed pre-existing red checks, confirm it
    MECHANICALLY on a clean temporary worktree at HEAD:
@@ -97,7 +104,8 @@ findings go back to the executor.
    APIs' signatures exist in code/vendor sources. Calling a
    nonexistent API or a dubious package name — a [CRITICAL] finding
    (slopsquatting).
-7. **Existing tests**: `git diff` over test files — every change to
+7. **Existing tests**: `canon/bin/git_ro.sh diff <base_ref>...HEAD`
+   over test files — every change to
    an existing test must be justified in `DECISIONS`. Every
    `DECISIONS` entry citing design freedom must name the contract's
    `delegated_decisions` axis it resolves; a decision outside the

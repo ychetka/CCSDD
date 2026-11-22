@@ -35,8 +35,12 @@ if [ -n "$BASE" ]; then
   DELTA_FILES=$(git diff --name-only --diff-filter=ACMR "$BASE"...HEAD 2>/dev/null \
     | grep -E '\.(md|py|ts|txt|yaml|yml|json)$' || true)
 fi
+# Scan ONLY the PR delta. The global roadmap is deliberately excluded:
+# unresolved axes of future, not-yet-started items must never fail
+# this PR. The impl spec is a tracked artifact (docs/impl_specs/
+# <item>.md per harness) so it appears in the delta when present.
 SCAN_FILES=""
-for f in roadmap.md canon/roadmap.md $DELTA_FILES; do
+for f in $DELTA_FILES; do
   [ -n "$f" ] && [ -f "$TOP/$f" ] && SCAN_FILES="$SCAN_FILES $f"
 done
 
@@ -88,10 +92,12 @@ for rel in files:
 
 if not declared:
     print("AXES: none")
+    print("GATE_NOTE: axes=none")
     print("PASS: no delegated axes - fidelity reviewer may auto-pass")
     raise SystemExit(0)
 missing = sorted(set(declared) - decided)
 print("AXES: " + ",".join(sorted(declared)))
+print("GATE_NOTE: axes=present")
 if missing:
     print("FAIL: delegated axes without a decided impl-spec entry: "
           + ", ".join(missing))
