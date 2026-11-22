@@ -6,8 +6,8 @@ TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-
 cd "$TOP"
 
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
-if [[ ! "$BRANCH" =~ ^issue_[0-9]+-[a-z0-9][a-z0-9_-]*$ ]]; then
-  echo "PUSH BLOCKED: branch '$BRANCH' is not issue_<N>-<slug>" >&2
+if [[ ! "$BRANCH" =~ ^(epic_)?issue_[0-9]+-[a-z0-9][a-z0-9_-]*$ ]]; then
+  echo "PUSH BLOCKED: branch '$BRANCH' is not issue_<N>-<slug> | epic_issue_<N>-<slug>" >&2
   exit 2
 fi
 

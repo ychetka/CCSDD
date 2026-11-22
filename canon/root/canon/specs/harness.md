@@ -423,12 +423,16 @@ The version policy is fixed at roadmap approval, not at merge
   feature (architectural shift / breaking change) — major; fixes,
   tooling, docs — patch. The concrete version number is NOT
   reserved — it is computed at merge (Release-on-Merge).
-- **Branch**: `issue_<N>-<slug>` (no version in the name); a
+- **Branch**: `issue_<N>-<slug>` for a task/item branch,
+  `epic_issue_<N>-<slug>` for an epic branch (no version in the
+  name); a
   mandatory `.changes/<slug>.md` fragment with fields
   `bump: patch|minor|major`, `user_visible:`, `issue:` — on the
   branch BEFORE the PR merge. The fragment's `issue:` is verified
-  mechanically: it must name the PR's issue (the `issue_<N>` of the
-  head branch, else the issue closed by the PR body) —
+  mechanically: it must name an issue the PR is about — the
+  `issue_<N>`/`epic_issue_<N>` of the head branch or any `#N`
+  referenced by the PR body (an epic PR legitimately carries task
+  fragments with their own issue numbers) —
   `failure_class=missing_issue_field`/`issue_mismatch` otherwise.
   Optional `manual_gate: true` on an
   item with `manual_gate` in the roadmap: `repo_merge.sh` blocks
@@ -438,7 +442,8 @@ The version policy is fixed at roadmap approval, not at merge
   otherwise). The version file on the branch is NOT bumped. A merge
   without a fragment is gated by `repo_merge.sh`.
 - **Epic decomposition**: a roadmap item MAY be an epic decomposed
-  into tasks. The epic lives on its `issue_<N>-<slug>` branch; each
+  into tasks. The epic lives on its `epic_issue_<N>-<slug>` branch;
+  each
   task is its own item with its own `issue_<M>-<slug>` branch and
   merges into the epic branch through the same objective
   `repo_merge.sh` gate — reviewer approvals + required checks, no

@@ -30,8 +30,8 @@ fi
 # The branch convention binds a PR to its issue: an issue_<N>-<slug> branch
 # MUST produce a body with "Closes #N" - the verify_constraints link
 # check would otherwise pass a PR that never re-verifies the link.
-if [ -z "$ISSUE" ] && [[ "$BRANCH" =~ ^issue_([0-9]+)- ]]; then
-  ISSUE=$((10#${BASH_REMATCH[1]}))
+if [ -z "$ISSUE" ] && [[ "$BRANCH" =~ ^(epic_)?issue_([0-9]+)- ]]; then
+  ISSUE=$((10#${BASH_REMATCH[2]}))
 fi
 if [ -n "$ISSUE" ] && ! printf '%s' "$BODY" | grep -qiE "(closes|fixes|resolves)[[:space:]]+#$ISSUE([^0-9]|$)"; then
   BODY="${BODY:+$BODY

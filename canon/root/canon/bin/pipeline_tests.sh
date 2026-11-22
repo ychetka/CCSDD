@@ -592,15 +592,15 @@ expect M10b-missing-issue 1 $? "missing_issue_field"
 # A merge into a NON-default base (task branch into the epic branch)
 # is integration work: it merges, but Release-on-Merge does not run -
 # no bump, no tag.
-(cd "$WS" && git checkout -q -b issue_9-epic main \
-  && git push -q origin issue_9-epic \
-  && git checkout -q -b issue_10-auth issue_9-epic \
+(cd "$WS" && git checkout -q -b epic_issue_9-feature main \
+  && git push -q origin epic_issue_9-feature \
+  && git checkout -q -b issue_10-auth epic_issue_9-feature \
   && mkdir -p .changes \
   && printf 'bump: patch\nuser_visible: true\nissue: 10\n\nauth task\n\n## Spec impact\n- none\n' > .changes/auth.md \
   && git add -A && git commit -qm "auth" \
   && git push -q origin issue_10-auth)
 TASKSHA=$(cd "$WS" && git rev-parse issue_10-auth)
-printf '{"headRefOid":"%s","headRefName":"issue_10-auth","baseRefName":"issue_9-epic","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"closes #10","reviewRequests":[]}' "$TASKSHA" > "$GHSTATE/pr_view.json"
+printf '{"headRefOid":"%s","headRefName":"issue_10-auth","baseRefName":"epic_issue_9-feature","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"closes #10","reviewRequests":[]}' "$TASKSHA" > "$GHSTATE/pr_view.json"
 python3 - "$GHSTATE/reviews.json" "$TASKSHA" <<'PY'
 import json, sys
 json.dump([{"user": {"login": "alice"}, "id": 11, "state": "APPROVED",
@@ -617,6 +617,32 @@ grep -q 'non_default_base' "$SCRATCH/out" \
 [ "$(cd "$WS" && git tag | wc -l)" = "$TAGS_BEFORE" ] \
   && { echo "PASS M11c-no-tag"; pass=$((pass+1)); } \
   || { echo "FAIL M11c-no-tag: tag created on epic merge"; fail=$((fail+1)); }
+
+# M11d: the epic branch itself (epic_issue_9-feature) merges into
+# the default branch and RELEASES - carrying the task fragment
+# (issue: 10) which is legal because the epic PR body references
+# both #9 and #10: the epic merge is the moment the task's work
+# ships, so the epic PR legitimately closes the task issue as well.
+# The epic is first rebased onto the advanced
+# origin/main - the version_drift gate blocks a stale epic head
+# (base moved to 1.2.3 via M9's release while the epic carries
+# 1.2.2): the epic must be synced before it can merge for release.
+(cd "$WS" && git fetch -q origin \
+  && git checkout -q -B epic_issue_9-feature origin/epic_issue_9-feature \
+  && git rebase -q origin/main \
+  && git push -q --force-with-lease origin epic_issue_9-feature)
+EPICSHA=$(cd "$WS" && git rev-parse epic_issue_9-feature)
+printf '{"headRefOid":"%s","headRefName":"epic_issue_9-feature","baseRefName":"main","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"closes #9\\ncloses #10","reviewRequests":[]}' "$EPICSHA" > "$GHSTATE/pr_view.json"
+python3 - "$GHSTATE/reviews.json" "$EPICSHA" <<'PY'
+import json, sys
+json.dump([{"user": {"login": "alice"}, "id": 12, "state": "APPROVED",
+            "commit_id": sys.argv[2], "submitted_at": "2026-01-01T00:00:00Z"}],
+          open(sys.argv[1], "w"))
+PY
+(cd "$WS" && env FAKEGH_REPO="$WS" FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
+       canon/bin/repo_merge.sh 9 "$EPICSHA" squash) >"$SCRATCH/out" 2>&1
+rc=$?; [ $rc -ne 0 ] && cat "$SCRATCH/out" >&2
+expect M11d-epic-releases 0 $rc '"status": "merged"'
 
 # ---------- G8/G9: counter integrity + audit-key derivation --------
 echo 'not json' > "$CNTR"

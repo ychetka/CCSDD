@@ -441,22 +441,20 @@ for f in frags:
     manual_gate = manual_gate or flds.get("manual_gate") == "true"
     ci_bootstrap = ci_bootstrap or flds.get("ci_bootstrap") == "true"
 
-# Correspondence check: the fragment's issue: field must name the
-# issue this PR is about - taken from the issue_<N>-<slug> branch
-# name, else from close/fix/resolve refs in the PR body. A fragment
-# pointing at a different issue is a release/journal forgery; a
-# missing field violates the mandatory fragment contract
+# Correspondence check: the fragment's issue: field must name an
+# issue this PR is about. Allowed set = the issue_<N>/epic_issue_<N>
+# of the head branch UNION every #N ref in the PR body (an epic PR
+# legitimately carries fragments whose issue: names the merged task
+# issues). A fragment pointing outside the set is a release/journal
+# forgery; a missing field violates the mandatory fragment contract
 # (harness.md branch/fragment section).
-expected_issue = ""
-m = re.match(r"^issue_(\d+)(?:[-_]|$)", os.environ.get("HEAD_BRANCH") or "")
+allowed = set()
+m = re.match(r"^(?:epic_)?issue_(\d+)(?:[-_]|$)", os.environ.get("HEAD_BRANCH") or "")
 if m:
-    expected_issue = m.group(1)
-else:
-    refs = re.findall(r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)",
-                      d.get("body") or "", re.I)
-    expected_issue = refs[0] if refs else ""
-if expected_issue:
-    iss_bad = [f for f, i in frag_issues.items() if i != expected_issue]
+    allowed.add(m.group(1))
+allowed.update(re.findall(r"#(\d+)", d.get("body") or ""))
+if allowed:
+    iss_bad = [f for f, i in frag_issues.items() if i not in allowed]
 
 flags = {"bumps": bumps, "manual_gate": manual_gate,
          "ci_bootstrap": ci_bootstrap}
@@ -470,7 +468,7 @@ elif iss_missing:
              "fragments": iss_missing}
 elif iss_bad:
     entry = {"status":"blocked","failure_class":"issue_mismatch",
-             "message":"fragment issue: does not match the PR issue (#%s)" % expected_issue,
+             "message":"fragment issue: is not the head-branch issue nor referenced in the PR body",
              "fragments": iss_bad}
 elif frags:
     entry = {"status":"pass","via":"fragment"}
@@ -782,10 +780,14 @@ fi
 # worktree is detached) and a signed verify_worktree.sh report.
 # A non-zero verify = blocked merge; escalations (exit 3) block too -
 # the PR waits for the developer exactly like manual_gate.
+# Linked issues = every #N referenced by the PR body, not only the
+# close/fix/resolve set: an epic PR legitimately carries task
+# fragments whose issue: names the merged task issues (verify's
+# fragment field check must see the same allowed set as the entry
+# scan above).
 BLOOD_ISSUES=$(INFO_FILE="$INFO_FILE" python3 -c 'import json,os,re
 body = json.load(open(os.environ["INFO_FILE"])).get("body") or ""
-nums = sorted({m.group(1) for m in re.finditer(
-    r"(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b\s*:?\s*#(\d+)", body)},
+nums = sorted({m.group(1) for m in re.finditer(r"#(\d+)", body)},
     key=int)
 print(" ".join(nums))')
 VC_OUT=$(cd "$WT" && VERIFY_BRANCH="$HEAD_BRANCH" VERIFY_PR="$PR" \

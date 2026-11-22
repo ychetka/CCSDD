@@ -57,7 +57,8 @@ if [ -n "$VERIFY_BRANCH" ]; then
   esac
 fi
 
-# 1. Branch name = issue_<issue_id>-<slug> (skip on base branch);
+# 1. Branch name = issue_<issue_id>-<slug> for a task/item branch or
+#    epic_issue_<issue_id>-<slug> for an epic branch (skip on base);
 #    Release-on-Merge: version is NOT carried in the branch name.
 #    release/v<X.Y.Z> is created by repo_release.sh when the base
 #    is protected - it carries no item issue and no .changes
@@ -70,9 +71,9 @@ fi
 BRANCH="${VERIFY_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
 ISSUE_N=""
 ON_BASE=0
-if [[ "$BRANCH" =~ ^issue_([0-9]+)-[a-z0-9][a-z0-9_-]*$ ]]; then
+if [[ "$BRANCH" =~ ^(epic_)?issue_([0-9]+)-[a-z0-9][a-z0-9_-]*$ ]]; then
   pass "branch $BRANCH"
-  ISSUE_N="${BASH_REMATCH[1]}"
+  ISSUE_N="${BASH_REMATCH[2]}"
 elif [[ "$BRANCH" =~ ^release/v[0-9]+\.[0-9]+\.[0-9]+(-r[0-9a-zA-Z]+)?$ ]]; then
   pass "release branch $BRANCH"
 elif [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
@@ -86,7 +87,7 @@ elif [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
     ON_BASE=1
   fi
 else
-  fail "branch '$BRANCH' != issue_<N>-<slug>" \
+  fail "branch '$BRANCH' != issue_<N>-<slug> | epic_issue_<N>-<slug>" \
        "rename via git-agent, or state the task is branchless"
 fi
 

@@ -25,7 +25,7 @@ if [ "$BRANCH" = "$BASE" ] || [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]
   echo '{"status":"error","failure_class":"gate_blocked","message":"refusing to delete base branch"}'
   exit 2
 fi
-if [ "$FORCE" -eq 0 ] && [[ ! "$BRANCH" =~ ^issue_[0-9]+-[a-z0-9][a-z0-9_-]*$|^i_[0-9]+$ ]]; then
+if [ "$FORCE" -eq 0 ] && [[ ! "$BRANCH" =~ ^(epic_)?issue_[0-9]+-[a-z0-9][a-z0-9_-]*$|^i_[0-9]+$ ]]; then
   echo "{\"status\":\"error\",\"failure_class\":\"gate_blocked\",\"message\":\"branch '$BRANCH' is not an issue branch - pass --force to delete anyway\"}"
   exit 2
 fi

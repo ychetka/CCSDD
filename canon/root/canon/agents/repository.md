@@ -90,7 +90,8 @@ branch_delete: IN {branch} -> OUT {branch, status}
   not "guess and quietly fix" — document and escalate (incident
   precedent 2026-11-12: versions reached main untagged).
 - Release-on-Merge (ruling 2026-11-19, replacing reserved-version):
-  branch — issue_<N>-<slug>, version on the branch NOT bumped.
+  branch — issue_<N>-<slug> (task) / epic_issue_<N>-<slug> (epic),
+  version on the branch NOT bumped.
   Every PR carries a `.changes/<slug>.md` fragment with field
   `bump: patch|minor|major` (+ `user_visible:`, `issue:`);
   repo_merge.sh gates the fragment's presence and a valid bump.
