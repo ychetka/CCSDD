@@ -115,8 +115,18 @@ if [ -n "$BASELINE_CMD" ]; then
         (cd "$WT" && ${TIMEOUT_BIN:+$TIMEOUT_BIN 300} \
           npm ci --silent --ignore-scripts) >/dev/null 2>&1 || ENV_RC=$?
       else
-        export NODE_PATH="$WT/node_modules${NODE_PATH:+:$NODE_PATH}"
-        export PATH="$WT/node_modules/.bin:$PATH"
+        # $WT is a fresh detached worktree - node_modules is never in
+        # git, so it cannot exist there. Dependencies come from the
+        # prepared main workspace ($TOP/node_modules); a baseline_env.sh
+        # adapter may instead create $WT/node_modules itself.
+        NM_DIR="$WT/node_modules"
+        [ -d "$NM_DIR" ] || NM_DIR="$TOP/node_modules"
+        if [ -d "$NM_DIR" ]; then
+          export NODE_PATH="$NM_DIR${NODE_PATH:+:$NODE_PATH}"
+          export PATH="$NM_DIR/.bin:$PATH"
+        else
+          ENV_RC=2   # no prepared node_modules and installs are off
+        fi
       fi
     elif [ -f "$WT/pyproject.toml" ] || [ -f "$WT/setup.py" ] \
          || ls "$WT"/requirements*.txt >/dev/null 2>&1; then

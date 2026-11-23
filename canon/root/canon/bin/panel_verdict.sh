@@ -66,7 +66,9 @@ try:
     rev = pj.get("review") or {}
     bins = ["gh", "glab", rev.get("gh_bin") or "", rev.get("api_bin") or ""]
     for prof in (rev.get("reviewer_profiles") or {}).values():
-        if isinstance(prof, dict): bins.append(prof.get("gh_bin") or "")
+        if isinstance(prof, dict):
+            bins.append(prof.get("gh_bin") or "")
+            bins.append(prof.get("api_bin") or "")
     print(" ".join(b for b in bins if re.fullmatch(r"[A-Za-z0-9_-]+", b or "")))
 except Exception: print("gh")' 2>/dev/null)
 if [ -z "$API_BIN" ]; then

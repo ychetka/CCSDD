@@ -137,6 +137,10 @@ for rel in files:
                 cp = os.path.normpath(cp).replace(os.sep, "/")
                 if cp.startswith("./"):
                     cp = cp[2:]
+                if os.path.isabs(cp) or cp == ".." or \
+                        cp.startswith("../"):
+                    print(f"FAIL: invalid contract path in {rel}: {cp}")
+                    raise SystemExit(1)
                 spec_contracts.setdefault(rel, set()).add(cp)
                 continue
             m = re.match(r"^###\s+axis:\s*([^|]+)", line)
@@ -154,6 +158,7 @@ for rel in files:
 import subprocess
 extra_contracts = sorted({c for paths in spec_contracts.values()
                           for c in paths if c not in declared})
+missing_contracts = []
 for rel in extra_contracts:
     body = subprocess.run(["git","-C",top,"show","HEAD:"+rel],
                           capture_output=True, text=True)
@@ -163,6 +168,7 @@ for rel in extra_contracts:
             body = open(os.path.join(top, rel), encoding="utf-8",
                         errors="replace").read()
         except OSError:
+            missing_contracts.append(rel)
             continue
     else:
         body = body.stdout
@@ -189,12 +195,19 @@ for rel in extra_contracts:
                 name = norm(m.group(1))
                 if name: declared.setdefault(rel, set()).add(name)
 
-if not declared:
-    print("AXES: none")
-    print("GATE_NOTE: axes=none")
-    print("PASS: no delegated axes - fidelity reviewer may auto-pass")
-    raise SystemExit(0)
+# A spec's explicit contract: pointer must resolve - a typo'd or
+# removed contract is a hard failure, never a silent auto-pass.
+if missing_contracts:
+    print("FAIL: impl spec references non-existent contract(s): "
+          + ", ".join(sorted(missing_contracts)))
+    raise SystemExit(1)
 all_declared = {a for s in declared.values() for a in s}
+# Improvisation check FIRST (same direction as design_spec_check's
+# EXTRA): an impl spec may not decide axes no contract delegated -
+# this must run before the empty-declared auto-pass, or a spec can
+# decide axes while its contract: pointer resolves to nothing.
+extra = sorted({a for spec_axes in decided.values() for a in spec_axes}
+               - all_declared)
 def spec_binds(spec_rel):
     bound = spec_contracts.get(spec_rel)
     if bound:
@@ -218,20 +231,25 @@ for rel, axes_of_file in declared.items():
     if not covered:
         missing.extend(sorted(axes_of_file))
 missing = sorted(set(missing))
-# Improvisation check (same direction as design_spec_check's EXTRA):
-# an impl spec may not decide axes no contract in this PR delegated.
-extra = sorted({a for spec_axes in decided.values() for a in spec_axes}
-               - all_declared)
-print("AXES: " + ",".join(sorted(all_declared)))
-print("GATE_NOTE: axes=present")
+if not declared and not extra:
+    print("AXES: none")
+    print("GATE_NOTE: axes=none")
+    print("PASS: no delegated axes - fidelity reviewer may auto-pass")
+    raise SystemExit(0)
+if declared:
+    print("AXES: " + ",".join(sorted(all_declared)))
+    print("GATE_NOTE: axes=present")
+failed = False
 if missing:
     print("FAIL: delegated axes without a decided impl-spec entry "
           "(expected under docs/impl_specs/<item>.md): "
           + ", ".join(missing))
-    raise SystemExit(1)
+    failed = True
 if extra:
     print("FAIL: impl spec decides axes the contracts never delegated "
           "(improvisation): " + ", ".join(extra))
+    failed = True
+if failed:
     raise SystemExit(1)
 print(f"PASS: {len(all_declared)} delegated axis/axes covered by impl spec")
 PY

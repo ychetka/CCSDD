@@ -512,14 +512,17 @@ if [ -n "${GWT_ISSUES// }" ] && [ -n "$BASE" ]; then
     MISSING=$(GWT_IDS="$GWT_IDS" TOP="$TOP" python3 - <<'PY'
 import os, re, subprocess
 top = os.environ["TOP"]
-# A test definition is a def test_*/it(/test(/describe( line; the id
+# A test definition is a def test_*/it(/test( line; the id
 # counts when it sits inside that definition's own span, and the
 # test is skipped only when a skip DECORATOR belongs to that same
 # definition (contiguous decorator lines directly above the def) or
 # a skip() call sits in its first body lines. A bare TODO/FIXME
 # comment is work debt, not a skipped test.
-TESTDEF = re.compile(r"^\s*(async\s+def\s+test_|def\s+test_|it\(|test\(|describe\()")
-NEWDEF  = re.compile(r"^\s*(async\s+def\s+|def\s+|class\s+\w|it\(|test\(|describe\(|function\s)")
+TESTDEF = re.compile(r"^\s*(async\s+def\s+test_|def\s+test_|it\s*\(|test\s*\()")
+# describe()/context() are suite CONTAINERS, not tests - an id in a
+# comment inside a describe block must NOT count as covered. They
+# stay in NEWDEF so the upward walk stops at them.
+NEWDEF  = re.compile(r"^\s*(async\s+def\s+|def\s+|class\s+\w|it\s*\(|test\s*\(|describe\s*\(|context\s*\(|function\s)")
 SKIPDEC = re.compile(r"(@pytest\.mark\.skip|@pytest\.mark\.skipif|@unittest\.skip|it\.skip|test\.skip|describe\.skip|xit\(|xtest\(|xdescribe\(|@tag\(.skip)")
 SKIPCALL = re.compile(r"(pytest\.skip\(|unittest\.SkipTest|self\.skipTest|this\.skip\(\)|return\s*//\s*skip)")
 missing = []
