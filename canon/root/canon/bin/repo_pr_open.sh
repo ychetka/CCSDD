@@ -67,6 +67,10 @@ done
 # reference, not a close: task issues close on task->epic landing).
 for frag in .changes/*.md; do
   [ -f "$frag" ] || continue
+  # The directory's own README may document an example 'issue:'
+  # field - it is not a release fragment (same exclusion as
+  # issue_merge/spec_anchor_check/repo_release).
+  [ "$frag" = ".changes/README.md" ] && continue
   # Leading key: value zone, optional '---' fences - same contract as
   # spec_anchor_check.sh front_fields (fragments may omit '---').
   # 'issue:' may be a comma list or carry '#' marks/quotes/comments:

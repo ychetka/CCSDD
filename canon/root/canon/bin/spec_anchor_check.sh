@@ -33,7 +33,11 @@ fi
 [ -n "$BASE_REF" ] && [ -z "$BASE" ] \
   && BASE=$(git merge-base HEAD "$BASE_REF" 2>/dev/null || true)
 
-if ! compgen -G "$TOP/.changes/*.md" >/dev/null 2>&1; then
+# Early skip only when PENDING_FRAGS was not given explicitly: an
+# external caller may pass a fragment list that lives outside
+# .changes/ (documented override in the header).
+if [ -z "${PENDING_FRAGS:-}" ] \
+   && ! compgen -G "$TOP/.changes/*.md" >/dev/null 2>&1; then
   echo "SKIP: no pending .changes entries"
   exit 0
 fi
@@ -102,9 +106,11 @@ for rel in frags:
     if flds.get("user_visible") not in ("true","false"):
         bad.append(f"{name}: missing 'user_visible: true|false'")
     iss = flds.get("issue","")
-    if not re.fullmatch(r"\d+(\s*,\s*\d+)*", iss or ""):
+    # Natural forms (harness.md): '10', '#10', '10, 11', '#10, #11',
+    # '"10"' (quotes already stripped by front_fields).
+    if not re.fullmatch(r"#?\d+(\s*,\s*#?\d+)*", iss or ""):
         bad.append(f"{name}: missing 'issue: <N>'")
-    elif issue_list and not set(re.findall(r"\d+", iss)) & issue_list:
+    elif issue_list and not set(re.findall(r"\d+", iss)) <= issue_list:
         bad.append(f"{name}: 'issue:' {iss} does not match the branch/linked issues")
     m = re.search(r"(?im)^#+\s*spec impact\s*$", body)
     if not m:

@@ -40,7 +40,9 @@ done
 # Every git call runs pinned: no pager, external differ blanked, so
 # attacker-controlled repo config (core.pager, diff.external,
 # diff.<driver>.command, textconv drivers) cannot execute code.
-G="env GIT_PAGER=cat git --no-pager -c core.pager=cat -c diff.external="
+# core.fsmonitor is blanked too - git status/diff would otherwise
+# spawn the monitor hook binary recorded in the repo config.
+G="env GIT_PAGER=cat git --no-pager -c core.pager=cat -c diff.external= -c core.fsmonitor=false"
 
 case "$op" in
   diff)

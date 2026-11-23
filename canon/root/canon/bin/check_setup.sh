@@ -579,6 +579,31 @@ if [ -d "$WS_DIR/.devin" ]; then
   done
   [ -f "$WS_DIR/.devin/config.json" ] \
     || ADAPT_FAIL="$ADAPT_FAIL .devin/config.json"
+  # gate_checks drift: adapters/devin.sh compiles project.json
+  # gate_checks.* command heads into .devin/config.json allow
+  # entries at adapter-run time; editing project.json afterwards
+  # leaves the compiled policy stale - every new check head is
+  # denied at exec time.
+  if [ -f "$WS_DIR/.devin/config.json" ] && [ -f "$CANON_DIR/project.json" ]; then
+    DRIFT=$(WS_DIR="$WS_DIR" CANON_DIR="$CANON_DIR" python3 - <<'PY'
+import json, os, sys
+try:
+    pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
+    cfg = json.load(open(os.path.join(os.environ["WS_DIR"], ".devin", "config.json")))
+except Exception:
+    sys.exit(0)
+gc = pj.get("gate_checks") or {}
+heads = {v[0] for v in gc.values()
+         if isinstance(v, list) and v and isinstance(v[0], str) and v[0]}
+allow = set((cfg.get("permissions") or {}).get("allow") or [])
+missing = sorted(h for h in heads if f"Exec({h})" not in allow)
+if missing:
+    print(" ".join(missing))
+PY
+)
+    [ -n "$DRIFT" ] \
+      && ADAPT_FAIL="$ADAPT_FAIL gate_checks-not-compiled($DRIFT)"
+  fi
   if [ -L "$WS_DIR/.windsurfrules" ]; then
     [ "$(readlink "$WS_DIR/.windsurfrules")" = "canon/RULES.md" ] \
       || ADAPT_FAIL="$ADAPT_FAIL .windsurfrules(target)"

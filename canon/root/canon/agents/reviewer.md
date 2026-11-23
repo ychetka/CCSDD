@@ -50,9 +50,11 @@ parallel reviewers).
      - title matches `release: v<X.Y.Z>` and equals the branch
        version;
      - the PR carries EXACTLY ONE commit
-       (`canon/bin/git_ro.sh rev-list --count <base>...<headRefOid>`
-       = 1 - a release head is one bump commit; a second commit
-       means a human hand or a botched rebase);
+       (`canon/bin/git_ro.sh rev-list --count <base>..<headRefOid>`
+       = 1 - TWO dots: three-dot rev-list counts the symmetric
+       difference and inflates when base advanced meanwhile; a
+       release head is one bump commit, a second commit means a
+       human hand or a botched rebase);
      - the version source on `headRefOid` reports exactly `X.Y.Z`
        (`canon/bin/repo_version_at.sh <headRefOid>`);
      - the PR diff touches ONLY `{version file, CHANGELOG.md,

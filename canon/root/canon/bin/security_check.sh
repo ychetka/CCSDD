@@ -33,24 +33,33 @@ fi
 # and nothing else).
 DIFF_F=$(mktemp); trap 'rm -f "$DIFF_F"' EXIT
 if [ -n "$BASE" ]; then
+  # Raw diff (incl. '+++ b/<path>' headers) - the forbidden-pattern
+  # pass below needs the filename context to exempt release-note
+  # prose in .changes/*.md from code-API rules.
   git diff --text --no-ext-diff --unified=0 "$BASE"...HEAD 2>/dev/null \
-    | grep -aE '^\+' | grep -avE '^\+\+\+' > "$DIFF_F" || true
+    > "$DIFF_F" || true
 else
-  { git diff --text --no-ext-diff --unified=0 --cached 2>/dev/null \
-      | grep -aE '^\+' | grep -avE '^\+\+\+' || true
-    # Untracked files are added content too - concat with a newline
-    # separator so two files never glue into one line.
+  { git diff --text --no-ext-diff --unified=0 --cached 2>/dev/null || true
+    # Untracked files are added content too - emit a synthetic
+    # '+++ b/<path>' header plus '+'-prefixed lines so both passes
+    # see them with filename context and a newline separator.
     git ls-files -z --others --exclude-standard 2>/dev/null \
-      | while IFS= read -r -d '' uf; do cat "$uf" 2>/dev/null; printf '\n'; done
+      | while IFS= read -r -d '' uf; do
+          printf '+++ b/%s\n' "$uf"
+          sed 's/^/+/' "$uf" 2>/dev/null
+          printf '\n'
+        done
   } > "$DIFF_F"
 fi
 
 # --- 1. secret patterns on added lines ---
 # Unified scanner (bin/secret_scan.py) - the same pattern set the
-# partner gateway enforces on outbound args. A scanner crash must
-# fail the check, never silently pass: capture the exit code
+# partner gateway enforces on outbound args. Scans EVERY added line
+# of every file (docs and release notes included). A scanner crash
+# must fail the check, never silently pass: capture the exit code
 # explicitly (empty stdout + ||true would swallow UnicodeDecodeError).
-SECRET_BAD=$(python3 "$CANON_DIR/bin/secret_scan.py" < "$DIFF_F")
+SECRET_BAD=$(grep -aE '^\+' "$DIFF_F" | grep -avE '^\+\+\+' \
+             | python3 "$CANON_DIR/bin/secret_scan.py")
 SCAN_RC=$?
 if [ $SCAN_RC -eq 2 ] || [ $SCAN_RC -gt 2 ]; then
   echo "FAIL: secret scanner crashed (rc=$SCAN_RC)"; fails=$((fails+1))
@@ -68,15 +77,28 @@ try:
     print("\n".join(v) if isinstance(v, list) else "")
 except Exception: print("")' 2>/dev/null)
 if [ -n "$FORB" ]; then
+  # Forbidden code patterns apply to CODE files only - a
+  # .changes/*.md fragment or spec document legitimately describes
+  # what was removed ("removed calls to dangerous_call()"). The
+  # '+++ b/<path>' headers in DIFF_F give every hit its filename.
   FP_BAD=$(FORB="$FORB" DIFF_F="$DIFF_F" python3 - <<'PY'
 import os, re
 pats = [p for p in os.environ["FORB"].splitlines() if p.strip()]
 bad = []
+cur = None
 for line in open(os.environ["DIFF_F"], encoding="utf-8", errors="replace"):
+    m = re.match(r"^\+\+\+ b/(.+?)\s*$", line)
+    if m:
+        cur = m.group(1); continue
+    if not line.startswith("+"):
+        continue
+    if cur is None or cur.startswith(".changes/"):
+        continue   # release-note prose is exempt from code-API rules
+    text = line[1:]
     for rx in pats:
         try:
-            if re.search(rx, line):
-                bad.append(f"forbidden pattern /{rx}/: {line.strip()[:120]}")
+            if re.search(rx, text):
+                bad.append(f"{cur}: forbidden pattern /{rx}/: {text.strip()[:110]}")
                 break
         except re.error:
             pass

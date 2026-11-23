@@ -6,20 +6,24 @@ TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-
 cd "$TOP"
 
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
-# release/<ver>[-r<sha>] is pushed by repo_release.sh --push-tag as
-# part of release-on-merge; keeping it legal here preserves the
+# release/v<ver>[-r<sha>] is pushed by repo_release.sh --push-tag as
+# part of release-on-merge (TAG="v$NEXT", RBR="release/$TAG" -
+# the v prefix is mandatory). Keeping it legal here preserves the
 # atomic head+tag push for humans and runtime adapters.
 if [[ ! "$BRANCH" =~ ^(epic_)?issue_[0-9]+-[a-z0-9][a-z0-9_-]*$ \
-      && ! "$BRANCH" =~ ^release/[0-9]+\.[0-9]+\.[0-9]+(-r[0-9a-f]+)?$ ]]; then
-  echo "PUSH BLOCKED: branch '$BRANCH' is not issue_<N>-<slug> | epic_issue_<N>-<slug> | release/<semver>[-r<sha>]" >&2
+      && ! "$BRANCH" =~ ^release/v[0-9]+\.[0-9]+\.[0-9]+(-r[0-9a-zA-Z]+)?$ ]]; then
+  echo "PUSH BLOCKED: branch '$BRANCH' is not issue_<N>-<slug> | epic_issue_<N>-<slug> | release/v<semver>[-r<sha>]" >&2
   exit 2
 fi
 
 # Canon runtime journals are runtime-local and gitignored in item
 # worktrees (they may sit untracked under an unpinned canon checkout)
-# - they never make the head "dirty" for push purposes. Same class of
-# exemption as DIRTY_FILE_RE in gate_run.sh / verify_constraints.sh.
-DIRTY=$(git status --porcelain | grep -vE '^.. canon/[^/]*\.(lock|tmp)$' | grep -c . || true)
+# - they never make the head "dirty" for push purposes. Same exempt
+# set as gate_run.sh's DIRTY regex: journals, fixtures, signoff
+# stores, locks and temp files.
+DIRTY=$(git status --porcelain | grep -vE \
+  'canon/(gate_runs\.jsonl.*|cycle_log\.jsonl.*|actors\.json.*|panel_signals_fixture\.json.*|panel_comments_fixture\.jsonl.*|release_history\.jsonl.*|human_signoffs/|quota_park\.json.*|gateway|harness_log\.jsonl.*|migration_ok|scope_whitelist\.txt|canon_manifest\.json|.*\.(lock|tmp))' \
+  | grep -c . || true)
 if [ "${DIRTY:-0}" -gt 0 ]; then
   echo "PUSH BLOCKED: uncommitted or untracked changes present" >&2
   exit 2

@@ -128,7 +128,7 @@ jobs:
             )
           fi
           if [ -z "${V:-}" ]; then
-            V=$(git diff-tree --no-commit-id -p -r "$MERGE_SHA" 2>/dev/null | python3 - <<'PYEOF' || true
+            V=$(git diff-tree --first-parent --no-commit-id -p -r "$MERGE_SHA" 2>/dev/null | python3 - <<'PYEOF' || true
           import re, sys
           cur = None; files = set(); added = {}
           for ln in sys.stdin:

@@ -446,11 +446,16 @@ for f in frags:
         bumps.append(b)
     else:
         bad.append(f)
-    iss = (flds.get("issue") or "").lstrip("#").strip()
-    if not iss:
+    iss = (flds.get("issue") or "").strip()
+    # Natural forms (harness.md): 'issue: 10', 'issue: #10',
+    # 'issue: 10, 11', 'issue: "10"' - extract every number
+    # independently; a trailing ' #comment' is not an issue ref.
+    nums = set(re.findall(r"#?(\d+)",
+                          re.sub(r"\s+#(?!\d).*$", "", iss)))
+    if not nums:
         iss_missing.append(f)
     else:
-        frag_issues.setdefault(f, iss)
+        frag_issues.setdefault(f, nums)
     manual_gate = manual_gate or flds.get("manual_gate") == "true"
     ci_bootstrap = ci_bootstrap or flds.get("ci_bootstrap") == "true"
 
@@ -467,7 +472,11 @@ if m:
     allowed.add(m.group(1))
 allowed.update(re.findall(r"#(\d+)", d.get("body") or ""))
 if allowed:
-    iss_bad = [f for f, i in frag_issues.items() if i not in allowed]
+    # every issue number the fragment names must be in the allowed
+    # set (a list like 'issue: 10, 11' is legal only when BOTH are
+    # covered by the branch/body)
+    iss_bad = [f for f, nums in frag_issues.items()
+               if not nums <= allowed]
 
 flags = {"bumps": bumps,
          "manual_gate": manual_gate,

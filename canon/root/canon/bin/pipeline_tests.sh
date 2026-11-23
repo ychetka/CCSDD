@@ -116,7 +116,7 @@ PY
        --check "$chk" --candidate "$sha") >/dev/null 2>&1
   done
   for d in docs security quality design tester fidelity product; do
-    printf '{"domain":"%s","head":"%s","summary":"seed","receipt":["x"],"findings":[]}' \
+    printf '{"domain":"%s","head":"%s","summary":"seed","receipt":["canon/project.json"],"findings":[]}' \
       "$d" "$sha" > "$SCRATCH/vd.json"
     (cd "$WS" && bash canon/bin/panel_verdict.sh set --pr 1 \
        --sha "$sha" --record "$SCRATCH/vd.json") >/dev/null 2>&1

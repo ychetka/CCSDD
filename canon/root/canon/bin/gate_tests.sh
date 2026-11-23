@@ -889,6 +889,105 @@ expect T66-forbidden-scan 1 $? "forbidden"
 cp "$SCRATCH/pj_t66.bak" "$PANEL_DIR/canon/project.json"
 (cd "$PANEL_DIR" && git reset -q --hard HEAD~1 >/dev/null 2>&1)
 
+# --- T67: spec_anchor - 'issue:' natural forms (#-marked, list,
+# quoted) are legal; a non-numeric value still dies (review_7 #3).
+cat > "$PANEL_DIR/.changes/7-t.md" <<'EOF'
+---
+bump: patch
+user_visible: "false"
+issue: #1
+---
+## Spec impact
+- modifies: docs/specs/spec.md#req-a
+EOF
+(cd "$PANEL_DIR" && git add .changes/7-t.md && git commit -qm "hash issue")
+(cd "$PANEL_DIR" && BASE=main bash canon/bin/spec_anchor_check.sh) >"$SCRATCH/out" 2>&1
+expect T67-hash-issue-ok 0 $?
+cat > "$PANEL_DIR/.changes/8-t.md" <<'EOF'
+---
+bump: patch
+user_visible: "false"
+issue: #1, 1
+---
+## Spec impact
+- modifies: docs/specs/spec.md#req-a
+EOF
+(cd "$PANEL_DIR" && git add .changes/8-t.md && git commit -qm "list issue")
+(cd "$PANEL_DIR" && BASE=main bash canon/bin/spec_anchor_check.sh) >"$SCRATCH/out" 2>&1
+expect T67b-list-issue-ok 0 $?
+cat > "$PANEL_DIR/.changes/9-t.md" <<'EOF'
+---
+bump: patch
+user_visible: "false"
+issue: abc
+---
+## Spec impact
+- modifies: docs/specs/spec.md#req-a
+EOF
+(cd "$PANEL_DIR" && git add .changes/9-t.md && git commit -qm "bad issue")
+(cd "$PANEL_DIR" && BASE=main bash canon/bin/spec_anchor_check.sh) >"$SCRATCH/out" 2>&1
+expect T67c-bad-issue 1 $? "missing 'issue"
+(cd "$PANEL_DIR" && git rm -q .changes/9-t.md && git commit -qm "drop bad frag")
+
+# --- T68: forbidden_patterns exempts .changes/ prose but the
+# secret scanner still sees those files (review_7 #6).
+cp "$PANEL_DIR/canon/project.json" "$SCRATCH/pj_t68.bak"
+python3 - "$PANEL_DIR/canon/project.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["security"] = {"forbidden_patterns": ["dangerous_call\\("]}
+json.dump(d, open(sys.argv[1], "w"), indent=2)
+PY
+cat > "$PANEL_DIR/.changes/10-t.md" <<'EOF'
+---
+bump: patch
+user_visible: "false"
+issue: 1
+---
+## Spec impact
+- modifies: docs/specs/spec.md#req-a
+
+Removed legacy dangerous_call(x) usage.
+EOF
+(cd "$PANEL_DIR" && git add .changes/10-t.md && git commit -qm "changes prose")
+(cd "$PANEL_DIR" && BASE=main bash canon/bin/security_check.sh) >"$SCRATCH/out" 2>&1
+expect T68-changes-prose-ok 0 $? "PASS: no forbidden patterns"
+# but the same words inside a code file are still blocked
+(cd "$PANEL_DIR" && printf 'dangerous_call(x)\n' > src/forbid.py \
+  && git add src/forbid.py && git commit -qm "code hit")
+(cd "$PANEL_DIR" && BASE=main bash canon/bin/security_check.sh) >"$SCRATCH/out" 2>&1
+expect T68b-code-still-blocked 1 $? "src/forbid.py"
+cp "$SCRATCH/pj_t68.bak" "$PANEL_DIR/canon/project.json"
+(cd "$PANEL_DIR" && git reset -q --hard HEAD~2 >/dev/null 2>&1)
+
+# --- T69: ship_push accepts release/v<X.Y.Z> and the -r<sha>
+# retry form (review_7 #2) while still blocking foreign names.
+# The fixture has no github remote, so a legal branch name reaches
+# the 'no github remote' error; an illegal one dies at PUSH BLOCKED.
+cp "$CANON_DIR/bin/ship_push.sh" "$PANEL_DIR/canon/bin/" \
+  && chmod +x "$PANEL_DIR/canon/bin/ship_push.sh" \
+  && (cd "$PANEL_DIR" && git add canon/bin/ship_push.sh \
+      && git commit -qm "add ship_push to fixture")
+t69=0
+for br in release/v9.9.9 release/v9.9.9-rabc123 epic_issue_9-x; do
+  (cd "$PANEL_DIR" && git checkout -qb "$br")
+  (cd "$PANEL_DIR" && bash canon/bin/ship_push.sh) >"$SCRATCH/out" 2>&1
+  grep -q "no github remote" "$SCRATCH/out" \
+    || { echo "FAIL T69-branch-accept: '$br' rejected"; t69=1; }
+done
+for br in release/9.9.9 bogus-branch; do
+  (cd "$PANEL_DIR" && git checkout -qb "z$br" 2>/dev/null \
+    || git checkout -qb "z_$(echo "$br" | tr / _)")
+  (cd "$PANEL_DIR" && bash canon/bin/ship_push.sh) >"$SCRATCH/out" 2>&1
+  grep -q "PUSH BLOCKED: branch" "$SCRATCH/out" \
+    || { echo "FAIL T69-branch-reject: '$br' accepted"; t69=1; }
+done
+(cd "$PANEL_DIR" && git checkout -q issue_1-t \
+  && git branch -qD release/v9.9.9 release/v9.9.9-rabc123 \
+       epic_issue_9-x zrelease/9.9.9 zbogus-branch 2>/dev/null || true)
+[ "$t69" -eq 0 ] && { echo "PASS T69-release-branch-push"; pass=$((pass+1)); } \
+  || fail=$((fail+1))
+
 echo "---"
 echo "gate_tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
