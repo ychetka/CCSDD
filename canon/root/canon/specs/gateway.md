@@ -85,6 +85,13 @@ not change the class.
   is a single atomic transaction that commits BEFORE the backend
   call - a transaction is never held open across the network, and
   concurrent callers can never lose or double-spend an increment.
+  Because the increment lands before the call, a caller killed
+  mid-flight (SIGKILL/OOM - no finally-block runs) would orphan the
+  spend: the `inflight` table therefore records
+  `{call_id, pid, keys}` before the network hop and clears it after;
+  every call first reaps rows whose pid is dead and refunds their
+  increments, so a hard-killed caller's quota is restored by the
+  next run instead of leaking.
   An unreadable/corrupt store is a fail-closed refusal until
   repaired, never a silent reset. The journal table is
   append-only: no UPDATE/DELETE path exists in `gw_store.py`.

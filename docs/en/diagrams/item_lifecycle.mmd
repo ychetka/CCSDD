@@ -32,7 +32,7 @@ flowchart LR
     INTG["integration run"]
     GIT["🔀 git agent<br/>candidate commit (sha)<br/>+ push + PR"]
     RVW{"🔍 review panel<br/>domain floors + domain signals<br/>aggregator APPROVE bound to head sha"}
-    MG{"merge gate<br/>isolated copy + expected_sha<br/>+ all domain signals + floors + green checks<br/>+ fragment issue: ↔ PR<br/>+ epic: all tasks closed"}
+    MG{"merge gate<br/>isolated copy + expected_sha<br/>+ all domain signals + floors + green checks<br/>+ fragment issue: ↔ PR<br/>+ epic: all tasks closed<br/>+ risk:high → 2 model families + 👨‍💻 envelope"}
     REL["release: merge to default<br/>version from .changes + tag<br/>(manual_gate waits for 👨‍💻 approve)"]
     INTG --> GIT --> RVW -->|APPROVED| MG --> REL
   end

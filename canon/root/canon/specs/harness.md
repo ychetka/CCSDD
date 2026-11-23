@@ -210,9 +210,11 @@ An immutable record of a human decision that affects a gate
   same envelope, so every check is identical: signature against
   `allowed_signers` (which lives OUTSIDE the workspace), the
   exact artifact/verdict binding, a 7-day freshness window and
-  nonce anti-replay (`canon/human_signoffs/.used_nonces`) — a
-  captured envelope cannot approve a different artifact, a
-  different verdict, or a second merge.
+  nonce anti-replay (`canon/human_signoffs/.used_nonces`, stored
+  per artifact: the same envelope re-presented for the same
+  artifact is an idempotent retry, for a different one - a
+  replay) — a captured envelope cannot approve a different
+  artifact, a different verdict, or a second merge.
 - Written into the instance STATE (managed mode) or into the cycle
   artifact journal (direct mode) — never passed as text through an
   LLM intermediary.
@@ -422,7 +424,14 @@ Principles:
   the whitelisted `verify_worktree.sh` script whose JSON report the
   director quotes verbatim; before merge the gate itself runs
   `verify_constraints.sh` + `verify_worktree.sh` on a detached
-  worktree of the PR tree.
+  worktree of the PR tree. Baseline verification is NETWORK-FREE
+  by default: the Python baseline imports the clean worktree via
+  `PYTHONPATH` instead of `pip install`, so no unpinned dependency
+  resolution and no candidate build backend (`setup.py`,
+  `pip install -e`) can execute during attestation. A deployed,
+  hash-pinned `canon/baseline_env.sh` MAY provide a prepared
+  environment; `VW_ALLOW_INSTALL=1` is a local/debug-only override
+  that normal gates never set.
 - **Kill-switch**: a STOP directive from the orchestrator is
   executed by the daemon: `bridge agent-kill --agent <agent_id>`
   sends cancel directly to the executor instance's runtime,
@@ -441,7 +450,10 @@ Principles:
   reviewer account declared in `project.json`
   (`review.reviewer_logins`, `review.reviewer_profiles` —
   per-identity `{gh_bin, model_family}` entries; `review.gh_bin`
-  remains the default profile) and by direct publication via
+  remains the default profile; a profile MAY be marked
+  `high_risk_only: true` so a second-family reviewer account
+  exists for `risk: high` changes without making its verdict
+  mandatory on ordinary PRs) and by direct publication via
   `panel_verdict.sh`/`repo_pr_review.sh` — the director can
   neither edit a verdict, nor filter its publication, nor approve
   its own PR. Domain reviewers never hold `repo_pr_review`: the
@@ -485,6 +497,14 @@ The version policy is fixed at roadmap approval, not at merge
   The field tolerates the natural forms - `issue: 10`, `issue: #10`,
   `issue: 10, 11` (several references), `issue: "10"` (quoted);
   parsers extract every number independently and never weld digits.
+  Optional `risk: high` on a fragment marks the change as
+  high-risk: the merge gate then requires approving verdicts from
+  reviewer profiles of AT LEAST TWO DISTINCT `model_family` values
+  (profiles flagged `high_risk_only` participate only here and are
+  not required for ordinary PRs) PLUS the human approval envelope
+  (same SSH-signature factor as `manual_gate`). A project whose
+  configured profiles expose a single family can never satisfy the
+  rule - `check_setup.sh` fails that configuration.
   Optional `manual_gate: true` on an
   item with `manual_gate` in the roadmap: `repo_merge.sh` blocks
   the merge (`status=blocked`, `failure_class=manual_gate`) until
@@ -565,12 +585,17 @@ The version policy is fixed at roadmap approval, not at merge
 
 0. **Repository bootstrap (deployment)**: `canon/bin/setup_repo.sh`
    is run once by the deployer (or the repository agent) per target
-   repository: it applies canonical branch protection on the base
-   branch (PR required, stale-review dismissal, no force pushes)
-   and deploys `.github/workflows/release.yml` — the serialized
-   `release-main` concurrency group that finalizes tags/releases
-   for merged `release/v*` PRs server-side, so two merges can never
-   race the version/tag order. The script resolves the repo from
+   repository: it deploys `.github/workflows/release.yml` FIRST —
+   the serialized `release-main` concurrency group that finalizes
+   tags/releases for merged `release/v*` PRs server-side, so two
+   merges can never race the version/tag order — and only then
+   applies canonical branch protection on the base branch (PR
+   required, stale-review dismissal, no force pushes). The order
+   matters: protection applied first would make the workflow
+   deploy PR unmergeable under its own new rules; when the base is
+   already protected the deploy falls back to a valid
+   `release/v0.0.0` bootstrap branch that merges through the
+   normal release flow. The script resolves the repo from
    `git remote`, requires gh credentials, and is idempotent.
 1. The arch committee designs the roadmap (items, types,
    dependencies, contracts, stack/FE-BE, G/W/T, risk flags, Design
@@ -665,7 +690,13 @@ The version policy is fixed at roadmap approval, not at merge
       the git agent opens it via `canon/bin/item_worktree.sh open
       --branch issue_<N>-<slug>` BEFORE the item starts (parallel
       executors never share a tree or index); the worktree lives at
-      <repo-parent>/.worktrees/<branch> and is removed together
+      <repo-parent>/.worktrees/<branch> and links `canon/` back to
+      the shared deployed canon - mutable per-item state
+      (`scope_whitelist`) therefore lives in the worktree's own
+      `.canon_scope_whitelist.txt`, because concurrent items would
+      race on one shared file; the ship gate refuses a worktree
+      without it instead of silently falling back to the shared
+      path. The worktree is removed together
       with the local branch by `item_worktree.sh close` once the
       item is merged or abandoned — remote branches/PRs remain the
       audit trail. Flow: scope plan > tests from G/W/T + code >
@@ -869,8 +900,13 @@ model families + developer confirmation before PR assembly.
   `it('[ITEM-12.GWT-3] returns 409 on duplicate')`. Mandatory rule;
   the coverage check greps ids from COMMITTED artifacts (the item's
   G/W/T scenarios are copied into `.changes/<slug>.md` or a
-  docs/specs requirement) — roadmap.md is not tracked in the repo
-  and is not available to CI.
+  docs/specs requirement) and, where a deployed
+  `canon/roadmap.md` exists, from the item's roadmap block as an
+  authoritative fallback — a scenario dropped from the fragment
+  cannot downgrade the gate to a SKIP. A bare mention is not
+  coverage: the id must sit inside a test definition (`def test_`,
+  `it(`, `test(`, `describe(`) without a skip/TODO marker in its
+  context — a comment or a skipped test does not count.
 - One test = one G/W/T scenario.
 - Mocks — at the contract boundary (HTTP clients, DB repositories
   via the module interface); a mock implements a type from

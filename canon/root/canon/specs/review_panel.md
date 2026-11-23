@@ -38,11 +38,17 @@ false-positive rate).
 A `gate_check` resolves to `canon/bin/<check>.sh` (taken from the
 BASE ref when canon is tracked, else from the deployed canon whose
 per-file sha is pinned by the deploy manifest - never the
-candidate's copy) or to a project argv from `gate_checks.<name>`
-in project.json. A check that resolves to nothing may be declared
-`gate_checks.<name>_optional: true` - an explicit opt-out recorded
-in config (verify then reports N/A instead of missing evidence);
-absent that flag an unresolved check fails closed.
+candidate's copy; before executing the deployed script `gate_run`
+re-verifies its bytes against `canon/canon_manifest.json` and
+refuses a drifted one) or to a project argv from
+`gate_checks.<name>` in project.json. A check that resolves to
+nothing may be declared `gate_checks.<name>_optional: true` - an
+explicit opt-out recorded in config (verify then reports N/A
+instead of missing evidence); absent that flag an unresolved check
+fails closed. The same rule holds INSIDE a check: a missing
+complexity tool (radon/lizard) fails `quality_check` unless
+`gate_checks.complexity_optional: true` is declared, and a radon
+`ERROR:` line (unparseable file) is a failure, never a pass.
 
 `canon/bin/gate_run.sh run --check <c> --candidate <sha>` requires
 HEAD==candidate and a clean tree, executes the check and appends a

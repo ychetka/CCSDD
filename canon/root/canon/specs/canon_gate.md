@@ -33,9 +33,12 @@ area) -> CANON_PUB (publication gate) -> CANON (immutable release)
   version inside the signed hash means an envelope cannot be
   replayed under a different release number; `ts` must sit inside a
   7-day freshness window and the nonce burns once — a stale or
-  replayed approval is not a current decision. `verify` runs before
-  publish and `consume` only after it lands, so a refused publish
-  does not strand the envelope. Without a valid envelope publication
+  replayed approval is not a current decision. The burn is recorded
+  per artifact: re-presenting the same envelope for the SAME
+  artifact after a downstream failure is an idempotent retry, while
+  the same nonce bound to a DIFFERENT artifact is a replay.
+  `verify` runs before publish and `consume` only after it lands,
+  so a refused publish does not strand the envelope. Without a valid envelope publication
   is rejected fail-closed — orchestrator self-publication of canon
   is impossible.
 - A canon release = a `canon-v<canon_version>` tag (a separate
