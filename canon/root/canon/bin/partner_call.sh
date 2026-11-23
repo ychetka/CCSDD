@@ -32,6 +32,7 @@
 # ~/.config/canon/mcp_config.json (args[0] -> dirname) or
 # PARTNER_IMPL_DIR env.
 set -euo pipefail
+export PYTHONDONTWRITEBYTECODE=1  # canon bin imports must not litter __pycache__
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 GATEWAY_DB="$CANON_DIR/gateway.db"
 POLICY="$CANON_DIR/config/policy.json"

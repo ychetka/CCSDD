@@ -62,6 +62,7 @@ cd "$SCRATCH/repo" && git init -q && git config user.email t@t && git config use
 cp "$CANON_DIR/bin/ship_commit.sh" "$CANON_DIR/bin/migration_gate.sh" \
    "$CANON_DIR/bin/migration_pattern.sh" "$CANON_DIR/bin/hygiene_check.sh" \
    "$CANON_DIR/bin/cycle_log.sh" "$CANON_DIR/bin/reader_digest.sh" \
+   "$CANON_DIR/bin/secret_scan.py" "$CANON_DIR/bin/md_anchors.py" \
    "$SCRATCH/canon/bin/"
 echo '{"text_language":"en"}' > "$SCRATCH/canon/project.json"
 
@@ -199,6 +200,7 @@ git reset -q; rm -f "$SCRATCH/canon/migration_ok" db/migrations/005_up.sql
 REPO2="$SCRATCH/repo2"; mkdir -p "$REPO2/canon/bin" "$REPO2/src" "$REPO2/db/migrations"
 cp "$CANON_DIR/bin/ship_commit.sh" "$CANON_DIR/bin/migration_gate.sh" \
    "$CANON_DIR/bin/migration_pattern.sh" "$CANON_DIR/bin/hygiene_check.sh" \
+   "$CANON_DIR/bin/secret_scan.py" "$CANON_DIR/bin/md_anchors.py" \
    "$REPO2/canon/bin/"
 echo '{"text_language":"en"}' > "$REPO2/canon/project.json"
 printf 'docs/\n' > "$REPO2/canon/scope_whitelist.txt"
@@ -621,7 +623,8 @@ for f in gate_run panel_verdict panel_gate spec_anchor_check docs_check \
          security_check quality_check fidelity_check hygiene_check gh_id; do
   cp "$CANON_DIR/bin/$f.sh" "$PANEL_DIR/canon/bin/"
 done
-cp "$CANON_DIR/bin/secret_scan.py" "$PANEL_DIR/canon/bin/"
+cp "$CANON_DIR/bin/secret_scan.py" "$CANON_DIR/bin/md_anchors.py" \
+   "$CANON_DIR/bin/gw_store.py" "$PANEL_DIR/canon/bin/"
 cp "$CANON_DIR/forge/test.sh" "$CANON_DIR/forge/github.sh" \
    "$CANON_DIR/forge/gitlab.sh" "$PANEL_DIR/canon/forge/"
 cp "$CANON_DIR/config/review_panel.json" "$PANEL_DIR/canon/config/"

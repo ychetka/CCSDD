@@ -8,6 +8,7 @@
 # trick can smuggle content under an exempt path.
 # Exit 0 = clean. Exit 1 = violations JSON.
 set -uo pipefail
+export PYTHONDONTWRITEBYTECODE=1  # canon bin imports must not litter __pycache__
 
 # canon may sit outside the git toplevel - resolve it from the
 # script's own location so callers running from $TOP still find config.
@@ -101,21 +102,25 @@ rules = [
      "tool sign-off - remove it"),
     (r"\b(devin|claude|copilot|chatgpt|gpt-\d|gemini|swe-\d)[\w.-]*\s*<", "attribution",
      "tool name in author/trailer line"),
-    (r"-----BEGIN [A-Z ]*PRIVATE KEY-----", "secret",
-     "private key material"),
-    (r"(ghp_|gho_|ghu_|ghs_|ghr_|github_pat_)[A-Za-z0-9_]{20,}", "secret",
-     "GitHub token pattern"),
-    # The s" "k- split keeps the literal "sk-" out of this file's own
-    # source (the gate would flag itself). BOTH halves must be raw
-    # strings: a non-raw literal would compile \b to a backspace and
-    # silently kill the alternatives (issue #88 review finding).
-    # \b anchors + length floors: "task-terminal" no longer trips the
-    # sk- rule, and xox/AKIA cannot match mid-word noise.
-    (r"(\bs" r"k-[A-Za-z0-9_-]{16,}|\bxox[baprs]-[A-Za-z0-9-]{10,}|\bAKIA[0-9A-Z]{16})", "secret",
-     "API key pattern"),
-    (r"(?i)(password|passwd|secret|api[_-]?key)\s*[:=]\s*['\"]?[^\s'\"]{8,}", "secret",
-     "credential assignment"),
 ]
+
+# Secret detection is DELEGATED to canon/bin/secret_scan.py - the
+# single canonical pattern set. A second regex table here drifted
+# before (sk-{16} vs {20}, missing bearer rule); one scanner keeps
+# both boundaries identical by construction.
+try:
+    # canon dir = dirname(HYGIENE_PJ) (project.json's parent);
+    # this heredoc has no __file__ and CANON_DIR is not exported.
+    _canon = os.path.dirname(os.environ.get("HYGIENE_PJ", ""))
+    sys.path.insert(0, os.path.join(_canon, "bin"))
+    import secret_scan as _ss
+    SECRET_PATTERNS = _ss.PATTERNS
+    SECRET_PLACEHOLDER = _ss.PLACEHOLDER_RE
+except Exception as _ie:
+    # Fail-closed: an unimportable scanner must never read as "no
+    # secrets found".
+    sys.exit(f"hygiene_check: cannot import canon/bin/secret_scan.py: {_ie}")
+rules += [(p, "secret", lbl) for p, lbl in SECRET_PATTERNS]
 
 # Placeholder values never count as a credential assignment:
 # 'api_key: your_key_here' in docs must not block the gate.
@@ -194,11 +199,13 @@ for i, (line, path) in enumerate(items(), 1):
                 and path.startswith("canon/")):
             continue
         m = re.search(pattern, line, re.IGNORECASE)
-        if m and "credential assignment" in hint:
+        if m and "credential" in hint and "assignment" in hint:
             # Value after : or = - placeholders are documentation,
-            # not leaked credentials.
+            # not leaked credentials. Secret-class rules use the
+            # canonical scanner's placeholder set.
             val = re.split(r"[:=]", m.group(0), 1)[-1].strip().strip("'\"")
-            if PLACEHOLDER_RE.match(val):
+            _ph = SECRET_PLACEHOLDER if cls == "secret" else PLACEHOLDER_RE
+            if _ph.match(val):
                 continue
         if m:
             hit(cls, pattern, i, hint, path)

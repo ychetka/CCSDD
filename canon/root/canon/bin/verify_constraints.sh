@@ -237,7 +237,17 @@ PROT_CHANGED=$( { git -c core.quotepath=false diff --name-only --diff-filter=ACM
 # Boundary-correct secret detection: 'token' as a bare substring
 # false-flags tokenizer.py - require it as a basename or separated
 # word, and cover the canonical secret filenames.
-SECRETS=$(printf '%s' "$CHANGED" | grep -iE '\.(env|pem|key|pat|p12|pfx)$|(^|/)(\.env\..*|\.?env|\.envrc|ENV|id_rsa|id_dsa|id_ecdsa|id_ed25519|\.aws/credentials|\.npmrc|\.pypirc|\.netrc|secrets?|tokens?|credentials?|api_?key)$|(^|/)[^/]*[_.-]?(token|secret|credentials?|apikey|api_key)[_.-][^/]*$|(^|/)[^/]*(token|secret)s?\.(txt|json|ya?ml)$' || true)
+SECRETS=$(printf '%s' "$CHANGED" | grep -iE '\.(env|pem|key|pat|p12|pfx)$|(^|/)(\.env\..*|\.?env|\.envrc|ENV|id_rsa|id_dsa|id_ecdsa|id_ed25519|\.aws/credentials|\.npmrc|\.pypirc|\.netrc|secrets?|tokens?|credentials?|api_?key)$|(^|/)[^/]*(token|secret)s?\.(txt|json|ya?ml)$' || true)
+# Generic word-boundary secret names (token_*, *_secret, api_key.*)
+# apply only to NON-source extensions: token_service.py,
+# jwt_token_parser.go, secret_scan.py are legitimate code modules -
+# their CONTENTS still get scanned for literals by hygiene_check and
+# security_check, so no coverage is lost.
+GENERIC=$(printf '%s' "$CHANGED" \
+  | grep -iE '(^|/)[^/]*[_.-]?(token|secret|credentials?|apikey|api_key)[_.-][^/]*$' \
+  | grep -viE '\.(py|pyi|ts|tsx|js|jsx|mjs|cjs|go|rs|java|rb|php|c|cc|cpp|cxx|h|hpp|cs|sh|bash|zsh|md|markdown|rst|swift|kt|kts|scala|lua|pl|pm|ex|exs|erl|hrl|hs|ml|mli|fs|fsx|vb|dart|vue|svelte|sol|zig|nim|cr|clj|cljs|r|jl|ipynb)$' \
+  || true)
+[ -n "$GENERIC" ] && SECRETS="${SECRETS:+$SECRETS }$GENERIC"
 if [ -n "$SECRETS" ]; then
   fail "secret/sensitive files in change: $SECRETS" \
        "unstage immediately - secrets never enter the repository"
@@ -343,7 +353,7 @@ fi
 #    true local-only canon state is covered by .gitignore, so a new
 #    untracked canon canon file still surfaces here)
 UNTRACKED=$(git status --porcelain | sed -n 's/^?? //p' \
-            | grep -vE '(^|/)\.?scope_whitelist\.txt$|(^|/)migration_rollforward\.md$|(^|/)canon/[^/]*\.(lock|tmp)$' || true)
+            | grep -vE '(^|/)\.?scope_whitelist\.txt$|(^|/)migration_rollforward\.md$|(^|/)canon/[^/]*\.(lock|tmp)$|(^|/)canon/.*\.pyc$|(^|/)canon/.*/__pycache__/' || true)
 [ -z "$UNTRACKED" ] \
   && pass "tree clean (no untracked)" \
   || fail "untracked files present" "commit intended ones, remove leftovers"

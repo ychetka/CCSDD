@@ -89,7 +89,10 @@ import json, os, re, sys
 ver = os.environ["VER"]
 candidates = [
     ("pyproject.toml", r'(?ms)(^\[project\](?:(?!^\[).)*?^\s*version\s*=\s*["\'])([^"\']+)(["\'])'),
-    ("package.json",   r'("version"\s*:\s*")([^"]+)(")'),
+    # package.json: anchor the key at top-level indent so a nested
+    # "version" (engines/plugin config) can never shadow the root
+    # field - and verify the write with json.loads afterwards.
+    ("package.json",   r'(?m)^([ \t]{1,4}"version"\s*:\s*")([^"]+)(")'),
     ("Cargo.toml",     r'(?ms)(^\[package\](?:(?!^\[).)*?^\s*version\s*=\s*["\'])([^"\']+)(["\'])'),
 ]
 for path, pat in candidates:
@@ -100,6 +103,15 @@ for path, pat in candidates:
     if not m:
         continue
     new = body[:m.start(2)] + ver + body[m.end(2):]
+    if path == "package.json":
+        # Structural post-check: the ROOT version must read back as
+        # the value written - a regex hit inside a nested block is a
+        # miss, not a silent write.
+        try:
+            if json.loads(new).get("version") != ver:
+                continue
+        except Exception:
+            continue
     open(path, "w", encoding="utf-8").write(new)
     print(path)
     sys.exit(0)

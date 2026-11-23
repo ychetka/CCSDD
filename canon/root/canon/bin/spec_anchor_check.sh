@@ -13,6 +13,7 @@
 #                    blob and exports the live canon dir)
 # Exit: 0 pass / 1 violations / 2 usage. Violations print on stdout.
 set -uo pipefail
+export PYTHONDONTWRITEBYTECODE=1  # canon bin imports must not litter __pycache__
 CANON_DIR="${CANON_DIR:-$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)}"
 TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 2; }
 cd -P "$TOP"
@@ -167,41 +168,43 @@ fi
 # must exist under docs/specs/ in the working tree after the
 # change; removes targets must be gone (file or anchor) and must
 # have existed at the base.
-TOP="$TOP" PENDING_FRAGS="$PENDING_FRAGS" BASE="$BASE" BASE_REF="$BASE_REF" python3 - <<'PY'
+TOP="$TOP" PENDING_FRAGS="$PENDING_FRAGS" BASE="$BASE" BASE_REF="$BASE_REF" CANON_DIR="$CANON_DIR" python3 - <<'PY'
 import os, re, subprocess, sys
 top = os.environ["TOP"]
 base_ref = os.environ.get("BASE_REF") or ""
 frags = [l.strip() for l in os.environ.get("PENDING_FRAGS","").splitlines() if l.strip()]
 bad = []
 
-def gh_anchor(heading):
-    # GitHub-style anchor: lowercase, drop punctuation, spaces->dash.
-    # An explicit '{#custom-id}' marker is NOT part of the slug -
-    # same contract as docs_check.sh (the id is collected as its own
-    # anchor by collect_anchors).
-    heading = re.sub(r"\{#[^}]+\}", "", heading)
-    return re.sub(r"[^\w\- ]", "", heading.strip().lower()).replace(" ", "-")
-
-def strip_fenced(body):
-    # headings inside fenced blocks (``` and ~~~) are not real
-    # anchors - same fence set as docs_check.sh.
-    body = re.sub(r"```[\s\S]*?```", "", body)
-    return re.sub(r"~~~[\s\S]*?~~~", "", body)
-
-def collect_anchors(body):
-    # Full anchor set of a markdown body: GitHub-style heading slugs
-    # (with -1/-2 duplicate suffixes), <a name|id="x"> and {#id}.
-    anchors = set()
-    seen = {}
-    for l in body.splitlines():
-        if l.startswith("#"):
-            h = gh_anchor(l.lstrip("# ").strip())
-            n = seen.get(h, 0)
-            seen[h] = n + 1
-            anchors.add(h if n == 0 else "%s-%d" % (h, n))
-    anchors |= set(re.findall(r'(?:name|id)\s*=\s*["\']([^"\']+)["\']', body))
-    anchors |= set(re.findall(r"\{#([^}\s]+)\}", body))
-    return {a.lower() for a in anchors}
+# Slugger/anchor logic is shared with docs_check.sh via
+# canon/bin/md_anchors.py - one implementation for every markdown
+# gate (drifted before: fence sets, {#id} handling, titled links).
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.join(_os.environ.get("CANON_DIR", ""), "bin"))
+try:
+    import md_anchors as _md
+    gh_anchor, collect_anchors = _md.gh_anchor, _md.collect_anchors
+    strip_fenced = _md.strip_fenced
+except Exception:
+    # Inline fallback keeps the check runnable on stripped deploys;
+    # the canonical module is the source of truth.
+    def gh_anchor(heading):
+        heading = re.sub(r"\{#[^}]+\}", "", heading)
+        return re.sub(r"[^\w\- ]", "", heading.strip().lower()).replace(" ", "-")
+    def strip_fenced(body):
+        body = re.sub(r"```[\s\S]*?```", "", body)
+        return re.sub(r"~~~[\s\S]*?~~~", "", body)
+    def collect_anchors(body):
+        anchors = set()
+        seen = {}
+        for l in body.splitlines():
+            if l.startswith("#"):
+                h = gh_anchor(l.lstrip("# ").strip())
+                n = seen.get(h, 0)
+                seen[h] = n + 1
+                anchors.add(h if n == 0 else "%s-%d" % (h, n))
+        anchors |= set(re.findall(r'(?:name|id)\s*=\s*["\']([^"\']+)["\']', body))
+        anchors |= set(re.findall(r"\{#([^}\s]+)\}", body))
+        return {a.lower() for a in anchors}
 
 def anchor_resolves(path, anchor):
     if not os.path.isfile(path):

@@ -37,11 +37,27 @@ if [ -z "$CHANGED" ]; then
 elif command -v radon >/dev/null 2>&1; then
   PYFILES=$(printf '%s\n' "$CHANGED" | grep '\.py$' || true)
   if [ -n "$PYFILES" ]; then
-    HOT=$(printf '%s\n' "$PYFILES" | tr '\n' '\0' | xargs -0 radon cc -s -n C 2>/dev/null | grep -E ' - [DEF]\(' || true)
+    # py_compile first: radon emits 'ERROR: <file>' on unparseable
+    # input, which the rank grep would silently read as "no D+ block"
+    # -> a syntax-broken file would PASS. Both must fail the gate.
+    BADSYNTAX=$(printf '%s\n' "$PYFILES" | tr '\n' '\0' \
+      | xargs -0 -I{} sh -c 'python3 -m py_compile "{}" 2>/dev/null || echo "{}"' || true)
+    RADON_OUT=$(printf '%s\n' "$PYFILES" | tr '\n' '\0' | xargs -0 radon cc -s -n C 2>/dev/null || true)
+    RADON_ERR=$(printf '%s\n' "$RADON_OUT" | grep -E '^ERROR:' || true)
+    HOT=$(printf '%s\n' "$RADON_OUT" | grep -E ' - [DEF]\(' || true)
+    if [ -n "$BADSYNTAX" ]; then
+      printf '%s\n' "$BADSYNTAX" | head -10 | sed 's/^/  syntax: /'
+      echo "FAIL: unparseable .py in changed files"; fails=$((fails+1))
+    fi
+    if [ -n "$RADON_ERR" ]; then
+      printf '%s\n' "$RADON_ERR" | head -10 | sed 's/^/  radon: /'
+      echo "FAIL: radon could not analyze changed files"; fails=$((fails+1))
+    fi
     if [ -n "$HOT" ]; then
       printf '%s\n' "$HOT" | head -20 | sed 's/^/  complexity: /'
       echo "FAIL: cyclomatic complexity rank D+ in changed files"; fails=$((fails+1))
-    else
+    fi
+    if [ -z "$BADSYNTAX" ] && [ -z "$RADON_ERR" ] && [ -z "$HOT" ]; then
       echo "PASS: radon cyclomatic complexity (no rank D+ blocks)"
     fi
   else
@@ -56,7 +72,18 @@ elif command -v lizard >/dev/null 2>&1; then
     echo "PASS: lizard complexity thresholds"
   fi
 else
-  echo "SKIP: no metrics tool found (radon/lizard) - complexity floor unconfigured"
+  # No metrics tool: a bare SKIP reads as a pass. On a repo that HAS
+  # changed source files, require the project to declare the floor
+  # optional explicitly - silence is not consent.
+  OPT=$(PJ="$PJ" python3 -c 'import json,os
+try: print("yes" if (json.load(open(os.environ["PJ"])).get("gate_checks") or {}).get("complexity_optional") is True else "no")
+except Exception: print("no")' 2>/dev/null)
+  if [ -n "$CHANGED" ] && [ "$OPT" != "yes" ]; then
+    echo "FAIL: no complexity tool (radon/lizard) and gate_checks.complexity_optional not declared - the floor is unconfigured, not passed"
+    fails=$((fails+1))
+  else
+    echo "SKIP: no metrics tool found (radon/lizard) - complexity floor unconfigured"
+  fi
 fi
 
 [ $fails -eq 0 ] && { echo "QUALITY_CHECK: PASS"; exit 0; }

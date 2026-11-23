@@ -8,6 +8,7 @@
 #   (repo doc linters run as a separate RUNNER=project check.)
 # CANON_DIR env is honored (gate_run executes the base-ref blob).
 set -uo pipefail
+export PYTHONDONTWRITEBYTECODE=1  # canon bin imports must not litter __pycache__
 CANON_DIR="${CANON_DIR:-$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)}"
 TOP=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
 cd -P "$TOP"
@@ -15,9 +16,24 @@ PJ="$CANON_DIR/project.json"
 fails=0
 
 # --- 1. markdown relative links + anchors ---
-LINK_BAD=$(TOP="$TOP" python3 - <<'PY'
-import os, re, urllib.parse
+LINK_BAD=$(TOP="$TOP" CANON_DIR="$CANON_DIR" python3 - <<'PY'
+import os, re, sys, urllib.parse
 top = os.environ["TOP"]
+# Slugger/anchor logic is shared with spec_anchor_check.sh via
+# canon/bin/md_anchors.py - one implementation for every markdown
+# gate (drifted before: fence sets, {#id} handling, titled links).
+sys.path.insert(0, os.path.join(os.environ.get("CANON_DIR", ""), "bin"))
+try:
+    import md_anchors as _md
+    gh_anchor, strip_nonlink = _md.gh_anchor, _md.strip_nonlink
+except Exception:
+    def strip_nonlink(body):
+        body = re.sub(r"```[\s\S]*?```", "", body)
+        body = re.sub(r"~~~[\s\S]*?~~~", "", body)
+        return re.sub(r"`[^`\n]+`", "", body)
+    def gh_anchor(h):
+        h = re.sub(r"\{#[^}]+\}", "", h)
+        return re.sub(r"[^\w\- ]", "", h.strip().lower()).replace(" ", "-")
 bad = []
 md_files = []
 for root, dirs, files in os.walk(top):
@@ -27,21 +43,6 @@ for root, dirs, files in os.walk(top):
     for f in files:
         if f.endswith(".md"):
             md_files.append(os.path.join(root, f))
-
-def strip_nonlink(body):
-    # Fenced blocks (``` and ~~~) and inline code spans are literal
-    # text - a `[a](b)` inside a code example is not a live link.
-    body = re.sub(r"```[\s\S]*?```", "", body)
-    body = re.sub(r"~~~[\s\S]*?~~~", "", body)
-    body = re.sub(r"`[^`\n]+`", "", body)
-    return body
-
-def gh_anchor(h):
-    # Drop an explicit {#id} marker from the header text first - the
-    # GitHub slug of 'Req foo {#req-foo}' is 'req-foo-req-foo', while
-    # the custom id is a separate anchor (collected below).
-    h = re.sub(r"\{#[^}]+\}", "", h)
-    return re.sub(r"[^\w\- ]", "", h.strip().lower()).replace(" ", "-")
 
 def anchors_of(path):
     try:

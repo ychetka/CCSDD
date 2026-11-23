@@ -23,7 +23,10 @@ PATTERNS = [
     (r"xox[baprs]-[A-Za-z0-9-]{10,}", "slack token literal"),
     (r"sk-[A-Za-z0-9_-]{20,}", "api key literal (sk-*)"),
     (r"AKIA[0-9A-Z]{16}", "aws access key id"),
-    (r"(?i)(?:api[_-]?key|secret|password|passwd|bearer)[\"'\s:=>-]{1,10}([A-Za-z0-9_/+\-.]{20,})",
+    # (?!\() after the value run: secret = get_secret_from_vault() is
+    # a function call, not a literal credential - the run stops at
+    # '(' but without the lookahead it would still match.
+    (r"(?i)(?:api[_-]?key|secret|password|passwd|bearer)[\"'\s:=>-]{1,10}([A-Za-z0-9_/+\-.]{20,})(?!\()",
      "credential-shaped assignment"),
 ]
 

@@ -22,7 +22,7 @@ fi
 # set as gate_run.sh's DIRTY regex: journals, fixtures, signoff
 # stores, locks and temp files.
 DIRTY=$(git status --porcelain | grep -vE \
-  'canon/(gate_runs\.jsonl.*|cycle_log\.jsonl.*|actors\.json.*|panel_signals_fixture\.json.*|panel_comments_fixture\.jsonl.*|release_history\.jsonl.*|human_signoffs/|quota_park\.json.*|gateway|harness_log\.jsonl.*|migration_ok|scope_whitelist\.txt|canon_manifest\.json|.*\.(lock|tmp))' \
+  'canon/(gate_runs\.jsonl.*|cycle_log\.jsonl.*|actors\.json.*|panel_signals_fixture\.json.*|panel_comments_fixture\.jsonl.*|release_history\.jsonl.*|human_signoffs/|quota_park\.json.*|gateway|harness_log\.jsonl.*|migration_ok|scope_whitelist\.txt|canon_manifest\.json|.*\.(lock|tmp))|.*__pycache__/.*|.*\.pyc' \
   | grep -c . || true)
 if [ "${DIRTY:-0}" -gt 0 ]; then
   echo "PUSH BLOCKED: uncommitted or untracked changes present" >&2

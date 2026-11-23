@@ -30,6 +30,7 @@
 # the command runs inside the detached baseline worktree only, under
 # a 600s timeout, and env setup prefers --ignore-scripts installs.
 set -uo pipefail
+export PYTHONDONTWRITEBYTECODE=1  # canon bin imports must not litter __pycache__
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
 cd -P "$TOP"

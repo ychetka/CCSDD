@@ -42,7 +42,47 @@ if ! gh auth status >/dev/null 2>&1 && [ -z "${GH_TOKEN:-}" ]; then
   exit 1
 fi
 
-# --- 1. branch protection -------------------------------------------------
+# --- 1. canonical release workflow ----------------------------------------
+# Deployed BEFORE branch protection: on an unprotected base the file
+# lands directly; on an already-protected base the bootstrap goes
+# through a release/v0.0.0 branch, the ONLY branch name the merge
+# gates can legally land (a canon/bootstrap-* PR can never merge
+# under its own rules - no issue, no fragment, wrong name).
+CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+WF=$(cat "$CANON_DIR/templates/release_workflow.yml")
+HAVE_WF=$(gh api "repos/$REPO/contents/.github/workflows/release.yml" \
+            --jq .sha 2>/dev/null || true)
+if [ -n "$HAVE_WF" ]; then
+  echo "setup_repo: release.yml already deployed (sha ${HAVE_WF:0:8}) - update via normal PR flow"
+else
+  echo "setup_repo: deploying .github/workflows/release.yml"
+  if [ -z "$DRY" ]; then
+    B64=$(printf '%s' "$WF" | base64 | tr -d '\n')
+    if gh api -X PUT "repos/$REPO/contents/.github/workflows/release.yml" \
+      -f message="canon: serialized release workflow" \
+      -f content="$B64" -f branch="$BASE" >/dev/null 2>&1; then
+      echo "setup_repo: release.yml committed directly to $BASE"
+    else
+      # Base already protected -> release-shaped bootstrap branch.
+      BASE_SHA=$(gh api "repos/$REPO/git/refs/heads/$BASE" --jq .object.sha) \
+        || { echo "setup_repo: cannot read base ref" >&2; exit 1; }
+      gh api -X POST "repos/$REPO/git/refs" \
+        -f ref="refs/heads/release/v0.0.0" -f sha="$BASE_SHA" \
+        >/dev/null 2>&1 || true   # exists already - fine
+      gh api -X PUT "repos/$REPO/contents/.github/workflows/release.yml" \
+        -f message="canon: serialized release workflow" \
+        -f content="$B64" -f branch="release/v0.0.0" >/dev/null \
+        || { echo "setup_repo: workflow deploy failed" >&2; exit 1; }
+      gh pr create --repo "$REPO" --head release/v0.0.0 --base "$BASE" \
+        --title "release: v0.0.0" \
+        --body "Deploys the canonical release-main concurrency group (bootstrap release)." 2>/dev/null \
+        && echo "setup_repo: bootstrap release PR opened - merge via the normal release flow" \
+        || echo "setup_repo: branch pushed (PR may already exist)"
+    fi
+  fi
+fi
+
+# --- 2. branch protection -------------------------------------------------
 # required_status_checks: PRESERVE whatever is already required -
 # sending null would silently drop the branch's existing CI gates.
 EXISTING_CHECKS=$(gh api "repos/$REPO/branches/$BASE/protection" \
@@ -96,36 +136,6 @@ if not r.get("dismiss_stale_reviews") \
              "applied settings do not match the canonical payload")' \
     && echo "setup_repo: protection applied and verified" \
     || exit 1
-fi
-
-# --- 2. canonical release workflow ---------------------------------------
-CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
-WF=$(cat "$CANON_DIR/templates/release_workflow.yml")
-HAVE_WF=$(gh api "repos/$REPO/contents/.github/workflows/release.yml" \
-            --jq .sha 2>/dev/null || true)
-if [ -n "$HAVE_WF" ]; then
-  echo "setup_repo: release.yml already deployed (sha ${HAVE_WF:0:8}) - update via normal PR flow"
-else
-  echo "setup_repo: deploying .github/workflows/release.yml"
-  if [ -z "$DRY" ]; then
-    # Protected base forbids a direct push - bootstrap via a branch.
-    BASE_SHA=$(gh api "repos/$REPO/git/refs/heads/$BASE" --jq .object.sha) \
-      || { echo "setup_repo: cannot read base ref" >&2; exit 1; }
-    gh api -X POST "repos/$REPO/git/refs" \
-      -f ref="refs/heads/canon/bootstrap-release" -f sha="$BASE_SHA" \
-      >/dev/null 2>&1 || true   # exists already - fine
-    # macOS base64 has no -w flag - tr-fold is the portable form.
-    B64=$(printf '%s' "$WF" | base64 | tr -d '\n')
-    gh api -X PUT "repos/$REPO/contents/.github/workflows/release.yml" \
-      -f message="canon: serialized release workflow" \
-      -f content="$B64" -f branch="canon/bootstrap-release" >/dev/null \
-      || { echo "setup_repo: workflow deploy failed" >&2; exit 1; }
-    gh pr create --repo "$REPO" --head canon/bootstrap-release --base "$BASE" \
-      --title "canon: serialized release workflow" \
-      --body "Deploys the canonical release-main concurrency group." 2>/dev/null \
-      && echo "setup_repo: bootstrap PR opened - merge it to activate RoM serialization" \
-      || echo "setup_repo: branch pushed (PR may already exist)"
-  fi
 fi
 
 # --- 3. canonical project.json block --------------------------------------

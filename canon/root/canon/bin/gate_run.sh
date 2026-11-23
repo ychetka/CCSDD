@@ -173,7 +173,7 @@ HEAD=$(git rev-parse HEAD 2>/dev/null)
 # bookkeeping, not candidate content - in tracked-canon test
 # fixtures they would otherwise dirty the tree reflexively.
 DIRTY=$(git status --porcelain 2>/dev/null | grep -v -E \
-  'canon/(gate_runs\.jsonl.*|cycle_log\.jsonl.*|actors\.json.*|panel_signals_fixture\.json.*|panel_comments_fixture\.jsonl.*|release_history\.jsonl.*|human_signoffs/|quota_park\.json.*|gateway|harness_log\.jsonl.*|migration_ok|scope_whitelist\.txt|canon_manifest\.json|.*\.(lock|tmp))' \
+  'canon/(gate_runs\.jsonl.*|cycle_log\.jsonl.*|actors\.json.*|panel_signals_fixture\.json.*|panel_comments_fixture\.jsonl.*|release_history\.jsonl.*|human_signoffs/|quota_park\.json.*|gateway|harness_log\.jsonl.*|migration_ok|scope_whitelist\.txt|canon_manifest\.json|.*\.(lock|tmp))|.*__pycache__/.*|.*\.pyc' \
   || true)
 [ -z "$DIRTY" ] || { echo "gate_run: dirty worktree - refuse to attest" >&2; printf '%s\n' "$DIRTY" >&2; exit 1; }
 

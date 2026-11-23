@@ -18,11 +18,30 @@ done
 
 echo "== agent audit =="
 if [ -f "$LOG" ]; then
-  echo "agent_calls=$(grep -c . "$LOG")"
-  echo "commits=$(grep -c '"action": *"commit"' "$LOG")"
-  echo "failures=$(grep -c '"verdict": *"failure"' "$LOG")"
-  echo "escalations=$(grep -c '"verdict": *"escalated"' "$LOG")"
-  echo "unknown_failure_class=$(grep -c '"failure_class": *"unknown"' "$LOG")"
+  # Structured JSONL counting - a compact serializer (no space after
+  # ':') or an escaped '"action": "commit"' inside another field's
+  # string value would fool a plain grep -c.
+  LOG="$LOG" python3 - <<'PY'
+import json, os
+n = dict.fromkeys(
+    ("agent_calls","commits","failures","escalations",
+     "unknown_failure_class"), 0)
+for ln in open(os.environ["LOG"], encoding="utf-8", errors="replace"):
+    ln = ln.strip()
+    if not ln:
+        continue
+    n["agent_calls"] += 1
+    try:
+        e = json.loads(ln)
+    except Exception:
+        continue
+    if e.get("action") == "commit":       n["commits"] += 1
+    if e.get("verdict") == "failure":     n["failures"] += 1
+    if e.get("verdict") == "escalated":   n["escalations"] += 1
+    if e.get("failure_class") == "unknown": n["unknown_failure_class"] += 1
+for k, v in n.items():
+    print(f"{k}={v}")
+PY
 else
   echo "cycle_log: missing"
 fi
