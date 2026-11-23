@@ -298,12 +298,13 @@ S="${FAKEGH_STATE:?}"
 if [ "${1:-}" = "pr" ] && [ "${2:-}" = "merge" ]; then
   printf '%s\n' "$*" >> "$S/merge_calls"
 fi
-METHOD=""; JQ=""; INPUT_F=""; ARGS=()
+METHOD=""; JQ=""; INPUT_F=""; PR_BODY=""; ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --jq) JQ="$2"; shift 2 ;;
     --paginate|--squash|--merge|--rebase|--delete-branch|--auto|--draft) shift ;;
-    --match-head-commit|--subject|--body|-t|-b|-X) [ "$1" = "-X" ] && METHOD="$2"; shift 2 ;;
+    --body) PR_BODY="$2"; shift 2 ;;
+    --match-head-commit|--subject|-t|-b|-X) [ "$1" = "-X" ] && METHOD="$2"; shift 2 ;;
     --input) INPUT_F="$2"; [ "$INPUT_F" = "-" ] && cat > "$S/post_body"; shift 2 ;;
     --json|--fields|--field|-f|-F|-H) shift 2 ;;
     *) ARGS+=("$1"); shift ;;
@@ -342,7 +343,7 @@ print(json.dumps({"contexts": json.load(open(sys.argv[1]))}))' "$S/protection_co
     case "${2:-}" in
       view) RAW=$(cat "$S/pr_view.json") ;;
       list) RAW='[]' ;;
-      create) RAW='"https://example/pr/7"' ;;
+      create) printf '%s\n' "${PR_BODY:-}" >> "$S/create_bodies"; RAW='https://example/pr/7' ;;
       merge)
         if [ "${FAKEGH_MERGE_FAIL:-0}" = "1" ]; then
           echo "the pull request is not mergeable" >&2; exit 1
@@ -959,6 +960,24 @@ expect F1-rollforward-docs-path 0 $?
   && rm db/migrations/002_up.sql && git add -A \
   && canon/bin/migration_gate.sh --check) >"$SCRATCH/out" 2>&1
 expect F2-no-note-blocked 1 $?
+
+# ---------- PO: repo_pr_open Includes #M for '---'-free fragments --
+# A fragment WITHOUT front-matter fences is valid canon; its issue:
+# must still surface as an 'Includes #M' body line (audit #11).
+(cd "$WS" && git checkout -q -b issue_88-po main \
+  && mkdir -p .changes \
+  && printf 'bump: patch\nuser_visible: "true"\nissue: 90\n\nfix\n\n## Spec impact\n- none\n' \
+       > .changes/task-90.md \
+  && git add -A && git commit -qm "po work")
+: > "$GHSTATE/create_bodies"
+(cd "$WS" && env FAKEGH_REPO="$WS" FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
+       canon/bin/repo_pr_open.sh --branch issue_88-po --base main \
+       --issue 88 --title "epic" --body "epic body") >"$SCRATCH/out" 2>&1
+expect PO1-open-ok 0 $? '"status": "ok"'
+grep -q "Includes #90" "$GHSTATE/create_bodies" \
+  && { echo "PASS PO2-includes-nofences"; pass=$((pass+1)); } \
+  || { echo "FAIL PO2-includes-nofences: $(cat "$GHSTATE/create_bodies")"; fail=$((fail+1)); }
+(cd "$WS" && git checkout -q main)
 
 echo "---"
 echo "pipeline_tests: $pass passed, $fail failed"

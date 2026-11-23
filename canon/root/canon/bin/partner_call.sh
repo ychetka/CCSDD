@@ -126,7 +126,13 @@ try:
     _preg = json.load(open(os.environ["PARTNERS_CFG"], encoding="utf-8"))
     AUDIT_PARTNERS = {rid for rid, r in (_preg.get("roles") or {}).items()
                       if isinstance(r, dict) and r.get("profile") == "Audit"}
-except Exception:
+except Exception as e:
+    if os.path.isfile(os.environ["PARTNERS_CFG"]):
+        # The registry EXISTS but is corrupt: a silent fallback would
+        # misclassify audit calls as consults - fail closed.
+        print(f"partner_call: REFUSED - partners.json unreadable: {e}",
+              file=sys.stderr)
+        sys.exit(3)
     AUDIT_PARTNERS = {p for p in (partner,) if p.startswith("ex-")}
 call_class = "audit" if partner in AUDIT_PARTNERS else "consult"
 if req_class == "audit":
@@ -192,7 +198,13 @@ from core.server import PartnerMCPServer  # noqa: E402
 try:
     _gw = (json.load(open(os.environ["POLICY"], encoding="utf-8"))
            .get("gateway") or {})
-except Exception:
+except Exception as e:
+    if os.path.isfile(os.environ["POLICY"]):
+        # Corrupt policy would silently reset all quota limits to
+        # hardcoded defaults - fail closed instead.
+        print(f"partner_call: REFUSED - policy.json unreadable: {e}",
+              file=sys.stderr)
+        sys.exit(3)
     _gw = {}
 audit_max = int(os.environ.get("GATEWAY_AUDIT_MAX",
                                _gw.get("audit_max_per_key", 20)))

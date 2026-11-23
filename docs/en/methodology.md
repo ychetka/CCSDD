@@ -205,8 +205,9 @@ sha256 map), *deployed-not-tracked* canon, release fencing via
 ### From supply-chain security (SLSA / in-toto / Sigstore patterns)
 
 **Taken:** hash-pinned content, attestation-style envelopes binding a
-decision to an artifact digest, per-deploy canary tokens, HMAC-signed
-human approvals with the key held outside the workspace.
+decision to an artifact digest, per-deploy canary tokens, SSH-signed
+(ssh-sig) human approvals with the private key held outside the
+workspace.
 
 ### From financial controls (four-eyes / maker–checker)
 

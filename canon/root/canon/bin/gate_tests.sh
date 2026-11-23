@@ -711,6 +711,57 @@ EOF
 (cd "$PANEL_DIR" && bash "$PV" set --pr 1 --sha $NSHA --record "$SCRATCH/vunc.json") >"$SCRATCH/out" 2>&1
 expect T55-uncertain-failure 0 $? '"state": "failure"'
 
+# --- T56: a secret inside a binary/invalid-UTF-8 file is still
+# caught (--text forces the added lines through the scanner; before,
+# git printed 'Binary files differ' and the secret never appeared).
+(cd "$PANEL_DIR" && printf 'token = "sk-%s"\n\x00\xff\x80 binary tail\n' \
+   'abcdefghijklmnopqrst1234' > blob.bin && git add blob.bin && git commit -qm "add blob")
+(cd "$PANEL_DIR" && BASE=main bash canon/bin/security_check.sh) >"$SCRATCH/out" 2>&1
+expect T56-binary-secret 1 $? "secret"
+(cd "$PANEL_DIR" && git reset -q --hard HEAD~1 >/dev/null 2>&1)
+# malformed UTF-8 in the stream must neither crash nor slip past the
+# scanner: errors=replace decodes it and the ASCII key body still trips.
+printf 'x = "sk-%s" \xff\xfe\n' 'abcdefghijklmnopqrst1234' \
+  | python3 "$CANON_DIR/bin/secret_scan.py" >/dev/null 2>&1
+[ $? -eq 1 ] && { echo "PASS T56b-nonutf8-scanned"; pass=$((pass+1)); } \
+  || { echo "FAIL T56b-nonutf8-scanned: scanner must flag rc=1"; fail=$((fail+1)); }
+
+# --- T57: git_ro refuses execution-capable flags (arbitrary command
+# via diff drivers/textconv/pager was audit finding #4).
+GIT_RO="$CANON_DIR/bin/git_ro.sh"
+t57=0
+for flag in --ext-diff --textconv -Ofoo --paginate --output=/tmp/x \
+            --git-dir=/tmp/x --work-tree=/tmp --no-index --find-object=x; do
+  (cd "$PANEL_DIR" && bash "$GIT_RO" diff "$flag" HEAD~1 HEAD) >/dev/null 2>&1
+  [ $? -eq 2 ] || { echo "FAIL T57-gitro-flag: '$flag' not refused"; t57=1; }
+done
+# a global -c config injection must die as an unknown op as well
+(cd "$PANEL_DIR" && bash "$GIT_RO" -c diff.external=id diff HEAD~1 HEAD) >/dev/null 2>&1
+[ $? -eq 2 ] || { echo "FAIL T57-gitro-dashc: '-c' not refused"; t57=1; }
+[ "$t57" -eq 0 ] && { echo "PASS T57-gitro-flags"; pass=$((pass+1)); } || fail=$((fail+1))
+
+# --- T58: '## Impl spec' smuggled into a code comment must NOT
+# satisfy delegated axes - only tracked docs/impl_specs/<stem>.md
+# bound to the declaring file counts.
+(cd "$PANEL_DIR" && mkdir -p src docs/impl_specs \
+  && printf '## Delegated decisions\n- axis: control_placement | constraint: in grid\n' \
+       > docs/specs/contract_t58.md \
+  && printf '# ## Impl spec\n# ### axis: control_placement\n# - decision: top\n' \
+       > src/evil.py \
+  && git add -A && git commit -qm "axes + injected spec")
+(cd "$PANEL_DIR" && BASE=main bash canon/bin/fidelity_check.sh) >"$SCRATCH/out" 2>&1
+expect T58a-injected-spec 1 $? "control_placement"
+# honest impl spec at the bound location fixes the failure
+cat > "$PANEL_DIR/docs/impl_specs/contract_t58.md" <<'EOF'
+## Impl spec
+### axis: control_placement
+- decision: top-right
+- constraint_check: inside grid bounds
+EOF
+(cd "$PANEL_DIR" && git add docs/impl_specs/contract_t58.md && git commit -qm "real spec")
+(cd "$PANEL_DIR" && BASE=main bash canon/bin/fidelity_check.sh) >"$SCRATCH/out" 2>&1
+expect T58b-bound-spec-ok 0 $? "covered"
+
 echo "---"
 echo "gate_tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

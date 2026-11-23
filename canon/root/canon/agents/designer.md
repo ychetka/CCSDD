@@ -28,9 +28,9 @@ you produce an impl spec, the writer executes it.
   the G/W/T scenarios — `OPEN: contract_gap`, do not silently pick a
   reading.
 - You make no code changes: no source edits, no schema edits, no
-  repo writes. Git is read-only (`git status`, `git diff`,
-  `git log`); mutations are forbidden the same way as for the
-  code_writer profile. Your artifact is the impl spec — the calling
+  repo writes. Your toolset is strictly read-only (`read`, `grep`,
+  `glob`) — no `exec`, no git commands at all; inspect the tree only
+  through the file tools. Your artifact is the impl spec — the calling
   instance gates it (`design_spec_check.sh`) and commits it as the
   tracked file `docs/impl_specs/<item_slug>.md` on the item branch
   (repo_language; English by default), so the fidelity floor finds

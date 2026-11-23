@@ -48,7 +48,7 @@ fi
 # A branch covering several items links every issue: extras come from
 # env ISSUE_NUMS (space/comma separated), same "Closes #N" contract as
 # the branch-name issue (verify_constraints.sh checks each one).
-for extra in ${ISSUE_NUMS//,/ }; do
+for extra in $(printf '%s' "${ISSUE_NUMS:-}" | tr ',' ' '); do
   # normalize: "007" and "7" are the same issue; reject non-numeric
   [[ "$extra" =~ ^[0-9]+$ ]] || {
     echo '{"status":"error","failure_class":"malformed_input","message":"ISSUE_NUMS entries must be numeric"}'; exit 2; }

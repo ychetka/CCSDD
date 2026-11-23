@@ -28,9 +28,14 @@ if [ -n "$BASE" ]; then
   # reach the scanner (without it git prints "Binary files differ"
   # and the secret never appears). --no-ext-diff pins the builtin
   # differ against attacker-controlled diff.external config.
-  DIFF=$(git diff --text --no-ext-diff --unified=0 "$BASE"...HEAD 2>/dev/null | grep -E '^\+' | grep -v '^\+\+\+')
+  # grep -a: the --text diff of a NUL-bearing file is itself binary
+  # output - without -a grep reports 'binary file matches' and emits
+  # nothing, silently dropping the secret. And the '+++' exclusion
+  # must be -E too: BRE '\+' is the one-or-more operator, which would
+  # match (and -v-delete) EVERY '+' line.
+  DIFF=$(git diff --text --no-ext-diff --unified=0 "$BASE"...HEAD 2>/dev/null | grep -aE '^\+' | grep -avE '^\+\+\+')
 else
-  DIFF=$(git diff --text --no-ext-diff --unified=0 --cached 2>/dev/null | grep -E '^\+' | grep -v '^\+\+\+'; git ls-files -z --others --exclude-standard | xargs -0 cat 2>/dev/null)
+  DIFF=$(git diff --text --no-ext-diff --unified=0 --cached 2>/dev/null | grep -aE '^\+' | grep -avE '^\+\+\+'; git ls-files -z --others --exclude-standard | xargs -0 cat 2>/dev/null)
 fi
 
 # --- 1. secret patterns on added lines ---

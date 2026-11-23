@@ -105,7 +105,11 @@ sign)
   MSG="ccsdd-signoff v1|${VERDICT}|${SHA}|${TS}|${NONCE}"
   TMPD=$(mktemp -d); trap 'rm -rf "$TMPD"' EXIT INT TERM
   printf '%s' "$MSG" > "$TMPD/msg"
-  PUBKEY=$(awk '$1=="human"{print $2" "$3}' "$SIGNERS")
+  # allowed_signers permits options before the key type
+  # (namespaces=..., cert-authority, ...): $2/$3 are not reliably the
+  # key fields - take the first field matching an OpenSSH key type and
+  # the blob after it.
+  PUBKEY=$(awk '$1=="human"{for(i=2;i<NF;i++) if($i~/^(ssh-|ecdsa-|sk-)/){print $i" "$(i+1);exit}}' "$SIGNERS")
   [ -n "$PUBKEY" ] || die "no 'human' principal in $SIGNERS"
   printf '%s\n' "$PUBKEY" > "$TMPD/key.pub"
   ssh-keygen -Y sign -f "$TMPD/key.pub" -n "$NS" "$TMPD/msg" 2>/dev/null \

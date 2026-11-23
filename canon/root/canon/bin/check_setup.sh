@@ -11,10 +11,10 @@ ok()   { echo "  ok: $*"; }
 # Binaries are checked BEFORE any use - a missing python3 would make
 # every later check silently degrade.
 before=$fails
-for bin in gh git python3; do
+for bin in gh git python3 flock ssh-keygen; do
   command -v "$bin" >/dev/null || fail "missing binary: $bin"
 done
-[ $fails -eq $before ] && ok "binaries: gh git python3"
+[ $fails -eq $before ] && ok "binaries: gh git python3 flock ssh-keygen"
 if ! command -v python3 >/dev/null; then
   echo "SETUP: $fails FAILURES - halt, do not proceed"; exit 1
 fi
@@ -268,6 +268,50 @@ if errs:
 PY
   [ $? -eq 0 ] && ok "review panel registry" || fails=$((fails+1))
 fi
+
+# Control-plane configs: partner_call.sh and the runtime adapters
+# consume policy.json / partners.json at call time - a corrupt file
+# there currently degrades to hardcoded defaults (fail-open).
+# Deployment validation is where the failure must surface.
+CANON_DIR="$CANON_DIR" python3 - <<'PY'
+import json, os, sys
+canon_dir = os.environ["CANON_DIR"]
+errs = []
+try:
+    pol = json.load(open(os.path.join(canon_dir, "config", "policy.json"),
+                            encoding="utf-8"))
+    ex = pol.get("exec")
+    if not isinstance(ex, dict):
+        errs.append("policy.json: 'exec' must be an object")
+    else:
+        for k in ("deny", "allow"):
+            if not isinstance(ex.get(k), list) or \
+               not all(isinstance(v, str) for v in ex[k]):
+                errs.append(f"policy.json: exec.{k} must be a string array")
+        roles = ex.get("roles")
+        if not isinstance(roles, dict):
+            errs.append("policy.json: exec.roles must be an object")
+    if not isinstance(pol.get("gateway"), dict):
+        errs.append("policy.json: 'gateway' must be an object")
+except Exception as e:
+    errs.append(f"policy.json unreadable: {e}")
+try:
+    preg = json.load(open(os.path.join(canon_dir, "config", "partners.json"),
+                             encoding="utf-8"))
+    roles = preg.get("roles")
+    if not isinstance(roles, dict) or not roles:
+        errs.append("partners.json: 'roles' must be a non-empty object")
+    else:
+        for rid, r in roles.items():
+            if not isinstance(r, dict) or not isinstance(r.get("profile"), str):
+                errs.append(f"partners.json: role {rid!r} lacks a 'profile' string")
+except Exception as e:
+    errs.append(f"partners.json unreadable: {e}")
+if errs:
+    for e in errs: print(f"SETUP FAIL: {e}")
+    sys.exit(1)
+PY
+[ $? -eq 0 ] && ok "policy.json + partners.json schema" || fails=$((fails+1))
 
 # Canon deploy stamp: canon/canon_manifest.json must exist (written by
 # onboard/rollout), carry a readable canon_version, and every file it

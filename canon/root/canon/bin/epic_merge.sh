@@ -84,11 +84,17 @@ TASKS=$(RM="$TMPD_RM" EN="$EN" python3 - <<'PY'
 import json, os, re
 en = os.environ["EN"]
 body = open(os.environ["RM"], encoding="utf-8", errors="replace").read()
+def _issue_num(v):
+    # 'issue: #9' / 'issue: 9 # main epic' all denote issue 9.
+    v = re.split(r"\s*#", (v or "").strip(), 1)[0]
+    v = v.lstrip("#").strip()
+    return str(int(v)) if v.isdigit() else ""
+
 blocks = re.split(r"(?m)^##\s+Item\s*:", body)[1:]
 item = None
 for b in blocks:
     fields = dict(re.findall(r"(?m)^\s*-\s*([a-z_]+)\s*:\s*(.+?)\s*$", b))
-    if fields.get("issue", "").strip() == en:
+    if _issue_num(fields.get("issue")) == en:
         item = fields; break
 if item is None:
     print(json.dumps({"error": "no roadmap item declares 'issue: %s'" % en})); raise SystemExit(0)
@@ -135,9 +141,22 @@ for f in frags:
                               capture_output=True,text=True).stdout
     except Exception:
         continue
-    m = re.search(r"(?m)^issue\s*:\s*([\d,\s]+)", body)
-    if m:
-        have.update(x.strip() for x in m.group(1).split(",") if x.strip())
+    # Leading key: value zone only (optional '---' fences) - the same
+    # front_fields contract as spec_anchor_check; an 'issue:' mention
+    # inside the prose body must not count as a declaration.
+    lines = body.splitlines()
+    start = 1 if lines and lines[0].strip() == "---" else 0
+    for ln in lines[start:]:
+        s = ln.strip()
+        if s == "---" or s.startswith("#"):
+            break
+        m = re.match(r"^issue\s*:\s*([#\d,\s]+)", ln)
+        if m:
+            have.update(x.strip().lstrip("#") for x in m.group(1).split(",")
+                        if x.strip().lstrip("#"))
+            break
+        if s and not re.match(r"^[A-Za-z_]+\s*:", ln):
+            break
 pending = [t for t in tasks if t not in have]
 print(json.dumps({"pending": pending, "have": sorted(have, key=int)}))
 PY
