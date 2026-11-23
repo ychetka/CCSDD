@@ -107,27 +107,37 @@ if [ -n "$BASELINE_CMD" ]; then
         npm ci --silent --ignore-scripts) >/dev/null 2>&1 || ENV_RC=$?
     elif [ -f "$WT/pyproject.toml" ] || [ -f "$WT/setup.py" ] \
          || ls "$WT"/requirements*.txt >/dev/null 2>&1; then
-      # Python repos: venv + requirements (dev deps included) beats a
-      # bare `pip install -e .`, which fails outright on projects
-      # whose packaging needs a backend the venv does not ship.
-      # Every network step is bounded by the same timeout binary.
-      python3 -m venv "$WT/.venv" >/dev/null 2>&1 || ENV_RC=$?
-      if [ "$ENV_RC" = "0" ]; then
-        # Install EVERY requirements*.txt (dev/test pins live in
-        # siblings - taking only the alphabetically first starves the
-        # baseline of test deps) plus the package itself when a
-        # packaging manifest is present.
-        for REQ in "$WT"/requirements*.txt; do
-          [ -f "$REQ" ] || continue
-          (cd "$WT" && ${TIMEOUT_BIN:+$TIMEOUT_BIN 300} \
-            "$WT/.venv/bin/pip" install -q -r "$REQ") >/dev/null 2>&1 \
-            || { ENV_RC=$?; break; }
-        done
-        if [ "$ENV_RC" = "0" ] && \
-           { [ -f "$WT/pyproject.toml" ] || [ -f "$WT/setup.py" ]; }; then
-          (cd "$WT" && ${TIMEOUT_BIN:+$TIMEOUT_BIN 300} \
-            "$WT/.venv/bin/pip" install -q -e .) >/dev/null 2>&1 || ENV_RC=$?
+      # Python repos: the baseline runs on the system interpreter
+      # with PYTHONPATH pointed at the worktree - NO pip install.
+      # An editable/sdist install executes the candidate's own
+      # setup.py/build-backend code in the verifier's context, and
+      # a network fetch violates the judge's no-network contract
+      # (plus breaks air-gapped runners). Projects that genuinely
+      # need a built env declare the pinned canon/baseline_env.sh
+      # adapter above, or the operator opts in explicitly via
+      # VW_ALLOW_INSTALL=1 (local/debug use only - never in gates).
+      if [ "${VW_ALLOW_INSTALL:-0}" = "1" ]; then
+        python3 -m venv "$WT/.venv" >/dev/null 2>&1 || ENV_RC=$?
+        if [ "$ENV_RC" = "0" ]; then
+          for REQ in "$WT"/requirements*.txt; do
+            [ -f "$REQ" ] || continue
+            (cd "$WT" && ${TIMEOUT_BIN:+$TIMEOUT_BIN 300} \
+              "$WT/.venv/bin/pip" install -q -r "$REQ") >/dev/null 2>&1 \
+              || { ENV_RC=$?; break; }
+          done
+          if [ "$ENV_RC" = "0" ] && \
+             { [ -f "$WT/pyproject.toml" ] || [ -f "$WT/setup.py" ]; }; then
+            (cd "$WT" && ${TIMEOUT_BIN:+$TIMEOUT_BIN 300} \
+              "$WT/.venv/bin/pip" install -q -e .) >/dev/null 2>&1 || ENV_RC=$?
+          fi
         fi
+      else
+        # src-layout first (src/ shadows the repo root in sys.path
+        # order so both layouts work); no .pth, no site-packages
+        # mutation, nothing the candidate tree can smuggle in.
+        VW_PY_PATH="$WT"
+        [ -d "$WT/src" ] && VW_PY_PATH="$WT/src:$WT"
+        export PYTHONPATH="$VW_PY_PATH${PYTHONPATH:+:$PYTHONPATH}"
       fi
     fi
     if [ "$BASE_UNRESOLVED" = "1" ]; then

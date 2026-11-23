@@ -80,12 +80,17 @@ if pj:
         gc = {}
     for name, val in gc.items():
         # gate_checks.<name> is an argv array (["pytest","-x"]);
-        # <name>_optional is a bool flag - skip it.
+        # <name>_optional is a bool flag - skip it. The allow entry
+        # is the full argv prefix, not the bare head: interpreter
+        # heads (python3, node) stay denied globally, so a bare-head
+        # allow would reopen the exec.deny bypass the policy exists
+        # to close. Exec(python3 -m pytest) permits the declared
+        # invocation while Exec(python3 exploit.py) stays denied.
         if not isinstance(val, list) or not val:
             continue
-        head = val[0]
-        if isinstance(head, str) and head and "\x00" not in head:
-            allow.append(f"Exec({head})")
+        argv = " ".join(str(a) for a in val)
+        if argv and "\x00" not in argv:
+            allow.append(f"Exec({argv})")
 # Dedup preserving order: a gate_checks command head that repeats a
 # policy allow entry would otherwise appear twice.
 out = {"permissions": {"deny": list(dict.fromkeys(deny)),

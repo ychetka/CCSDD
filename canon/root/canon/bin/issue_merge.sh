@@ -339,7 +339,14 @@ try:
             if x not in seen: seen.append(x)
         rp = rev.get("reviewer_profiles") or {}
         if isinstance(rp, dict):
-            for x in rp:
+            for x, prof in rp.items():
+                # high_risk_only profiles are bound to risk:high
+                # fragments via the model-family rule below - they
+                # must not become expected reviewers on every PR or
+                # a second-family account would deadlock all normal
+                # merges on missing_approvals.
+                if isinstance(prof, dict) and prof.get("high_risk_only") is True:
+                    continue
                 if x not in seen: seen.append(x)
         print("\n".join(seen))
 except Exception:
@@ -435,7 +442,7 @@ def front_fields(body):
     return fields
 
 SEV = {"patch":0,"minor":1,"major":2}
-bumps, bad, manual_gate, ci_bootstrap = [], [], False, False
+bumps, bad, manual_gate, ci_bootstrap, risk_high = [], [], False, False, False
 iss_missing, iss_bad, frag_issues = [], [], {}
 for f in frags:
     body = subprocess.run(["git","-C",top,"show",head+":"+f],
@@ -458,6 +465,7 @@ for f in frags:
         frag_issues.setdefault(f, nums)
     manual_gate = manual_gate or flds.get("manual_gate") == "true"
     ci_bootstrap = ci_bootstrap or flds.get("ci_bootstrap") == "true"
+    risk_high = risk_high or flds.get("risk") == "high"
 
 # Correspondence check: the fragment's issue: field must name an
 # issue this PR is about. Allowed set = the issue_<N>/epic_issue_<N>
@@ -480,7 +488,8 @@ if allowed:
 
 flags = {"bumps": bumps,
          "manual_gate": manual_gate,
-         "ci_bootstrap": ci_bootstrap}
+         "ci_bootstrap": ci_bootstrap,
+         "risk_high": risk_high}
 if bad:
     entry = {"status":"blocked","failure_class":"malformed_input",
              "message":"changes fragment(s) lack a valid 'bump: patch|minor|major' field",
@@ -527,7 +536,7 @@ names = subprocess.run(
 frags = [f.strip() for f in names.stdout.splitlines()
          if f.strip().startswith(".changes/") and f.strip().endswith(".md")
          and not f.strip().endswith("/README.md")]
-manual_gate = ci_bootstrap = False
+manual_gate = ci_bootstrap = risk_high = False
 bumps = []
 def _fields(body):
     fields = {}
@@ -550,11 +559,13 @@ for f in frags:
     fields = _fields(body)
     manual_gate = manual_gate or fields.get("manual_gate") == "true"
     ci_bootstrap = ci_bootstrap or fields.get("ci_bootstrap") == "true"
+    risk_high = risk_high or fields.get("risk") == "high"
     if fields.get("bump") in ("patch","minor","major"):
         bumps.append(fields["bump"])
 print(json.dumps({"bumps": bumps,
                   "manual_gate": manual_gate,
-                  "ci_bootstrap": ci_bootstrap}))
+                  "ci_bootstrap": ci_bootstrap,
+                  "risk_high": risk_high}))
 PY
 )
   ENTRY=$(ENTRY="$ENTRY" FLAGS_SCAN="$FLAGS_SCAN" python3 -c 'import json,os
@@ -566,7 +577,8 @@ try:
     old = entry.get("flags") or {}
     merged = {"bumps": sorted(set(old.get("bumps") or []) | set(fs.get("bumps") or [])),
               "manual_gate": bool(old.get("manual_gate")) or bool(fs.get("manual_gate")),
-              "ci_bootstrap": bool(old.get("ci_bootstrap")) or bool(fs.get("ci_bootstrap"))}
+              "ci_bootstrap": bool(old.get("ci_bootstrap")) or bool(fs.get("ci_bootstrap")),
+              "risk_high": bool(old.get("risk_high")) or bool(fs.get("risk_high"))}
     entry["flags"] = merged
 except Exception: pass
 print(json.dumps(entry))')
@@ -600,7 +612,11 @@ fi
 # freshness, nonce anti-replay). No envelope or a
 # stale/mismatched/replayed one = blocked.
 MANUAL_GATE=$(printf '%s' "$ENTRY" | python3 -c 'import json,sys
-try: print("yes" if (json.load(sys.stdin).get("flags") or {}).get("manual_gate") else "no")
+try:
+    f = (json.load(sys.stdin).get("flags") or {})
+    # risk: high implies the human-confirmation envelope too
+    # (methodology: two model families PLUS developer approval).
+    print("yes" if f.get("manual_gate") or f.get("risk_high") else "no")
 except Exception: print("no")')
 if [ "$MANUAL_GATE" = "yes" ]; then
   ENVELOPE_OK="no"
@@ -616,7 +632,7 @@ raw = os.environ.get("ENTRY", "")
 try: report = json.loads(raw)
 except Exception: report = {}
 print(json.dumps({"status": "blocked", "failure_class": "manual_gate",
-                  "message": "fragment declares manual_gate: true - developer approval required. Sign with: human_sign.sh sign --verdict approve --artifact %s --out %s (or --out - and paste the CCSDD-SIGNOFF-1 line into the chat; save it to %s)" % (os.environ.get("EXPECTED",""), os.environ.get("ENV_FILE",""), os.environ.get("ENV_FILE","")),
+                  "message": "fragment declares manual_gate: true or risk: high - developer approval required. Sign with: human_sign.sh sign --verdict approve --artifact %s --out %s (or --out - and paste the CCSDD-SIGNOFF-1 line into the chat; save it to %s)" % (os.environ.get("EXPECTED",""), os.environ.get("ENV_FILE",""), os.environ.get("ENV_FILE","")),
                   "gate_report": {"changes_entry": report}}))'
     exit 1
   fi
@@ -643,9 +659,26 @@ if [ "$MERGEABLE" = "UNKNOWN" ]; then
   done
 fi
 
+# risk: high (methodology): the approval set must span TWO distinct
+# model families. reviewer_profiles.<login>.model_family names the
+# family; logins without a declared family share the implicit
+# "default" family so two unlabeled accounts never satisfy the rule.
+RISK_HIGH=$(printf '%s' "$ENTRY" | python3 -c 'import json,sys
+try: print("yes" if (json.load(sys.stdin).get("flags") or {}).get("risk_high") else "no")
+except Exception: print("no")')
+FAMILY_MAP=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os
+try:
+    pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
+    rp = ((pj.get("review") or {}).get("reviewer_profiles") or {})
+    for login, prof in rp.items():
+        fam = (prof or {}).get("model_family") or "default"
+        print("%s\t%s" % (str(login).strip().lower(), fam))
+except Exception: pass' 2>/dev/null)
+
 GATE=$(INFO_FILE="$INFO_FILE" REVIEWS_FILE="$REVIEWS_FILE" REQUIRED="$REQUIRED" \
        REQUIRED_LOOKUP_FAILED="$REQUIRED_LOOKUP_FAILED" REVIEWERS="$REVIEWERS" \
        PR_AUTHOR="$PR_AUTHOR" CI_BOOTSTRAP="$CI_BOOTSTRAP" MERGEABLE="$MERGEABLE" \
+       RISK_HIGH="$RISK_HIGH" FAMILY_MAP="$FAMILY_MAP" \
        python3 - "$EXPECTED" <<'PY'
 import json, sys, os
 expected = sys.argv[1]
@@ -719,12 +752,28 @@ for login, r in by_reviewer.items():
     elif st == "CHANGES_REQUESTED" or (st == "APPROVED" and rc and rc != head):
         blocking_states.append("%s:%s" % (login, st))
 missing_approvals = sorted(expected_reviewers - set(approved_on_head))
-report["approved"] = (not missing_approvals) and not blocking_states
+# risk: high - approvals must come from >=2 distinct model families.
+risk_high = os.environ.get("RISK_HIGH") == "yes"
+family_map = {}
+for ln in (os.environ.get("FAMILY_MAP") or "").splitlines():
+    if "\t" in ln:
+        k, v = ln.split("\t", 1)
+        family_map[k.strip()] = v.strip() or "default"
+approved_families = {family_map.get(l, "default") for l in approved_on_head}
+family_ok = (not risk_high) or len(approved_families) >= 2
+report["approved"] = (not missing_approvals) and not blocking_states and family_ok
 report["approved_by"] = approved_on_head
 report["missing_approvals"] = missing_approvals
 report["blocking_reviews"] = blocking_states
 report["self_reviews_ignored"] = self_reviews
 report["expected_reviewers"] = sorted(expected_reviewers)
+report["risk_high"] = risk_high
+report["approved_model_families"] = sorted(approved_families)
+if risk_high and not family_ok:
+    report["family_deficit"] = (
+        "risk: high requires APPROVED reviews from >=2 distinct "
+        "model families (review.reviewer_profiles.<login>."
+        "model_family); got %d" % len(approved_families))
 
 checks = d.get("statusCheckRollup") or []
 

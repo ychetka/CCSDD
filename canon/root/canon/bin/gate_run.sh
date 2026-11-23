@@ -183,6 +183,26 @@ if [ "$RUNNER" = canon ]; then
   if [ -n "$BASE_REF" ] && git cat-file -e "$BASE_REF:$CANON_PATH" 2>/dev/null; then
     git show "$BASE_REF:$CANON_PATH" > "$SCRIPT_TMP" 2>/dev/null
   else
+    # canon/ is deployed-not-tracked in real projects, so the base
+    # blob never exists there and the on-disk script is the only
+    # source. Before executing it, pin it against the deploy
+    # manifest (same Gate-0 rule as ship_commit.sh): a rewritten
+    # gate script would otherwise attest itself.
+    if [ -f "$CANON_DIR/canon_manifest.json" ]; then
+      DEPLOYED="$DEPLOYED" CANON_PATH="$CANON_PATH" CANON_DIR="$CANON_DIR" \
+      python3 - <<'PY' || { echo "gate_run: $CANON_PATH failed manifest pin - refuse to execute tampered gate" >&2; exit 1; }
+import hashlib, json, os, sys
+try:
+    mf = json.load(open(os.path.join(os.environ["CANON_DIR"], "canon_manifest.json")))
+    want = (mf.get("sha256") or {}).get(os.environ["CANON_PATH"])
+except Exception:
+    sys.exit(1)
+if not isinstance(want, str):
+    sys.exit(1)
+h = hashlib.sha256(open(os.environ["DEPLOYED"], "rb").read()).hexdigest()
+sys.exit(0 if h == want else 1)
+PY
+    fi
     cat "$DEPLOYED" > "$SCRIPT_TMP"
   fi
   CANON_DIR="$CANON_DIR" bash "$SCRIPT_TMP" ${EXTRA[@]+"${EXTRA[@]}"} > "$OUT" 2>&1

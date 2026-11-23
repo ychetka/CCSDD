@@ -88,15 +88,6 @@
     "canon/templates/release_workflow.yml",
     "canon/templates/roadmap.template.md"
   ],
-  "gitignore": [
-    "canon/",
-    ".devin/",
-    ".windsurfrules",
-    ".windsurfrules.bak",
-    "AGENTS.md",
-    "CLAUDE.md",
-    ".claude/"
-  ],
   "sha256": {
     "canon/RULES.md": "ba941df12ca81cb93a9bee2be18f34dbf068f74fe3041f6c08ed910f048d973d",
     "canon/agents/code_writer.md": "ad621642ab72668e9d4e592fcfb2642109393fff4825c4d91097a74cd5cfab5a",
@@ -118,21 +109,21 @@
     "canon/agents/reviewer_tester.md": "96f39a407c5a9a4df06b815216a1c9cf56ffd76c6bad7029c3b1f293e4ac9619",
     "canon/bin/agent_audit.sh": "24716afb1016cc7d4f148cafbc717f84b312b641f19f32530c20b90cc1052d5f",
     "canon/bin/canon_pub.sh": "fb41043f3c56f3d669b9693c818b0957d04fa6addaf1288fff086c14647b6c1d",
-    "canon/bin/check_setup.sh": "ad525fcd0e50650b8abc80ea729cb46788097b0c17ccc39f6d9c0ef53b0077a8",
+    "canon/bin/check_setup.sh": "a02c91a7aab37129d414cda42966c0eec4653b5d23f3383f6b3d5aced44af074",
     "canon/bin/cycle_log.sh": "392df3b0cf3d5b2341b454795d785df4de91688b51462e16a1abf45e2f2a45c4",
     "canon/bin/design_spec_check.sh": "261a3a1eba1c4ca4d5a11ca41dd2cf50776d8b6552b4a388d7d8104bf86b07ef",
     "canon/bin/docs_check.sh": "ae6b139285cbe3f1cb76ff224056958ceebf6e2602bd6cd53057a483b9385f53",
     "canon/bin/epic_merge.sh": "e97f1694dcc9156136f9ba065ab0b71d7e181f0548445d06fe18a725224b07cd",
     "canon/bin/fidelity_check.sh": "f5165b61b1e4780f44d91b17d87546392444a6b9fc24e2b3caea05d69d60cc6a",
-    "canon/bin/gate_run.sh": "ed893d098947a62b9130a7e1837968f11376a712b19f6407c8bf9cfb0b8e3935",
+    "canon/bin/gate_run.sh": "d8265fb13ad83e93b28943bd4bb6b300424bfd75a7ed76da05230b88a7d1d773",
     "canon/bin/gate_tests.sh": "9969b0ba41e2955c1bc8c2cfa1661a2c614b7eb42b71949e1a2540e65ee7917a",
-    "canon/bin/gh_id.sh": "1183b6cc648b75671fd0c17517c584bb3a01c3934d000739445480de3a05bba4",
+    "canon/bin/gh_id.sh": "5b8f3f6911932cdfa31c992ce1661a1014fa1a9e57f7b263f7c038e3cd8f6f62",
     "canon/bin/git_ro.sh": "1a81e15f36366d61585110a089ab743ae16cea28e8559d7ec52bc4ea77ec8b6f",
     "canon/bin/gw_store.py": "276fb63b14b44ac956842cd68b1b5126b0549a836d7539f37c99cb4b543467c1",
     "canon/bin/harness_log.sh": "fc211e94f3e76715ef2946c770ed8ef679c2fe44d64e9a0f84023062e28eac74",
     "canon/bin/human_sign.sh": "e4750361cf03da30cd48b9ce3174ff6d02b9aa585f13795d18886700e541641b",
     "canon/bin/hygiene_check.sh": "bfdd7fcb6f6e8ff1a6b2fae58df18c13aab0ef46a5910ba5a0d65d483a381161",
-    "canon/bin/issue_merge.sh": "07a253c24fdc132a7e5089044da374ac3bdc6f4bbd5d3e8f80b9eb4d394f881b",
+    "canon/bin/issue_merge.sh": "ebd42bc0a286588b50bed6911b0bd55c99b47265a604258e09eebb714bbd3f55",
     "canon/bin/item_worktree.sh": "358c4a7bc95aa8b5838877ffbdd10579586b4837e55a25e9d96bc139146a88b8",
     "canon/bin/migration_gate.sh": "c346ad2e60b34358bbf5b6146b24404e847293f24dd252fdaaba5c797d570049",
     "canon/bin/migration_pattern.sh": "badc245ce6bb752ad9b9ccfc63075b3817420cf298a58bccc833242fb2fc60dd",
@@ -163,8 +154,8 @@
     "canon/bin/ship_commit.sh": "49173cece5b7cb681aaa1cb2e6f276fd99379b13049f3a4570d837b199c0af85",
     "canon/bin/ship_push.sh": "ce63fd9b6663dbf09280f837f0720b6dea5d7c68fa279d6201155db29d0b3a00",
     "canon/bin/spec_anchor_check.sh": "45bf8c2212bdf7b8b087425cbf801d2dfc7cce4e0ccf6357099efbec2c5c78eb",
-    "canon/bin/verify_constraints.sh": "33ffe6c42a53af0db5caf39214fcea14438f6a295fe0b63103eb03cab1c01795",
-    "canon/bin/verify_worktree.sh": "44adb539097aa21280e2872154c0cf65ceae97628728fe22725cde9fb11fcef3",
+    "canon/bin/verify_constraints.sh": "5c18ccfd9233161998f354053c43dda04a9b765cb45e8f657332b41d2c5b4824",
+    "canon/bin/verify_worktree.sh": "ab57d53e19e416d7c9b9288ff2aa466baa760828e76d16953bd78aee890f311b",
     "canon/specs/canon_gate.md": "8a179ce13f1c502af3fc2852d1914735fc54a98e85a5e6963dda8283cb53d9e2",
     "canon/specs/fleet.md": "6fef9ba721bc728e7578a1ab8b0951806f38fff2d67b6f788af205dfaf5fd12a",
     "canon/specs/gateway.md": "c4b315630c84818017084ec8134cf25b3f2b1a1c3b51d3da29f548d9c820623a",
@@ -173,7 +164,7 @@
     "canon/specs/quota.md": "56b8a86289c24cd22da7fc87c7e0e4abdde162712204cacf0429eb961ec0d3e5",
     "canon/specs/review_panel.md": "a8dd084cc6ec961b1605fe413573a9aa4d6bed861ea9048aea8b878c3e12f9ee",
     "canon/config/partners.json": "19fe2fd5ad9b3283ea7cb34e4d79d74c77f7ffb4cddbcce59d87a571fb2f0a33",
-    "canon/config/policy.json": "dde5e0eaec46c6479ce4a031910fe453e19fef6d35f68b59d464ed10cdc93736",
+    "canon/config/policy.json": "bcaff040bb1aa1f3ebee3a4b8bfde99a07d39dc78a151a80128fafafcf1c8135",
     "canon/config/review_panel.json": "ebfb8a344c62aeebf59b6fb2ca093df8fa17c32eb158163570a5e5680f0e251f",
     "canon/templates/release_workflow.yml": "0eb29e0df2cafb60db3841f40a02b562c18e85529df875d60642e0d172beb37c",
     "canon/templates/roadmap.template.md": "c83531a333edce2bb5633f0bb1997487646cf4af9abf4aba080722f296908805",
@@ -182,5 +173,14 @@
     "canon/forge/gitlab.sh": "5bc9893aa496f995d6dfaebda1f9b605e3f0c2fc17e627e6a5423ceb800df23c",
     "canon/forge/test.sh": "39b7be143af7e80fdf6e2e124744a51144f273c20ca59140db4c6ff6fbaa0c32"
   },
-  "file_count": 83
+  "file_count": 83,
+  "gitignore": [
+    "canon/",
+    ".devin/",
+    ".windsurfrules",
+    ".windsurfrules.bak",
+    "AGENTS.md",
+    "CLAUDE.md",
+    ".claude/"
+  ]
 }

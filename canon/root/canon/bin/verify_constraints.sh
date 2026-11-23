@@ -302,25 +302,28 @@ fi
 
 # 4b. Contract implementation files are human-sign-off territory:
 # a branch touching contract.py/contract.ts must carry a human
-# envelope bound to the branch HEAD - the same ssh-sig machinery
-# manual_gate uses at merge time (canon/human_signoffs/<branch>.*).
+# envelope bound to the CONTRACT FILE'S OWN sha256 (judge.md - the
+# contract is frozen by content hash at draft -> signed_off), NOT to
+# the branch HEAD. Binding to HEAD would invalidate the sign-off on
+# every subsequent code/test commit in the same branch.
 CONTRACT_HITS=$(printf '%s\n' "$PROT_CHANGED" \
   | grep -E '(^|/)contract\.(py|ts)$' || true)
 if [ -n "$CONTRACT_HITS" ]; then
   HS="$CANON_DIR/bin/human_sign.sh"
-  HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || true)
-  ENVOK=0
-  for cand in "$CANON_DIR/human_signoffs/$BRANCH.json" \
-              "$CANON_DIR/human_signoffs/$BRANCH.txt" \
-              "$CANON_DIR/human_signoffs/$BRANCH"; do
-    [ -f "$cand" ] || continue
-    [ -f "$HS" ] && [ -n "$HEAD_SHA" ] \
-      && bash "$HS" verify --envelope "$cand" --artifact "$HEAD_SHA" \
-           --verdict approve >/dev/null 2>&1 && { ENVOK=1; break; }
-  done
-  [ "$ENVOK" = 1 ] \
-    || escalate "contract file changed without human sign-off: $(printf '%s' "$CONTRACT_HITS" | head -n3 | paste -sd, -)" \
-      "human_sign.sh sign --verdict approve --artifact $HEAD_SHA --out canon/human_signoffs/$BRANCH.json (or paste the CCSDD-SIGNOFF-1 line into the agent chat)"
+  while IFS= read -r cfile; do
+    [ -n "$cfile" ] || continue
+    ENVOK=0
+    for cand in "$CANON_DIR"/human_signoffs/contract_*.json \
+                "$CANON_DIR/human_signoffs/$BRANCH.json"; do
+      [ -f "$cand" ] || continue
+      [ -f "$HS" ] && [ -f "$cfile" ] \
+        && bash "$HS" verify --envelope "$cand" --artifact "$cfile" \
+             --verdict approve >/dev/null 2>&1 && { ENVOK=1; break; }
+    done
+    [ "$ENVOK" = 1 ] \
+      || escalate "contract file changed without human sign-off: $cfile" \
+        "human_sign.sh sign --verdict approve --artifact $cfile --out canon/human_signoffs/contract_\$(basename \"$cfile\").json (or paste the CCSDD-SIGNOFF-1 line into the agent chat)"
+  done <<< "$CONTRACT_HITS"
 fi
 
 # 4c. Roadmap freeze integrity runs on EVERY verify, not just the

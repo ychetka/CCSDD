@@ -164,8 +164,25 @@ if rp is not None:
                 gb2 = prof.get("gh_bin")
                 if gb2 is not None and not re.fullmatch(r"[A-Za-z0-9_-]+", str(gb2)):
                     errs.append(f"review.reviewer_profiles.{login}.gh_bin must be a bare binary basename")
+                mf = prof.get("model_family")
+                if mf is not None and not re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", str(mf)):
+                    errs.append(f"review.reviewer_profiles.{login}.model_family must be a slug (e.g. 'anthropic', 'openai')")
+                if prof.get("high_risk_only") is True and not mf:
+                    errs.append(f"review.reviewer_profiles.{login} sets high_risk_only but no model_family - "
+                                "a risk:high family check cannot distinguish it from the default family")
             elif prof is not None:
                 errs.append(f"review.reviewer_profiles.{login} must be an object")
+# risk: high capability check: when any declared profile carries a
+# model_family, a risk:high fragment needs >=2 distinct families to
+# ever pass - flag a single-family config at setup, not at merge.
+if rp:
+    fams = {str((v or {}).get("model_family")).strip()
+            for v in rp.values() if isinstance(v, dict)
+            and (v or {}).get("model_family")}
+    if len(fams) == 1:
+        errs.append("review.reviewer_profiles declares exactly one model_family "
+                    f"({sorted(fams)[0]!r}) - a risk: high fragment can never "
+                    "collect approvals from two distinct families")
 fr = cfg.get("forge")
 if isinstance(fr, str) and not re.fullmatch(r"[a-z][a-z0-9_]*", fr):
     errs.append("forge must be a lowercase adapter name")
@@ -593,10 +610,13 @@ try:
 except Exception:
     sys.exit(0)
 gc = pj.get("gate_checks") or {}
-heads = {v[0] for v in gc.values()
+# devin.sh compiles each gate_checks argv as its full joined prefix
+# (Exec(python3 -m pytest), not Exec(python3)) so interpreter heads
+# can stay denied globally - drift compares the same join.
+argvs = {" ".join(str(a) for a in v) for v in gc.values()
          if isinstance(v, list) and v and isinstance(v[0], str) and v[0]}
 allow = set((cfg.get("permissions") or {}).get("allow") or [])
-missing = sorted(h for h in heads if f"Exec({h})" not in allow)
+missing = sorted(a for a in argvs if f"Exec({a})" not in allow)
 if missing:
     print(" ".join(missing))
 PY
