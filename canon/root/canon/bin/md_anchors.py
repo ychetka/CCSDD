@@ -22,9 +22,13 @@ HTML_ANCHOR_RE = re.compile(r'(?:name|id)\s*=\s*["\']([^"\']+)["\']')
 
 def gh_anchor(heading):
     """GitHub slug for a heading line's text. An explicit {#custom-id}
-    marker is NOT part of the slug - it is a separate anchor."""
+    marker is NOT part of the slug - it is a separate anchor. ATX
+    closing hashes ('## Title ##') are stripped before slugging, and
+    whitespace left behind by removed punctuation is trimmed so a
+    'Title!' heading slugs to 'title', never 'title-'."""
     heading = CUSTOM_ID_RE.sub("", heading)
-    return PUNCT_RE.sub("", heading.strip().lower()).replace(" ", "-")
+    heading = re.sub(r"\s+#+\s*$", "", heading.strip())
+    return PUNCT_RE.sub("", heading.lower()).strip().replace(" ", "-")
 
 
 def strip_fenced(body):

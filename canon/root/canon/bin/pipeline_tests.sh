@@ -789,6 +789,93 @@ printf '{"headRefOid":"%s","headRefName":"epic_issue_15-mix","baseRefName":"main
        canon/bin/repo_merge.sh 15 "$MIXSHA" squash) >"$SCRATCH/out" 2>&1
 expect M11g-epic-open-task 1 $? "not CLOSED"
 
+# ---------- M12: risk:high two-family gate (review_9 #1) -----------
+# One model family can never satisfy risk:high; an approval from a
+# high_risk_only second-family profile DOES count toward the family
+# set while never being required on ordinary PRs. Sequence: alice
+# (fama) + panel-test (fama) approve -> family_deficit; adding bob's
+# (famb, high_risk_only) approval + a human sign-off envelope ->
+# merged.
+python3 - "$WS/canon/project.json" <<'PY'
+import json, sys
+p = sys.argv[1]; d = json.load(open(p))
+d["review"]["reviewer_logins"] = ["alice", "panel-test"]
+d["review"]["reviewer_profiles"] = {
+    "alice":      {"model_family": "fama"},
+    "panel-test": {"model_family": "fama"},
+    "bob":        {"model_family": "famb", "high_risk_only": True}}
+json.dump(d, open(p, "w"))
+PY
+(cd "$WS" && git fetch -q origin \
+  && git checkout -q -b issue_47-risk origin/main \
+  && mkdir -p .changes \
+  && printf 'bump: patch\nuser_visible: true\nissue: 47\nrisk: high\n\nrisky change\n\n## Spec impact\n- none\n' \
+       > .changes/r.md \
+  && git add -A && git commit -qm "risky" \
+  && git push -q origin issue_47-risk)
+RSHA=$(cd "$WS" && git rev-parse issue_47-risk)
+printf '{"headRefOid":"%s","headRefName":"issue_47-risk","baseRefName":"main","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"closes #47","reviewRequests":[]}' "$RSHA" > "$GHSTATE/pr_view.json"
+python3 - "$GHSTATE/reviews.json" "$RSHA" <<'PY'
+import json, sys
+json.dump([{"user": {"login": "alice"}, "id": 20, "state": "APPROVED",
+            "commit_id": sys.argv[2], "submitted_at": "2026-01-01T00:00:00Z"}],
+          open(sys.argv[1], "w"))
+PY
+panel_seed "$RSHA"
+# Human sign-off envelope bound to the head sha (risk:high implies
+# the manual_gate envelope): a scratch ed25519 key signs the
+# canonical message, envelope lands in canon/human_signoffs/.
+mkdir -p "$WS/canon/human_signoffs"
+ssh-keygen -t ed25519 -N '' -q -f "$SCRATCH/m12key"
+printf 'human %s\n' "$(cat "$SCRATCH/m12key.pub")" \
+  > "$SCRATCH/m12_allowed_signers"
+python3 - "$RSHA" "$SCRATCH/m12msg" <<'PY'
+import datetime, secrets, sys
+ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+nonce = secrets.token_hex(16)
+open(sys.argv[2], "w").write(
+    f"ccsdd-signoff v1|approve|{sys.argv[1]}|{ts}|{nonce}")
+open(sys.argv[2] + ".meta", "w").write(f"{ts}\n{nonce}")
+PY
+ssh-keygen -Y sign -f "$SCRATCH/m12key" -n ccsdd-signoff \
+  "$SCRATCH/m12msg" >/dev/null 2>&1
+python3 - "$RSHA" "$SCRATCH/m12msg" \
+        "$WS/canon/human_signoffs/issue_47-risk.json" <<'PY'
+import base64, json, sys
+msg = open(sys.argv[2]).read()
+ts, nonce = open(sys.argv[2] + ".meta").read().splitlines()
+sig = base64.b64encode(open(sys.argv[2] + ".sig", "rb").read()).decode()
+json.dump({"type": "human_signoff", "format": "ssh-sig-v1",
+           "signer": "human", "verdict": "approve",
+           "artifact_hash": sys.argv[1], "artifact_alg": "sha1",
+           "ts": ts, "nonce": nonce,
+           "message": msg, "signature_b64": sig},
+          open(sys.argv[3], "w"))
+PY
+: > "$GHSTATE/merge_calls"
+(cd "$WS" && env FAKEGH_REPO="$WS" FAKEGH_STATE="$GHSTATE" \
+       CCSDD_ALLOWED_SIGNERS="$SCRATCH/m12_allowed_signers" \
+       CCSDD_NONCE_STORE="$SCRATCH/m12_nonces" \
+       PATH="$FAKEBIN:$PATH" \
+       canon/bin/repo_merge.sh 47 "$RSHA" squash) >"$SCRATCH/out" 2>&1
+expect M12a-one-family-blocks 1 $? "family_deficit"
+# A high_risk_only approval on the same head supplies the second
+# family - before the fix it was filtered out before counting.
+python3 - "$GHSTATE/reviews.json" "$RSHA" <<'PY'
+import json, sys
+p = sys.argv[1]
+rs = json.load(open(p))
+rs.append({"user": {"login": "bob"}, "id": 21, "state": "APPROVED",
+           "commit_id": sys.argv[2], "submitted_at": "2026-01-01T00:01:00Z"})
+json.dump(rs, open(p, "w"))
+PY
+(cd "$WS" && env FAKEGH_REPO="$WS" FAKEGH_STATE="$GHSTATE" \
+       CCSDD_ALLOWED_SIGNERS="$SCRATCH/m12_allowed_signers" \
+       CCSDD_NONCE_STORE="$SCRATCH/m12_nonces" \
+       PATH="$FAKEBIN:$PATH" \
+       canon/bin/repo_merge.sh 47 "$RSHA" squash) >"$SCRATCH/out" 2>&1
+expect M12b-two-families-merge 0 $? '"status": "merged"'
+
 # ---------- G8/G9: counter integrity + audit-key derivation --------
 # corrupt legacy counters file: one-shot migration must fail closed
 echo 'not json' > "$WS/canon/gateway_counters.json"
@@ -830,6 +917,42 @@ PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool t \
   --class audit --args '{"fresh":true}' >"$SCRATCH/out" 2>&1
 expect G10-daily-cap 4 $? "quota_limited"
 rm -f "$GDB" "$GDB-wal" "$GDB-shm"
+
+# ---------- G11: dead-pid inflight reaping + atomic refund ---------
+# A stranded inflight row (caller SIGKILLed after quota spend) must
+# be reaped AND its counters refunded in one transaction; a live
+# pid must keep its row and its quota (review_9 #7).
+python3 - "$GDB" "$WS/canon/bin" <<'PY'
+import os, sqlite3, sys
+sys.path.insert(0, sys.argv[2])
+import gw_store
+con = gw_store.connect(sys.argv[1])
+# a pid far above /proc/sys/kernel/pid_max can never be alive
+try:
+    pid_max = int(open("/proc/sys/kernel/pid_max").read())
+except Exception:
+    pid_max = 2**22
+dead_pid = pid_max * 4
+gw_store.inflight_add(con, "orphan-1", dead_pid, ["audit:k1", "audit:k2"])
+for k in ("audit:k1", "audit:k2"):
+    con.execute("INSERT INTO counters VALUES(?,1)", (k,))
+con.commit()
+assert gw_store.inflight_reap_dead(con) == 1
+assert con.execute("SELECT COUNT(*) FROM inflight").fetchone()[0] == 0
+vals = dict(con.execute("SELECT key, value FROM counters"))
+assert vals["audit:k1"] == 0 and vals["audit:k2"] == 0, vals
+# live pid: row and quota both survive the reaper
+gw_store.inflight_add(con, "live-1", os.getpid(), ["audit:k3"])
+con.execute("INSERT INTO counters VALUES(?,5)", ("audit:k3",))
+con.commit()
+assert gw_store.inflight_reap_dead(con) == 0
+assert dict(con.execute("SELECT key, value FROM counters"))["audit:k3"] == 5
+# a second reap refunds nothing - the row is already gone
+assert gw_store.inflight_reap_dead(con) == 0
+print("ok")
+PY
+[ $? -eq 0 ] && { echo "PASS G11-inflight-reap"; pass=$((pass+1)); } \
+  || { echo "FAIL G11-inflight-reap"; fail=$((fail+1)); }
 
 # ---------- CP: canon_pub sweep guard + schema ---------------------
 # A foreign non-empty --canon-root must be refused BEFORE the stale

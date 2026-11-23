@@ -991,6 +991,103 @@ done
 [ "$t69" -eq 0 ] && { echo "PASS T69-release-branch-push"; pass=$((pass+1)); } \
   || fail=$((fail+1))
 
+# --- T70: ship_commit message normalization is git stripspace,
+# and a hook-mutated message rolls HEAD back (review_9 #2).
+printf 'src/\n' > "$SCRATCH/canon/scope_whitelist.txt"
+(cd "$SCRATCH/repo" \
+  && mkdir -p src && echo ok > src/t70.py && git add src/t70.py \
+  && "$SHIP" "$(printf 'add t70\n\n\nsecond paragraph\n')") \
+  >"$SCRATCH/out" 2>&1
+expect T70a-multiline-ok 0 $?
+(cd "$SCRATCH/repo" && git log -1 --format=%B | grep -q "second paragraph") \
+  && { echo "PASS T70b-multiline-committed"; pass=$((pass+1)); } \
+  || { echo "FAIL T70b-multiline-committed"; fail=$((fail+1)); }
+# Message drift cannot come from a hook (--no-verify) or commit
+# config with -m - shadow `git` with a wrapper that mutates the
+# commit's -m payload, the same effect a hostile environment would
+# have. The post-check must flag TOCTOU and roll HEAD back to the
+# pre-commit sha.
+GIT_REAL=$(command -v git)
+mkdir -p "$SCRATCH/shadowbin"
+printf '#!/bin/sh\nif [ "$1" = "commit" ]; then\n  exec %s commit --no-verify -m "SHADOW-MUTATED"\nfi\nexec %s "$@"\n' \
+  "$GIT_REAL" "$GIT_REAL" > "$SCRATCH/shadowbin/git"
+chmod +x "$SCRATCH/shadowbin/git"
+PRE70=$(cd "$SCRATCH/repo" && git rev-parse HEAD)
+(cd "$SCRATCH/repo" && echo ok2 > src/t70b.py && git add src/t70b.py \
+  && PATH="$SCRATCH/shadowbin:$PATH" "$SHIP" "mutate me") \
+  >"$SCRATCH/out" 2>&1
+expect T70c-toctou-block 1 $? "TOCTOU"
+[ "$(cd "$SCRATCH/repo" && git rev-parse HEAD)" = "$PRE70" ] \
+  && (cd "$SCRATCH/repo" && git ls-files --error-unmatch src/t70b.py >/dev/null 2>&1) \
+  && { echo "PASS T70d-rollback"; pass=$((pass+1)); } \
+  || { echo "FAIL T70d-rollback: HEAD moved or index lost"; fail=$((fail+1)); }
+(cd "$SCRATCH/repo" && git reset -q --hard HEAD 2>/dev/null || git reset -q)
+
+# --- T71: G/W/T coverage - ids inside a real test definition count;
+# a bare comment id, and an id inside a skip-decorated test, do not.
+# A TODO comment inside a working test is not a skip (review_9 #6).
+T71D="$SCRATCH/t71"; mkdir -p "$T71D"
+(cd "$T71D" && git init -q -b main . && git config user.email t@t \
+  && git config user.name t && git commit -q --allow-empty -m init \
+  && git checkout -qb issue_77-gwt \
+  && mkdir -p .changes tests \
+  && printf -- '---\nbump: patch\nuser_visible: "false"\nissue: 77\n---\nscenarios: ITEM-77.GWT-1 ITEM-77.GWT-2 ITEM-77.GWT-3 ITEM-77.GWT-4\n' \
+       > .changes/g.md \
+  && printf '# ITEM-77.GWT-2 lives only in this comment\nimport pytest\n\ndef test_one():\n    # [ITEM-77.GWT-1] given the thing\n    assert True\n\n@pytest.mark.skip(reason="wip")\ndef test_three():\n    # [ITEM-77.GWT-3] a skipped test is not coverage\n    assert True\n\ndef test_four():\n    # TODO: optimize later [ITEM-77.GWT-4]\n    assert True\n' \
+       > tests/test_g.py \
+  && git add -A && git commit -qm gwt)
+(cd "$T71D" && VERIFY_BRANCH=issue_77-gwt VERIFY_BASE=main \
+   bash "$CANON_DIR/bin/verify_constraints.sh") >"$SCRATCH/out" 2>&1
+t71=0
+grep -q "G/W/T scenario ids missing from tests" "$SCRATCH/out" || t71=1
+grep -q "ITEM-77.GWT-2" "$SCRATCH/out" || { echo "  t71: comment-only id not flagged"; t71=1; }
+grep -q "ITEM-77.GWT-3" "$SCRATCH/out" || { echo "  t71: skipped-test id not flagged"; t71=1; }
+grep -q "missing.*ITEM-77.GWT-1\b" "$SCRATCH/out" && { echo "  t71: covered id flagged as missing"; t71=1; }
+grep -q "missing.*ITEM-77.GWT-4\b" "$SCRATCH/out" && { echo "  t71: TODO-in-test flagged as skipped"; t71=1; }
+[ "$t71" -eq 0 ] && { echo "PASS T71a-gwt-context"; pass=$((pass+1)); } \
+  || { echo "FAIL T71a-gwt-context"; fail=$((fail+1)); }
+# and with only covered ids remaining the gate reports coverage
+(cd "$T71D" \
+  && printf -- '---\nbump: patch\nuser_visible: "false"\nissue: 77\n---\nscenarios: ITEM-77.GWT-1 ITEM-77.GWT-4\n' \
+       > .changes/g.md \
+  && git add -A && git commit -qm gwt2)
+(cd "$T71D" && VERIFY_BRANCH=issue_77-gwt VERIFY_BASE=main \
+   bash "$CANON_DIR/bin/verify_constraints.sh") >"$SCRATCH/out" 2>&1
+grep -q "G/W/T scenario ids covered" "$SCRATCH/out" \
+  && { echo "PASS T71b-gwt-covered"; pass=$((pass+1)); } \
+  || { echo "FAIL T71b-gwt-covered: $(grep G/W/T "$SCRATCH/out")"; fail=$((fail+1)); }
+
+# --- T72: fidelity '- contract:' pulls a contract committed on the
+# base (outside the PR delta) into the axis scan (review_9 #5).
+T72D="$SCRATCH/t72"; mkdir -p "$T72D"
+(cd "$T72D" && git init -q -b main . && git config user.email t@t \
+  && git config user.name t && git commit -q --allow-empty -m init \
+  && mkdir -p src/auth \
+  && printf '"""\n## Delegated decisions\n- axis: color | constraint: brand\n"""\ndef render():\n    return "button"\n' \
+       > src/auth/contract.py \
+  && git add -A && git commit -qm "contract on base" \
+  && git checkout -qb issue_8-spec \
+  && mkdir -p docs/impl_specs \
+  && printf '## Impl spec\n- contract: src/auth/contract.py\n### axis: color\n- decision: red\n' \
+       > docs/impl_specs/auth.md \
+  && git add -A && git commit -qm spec)
+(cd "$T72D" && BASE=main bash "$CANON_DIR/bin/fidelity_check.sh") >"$SCRATCH/out" 2>&1
+expect T72a-bound-contract-covered 0 $? "delegated axis/axes covered"
+# the same binding with no decision must fail - the historical
+# contract's axes are declared, not auto-passed as axes=none.
+(cd "$T72D" && sed -i '/decision:/d' docs/impl_specs/auth.md \
+  && git add -A && git commit -qm "undecided")
+(cd "$T72D" && BASE=main bash "$CANON_DIR/bin/fidelity_check.sh") >"$SCRATCH/out" 2>&1
+expect T72b-bound-contract-undecided 1 $? "without a decided impl-spec entry"
+# and a fenced '### axis:' inside a code sample is not a declaration.
+(cd "$T72D" && git checkout -q main && git checkout -qb issue_9-fence \
+  && mkdir -p docs/impl_specs \
+  && printf '## Impl spec\nexample:\n```\n### axis: fake\n- decision: x\n```\n' \
+       > docs/impl_specs/fence.md \
+  && git add -A && git commit -qm fence)
+(cd "$T72D" && BASE=main bash "$CANON_DIR/bin/fidelity_check.sh") >"$SCRATCH/out" 2>&1
+expect T72c-fenced-axis-not-declared 0 $? "AXES: none"
+
 echo "---"
 echo "gate_tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

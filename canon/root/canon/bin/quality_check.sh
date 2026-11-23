@@ -40,8 +40,11 @@ elif command -v radon >/dev/null 2>&1; then
     # py_compile first: radon emits 'ERROR: <file>' on unparseable
     # input, which the rank grep would silently read as "no D+ block"
     # -> a syntax-broken file would PASS. Both must fail the gate.
+    # No -I{} interpolation: xargs substitutes the filename into the
+    # sh -c template as raw text, so a filename with a quote or $()
+    # becomes shell code. Positional args keep the name opaque.
     BADSYNTAX=$(printf '%s\n' "$PYFILES" | tr '\n' '\0' \
-      | xargs -0 -I{} sh -c 'python3 -m py_compile "{}" 2>/dev/null || echo "{}"' || true)
+      | xargs -0 -n1 sh -c 'python3 -m py_compile "$1" 2>/dev/null || printf "%s\n" "$1"' _ || true)
     RADON_OUT=$(printf '%s\n' "$PYFILES" | tr '\n' '\0' | xargs -0 radon cc -s -n C 2>/dev/null || true)
     RADON_ERR=$(printf '%s\n' "$RADON_OUT" | grep -E '^ERROR:' || true)
     HOT=$(printf '%s\n' "$RADON_OUT" | grep -E ' - [DEF]\(' || true)

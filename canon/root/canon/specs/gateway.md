@@ -90,8 +90,10 @@ not change the class.
   spend: the `inflight` table therefore records
   `{call_id, pid, keys}` before the network hop and clears it after;
   every call first reaps rows whose pid is dead and refunds their
-  increments, so a hard-killed caller's quota is restored by the
-  next run instead of leaking.
+  increments in ONE `BEGIN IMMEDIATE` transaction - a row is deleted
+  and its increments returned atomically, so two concurrent callers
+  can never refund the same orphan twice - so a hard-killed
+  caller's quota is restored by the next run instead of leaking.
   An unreadable/corrupt store is a fail-closed refusal until
   repaired, never a silent reset. The journal table is
   append-only: no UPDATE/DELETE path exists in `gw_store.py`.

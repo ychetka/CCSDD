@@ -425,10 +425,13 @@ Principles:
   director quotes verbatim; before merge the gate itself runs
   `verify_constraints.sh` + `verify_worktree.sh` on a detached
   worktree of the PR tree. Baseline verification is NETWORK-FREE
-  by default: the Python baseline imports the clean worktree via
-  `PYTHONPATH` instead of `pip install`, so no unpinned dependency
-  resolution and no candidate build backend (`setup.py`,
-  `pip install -e`) can execute during attestation. A deployed,
+  by default for EVERY stack: the Python baseline imports the clean
+  worktree via `PYTHONPATH` instead of `pip install`, so no
+  unpinned dependency resolution and no candidate build backend
+  (`setup.py`, `pip install -e`) can execute during attestation;
+  the JavaScript baseline likewise runs against an already
+  prepared `node_modules` (`NODE_PATH` + `node_modules/.bin` on
+  `PATH`) instead of a networked `npm ci`. A deployed,
   hash-pinned `canon/baseline_env.sh` MAY provide a prepared
   environment; `VW_ALLOW_INSTALL=1` is a local/debug-only override
   that normal gates never set.
@@ -449,7 +452,8 @@ Principles:
   interest: verdict independence is ensured by the separate
   reviewer account declared in `project.json`
   (`review.reviewer_logins`, `review.reviewer_profiles` —
-  per-identity `{gh_bin, model_family}` entries; `review.gh_bin`
+  per-identity `{api_bin|gh_bin, model_family}` entries;
+  `review.gh_bin`
   remains the default profile; a profile MAY be marked
   `high_risk_only: true` so a second-family reviewer account
   exists for `risk: high` changes without making its verdict
@@ -592,11 +596,14 @@ The version policy is fixed at roadmap approval, not at merge
    applies canonical branch protection on the base branch (PR
    required, stale-review dismissal, no force pushes). The order
    matters: protection applied first would make the workflow
-   deploy PR unmergeable under its own new rules; when the base is
-   already protected the deploy falls back to a valid
-   `release/v0.0.0` bootstrap branch that merges through the
-   normal release flow. The script resolves the repo from
-   `git remote`, requires gh credentials, and is idempotent.
+   deploy PR unmergeable under its own new rules; on an already
+   protected base the same direct write succeeds under an admin
+   token (`enforce_admins: false`), and any PR-based bootstrap can
+   never merge under the canon's own rules — so a refused write is
+   an operator action (admin token / temporary protection removal /
+   manual commit of the template), not a fallback branch. The
+   script resolves the repo from `git remote`, requires gh
+   credentials, and is idempotent.
 1. The arch committee designs the roadmap (items, types,
    dependencies, contracts, stack/FE-BE, G/W/T, risk flags, Design
    Dissent) > developer approval. For a repository without CI the

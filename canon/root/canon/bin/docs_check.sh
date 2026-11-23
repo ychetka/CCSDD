@@ -45,22 +45,28 @@ for root, dirs, files in os.walk(top):
             md_files.append(os.path.join(root, f))
 
 def anchors_of(path):
+    # Shared anchor collection from md_anchors.collect_anchors - the
+    # private copy drifted once already; inline code spans still have
+    # to be blanked before headings are counted (a '# x' inside
+    # backticks is literal text, not a heading) which is exactly what
+    # strip_nonlink does before collect.
     try:
         body = open(path, encoding="utf-8", errors="replace").read()
     except OSError:
         return set()
-    body = strip_nonlink(body)
-    out, seen = set(), {}
-    for l in body.splitlines():
-        if l.startswith("#"):
-            # Custom anchor syntax '## Title {#custom-id}' - same
-            # contract as spec_anchor_check.sh.
-            out |= {a.lower() for a in re.findall(r"\{#([^}\s]+)\}", l)}
-            h = gh_anchor(l.lstrip("# ").strip())
-            n = seen.get(h, 0); seen[h] = n + 1
-            out.add(h if n == 0 else f"{h}-{n}")
-    out |= {a.lower() for a in re.findall(r'(?:name|id)\s*=\s*["\']([^"\']+)["\']', body)}
-    return out
+    try:
+        return _md.collect_anchors(strip_nonlink(body))
+    except NameError:
+        body = strip_nonlink(body)
+        out, seen = set(), {}
+        for l in body.splitlines():
+            if l.startswith("#"):
+                out |= {a.lower() for a in re.findall(r"\{#([^}\s]+)\}", l)}
+                h = gh_anchor(l.lstrip("# ").strip())
+                n = seen.get(h, 0); seen[h] = n + 1
+                out.add(h if n == 0 else f"{h}-{n}")
+        out |= {a.lower() for a in re.findall(r'(?:name|id)\s*=\s*["\']([^"\']+)["\']', body)}
+        return out
 
 # [text](target) plus the optional Markdown title form
 # [text](target "Title") / (target 'Title') - the title is not part

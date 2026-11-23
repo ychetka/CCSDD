@@ -417,18 +417,30 @@ for f in os.environ["FRAGS"].splitlines():
     # code comments - they must survive, or generated changelog
     # snippets lose their comments. Nested list markers are kept and
     # re-indented under the outer bullet instead of being flattened.
-    lines, in_fence = [], False
+    # Headings: only the fragment's OWN top-level header is dropped -
+    # an interior '### ' heading is fragment content and must not be
+    # stripped or the changelog silently loses its structure.
+    lines, in_fence = [], None
     for l in body.splitlines():
-        if re.match(r"^\s*```", l):
-            in_fence = not in_fence
+        fm = re.match(r"^\s*(`{3,}|~{3,})", l)
+        if fm:
+            mark = fm.group(1)[0]
+            if in_fence is None: in_fence = mark
+            elif mark == in_fence: in_fence = None
             lines.append(l)
             continue
-        if not in_fence and (
+        if in_fence is None and (
             re.match(r"^\s*(bump|user_visible|issue|manual_gate|ci_bootstrap|risk)\s*:", l, re.I)
-            or re.match(r"^\s*---\s*$", l)
-            or re.match(r"^\s*#", l)):
+            or re.match(r"^\s*---\s*$", l)):
             continue
         lines.append(l)
+    # drop the fragment's leading heading line only
+    for i, l in enumerate(lines):
+        if not l.strip():
+            continue
+        if re.match(r"^\s*#{1,6}\s", l):
+            lines.pop(i)
+        break
     txt = "\n".join(lines).strip()
     # Nest the fragment body under one bullet: first line carries the
     # marker, every continuation line indents two spaces so nested
