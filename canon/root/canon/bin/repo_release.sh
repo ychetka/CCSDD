@@ -434,11 +434,13 @@ for f in os.environ["FRAGS"].splitlines():
             or re.match(r"^\s*---\s*$", l)):
             continue
         lines.append(l)
-    # drop the fragment's leading heading line only
+    # drop the fragment's leading heading line only - and only a
+    # top-level '# '/'## ' header. A leading '### Fixed' is fragment
+    # CONTENT (a changelog rubric); stripping it orphans its bullets.
     for i, l in enumerate(lines):
         if not l.strip():
             continue
-        if re.match(r"^\s*#{1,6}\s", l):
+        if re.match(r"^\s*#{1,2}\s", l):
             lines.pop(i)
         break
     txt = "\n".join(lines).strip()

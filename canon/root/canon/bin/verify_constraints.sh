@@ -225,15 +225,15 @@ fi
 # committed secret or a protected-path edit. BASE (merge-base vs the
 # base branch) is already resolved above. Deleted files never count:
 # removing a file is not a secret leak.
-CHANGED=$( { git -c core.quotepath=false diff --name-only --diff-filter=ACMR --cached;
-             git -c core.quotepath=false diff --name-only --diff-filter=ACMR HEAD;
-             [ -n "$BASE" ] && git -c core.quotepath=false diff --name-only --diff-filter=ACMR "$BASE"...HEAD; } 2>/dev/null | sort -u )
+CHANGED=$( { git -c core.quotepath=false diff --name-only --no-renames --diff-filter=ACMR --cached;
+             git -c core.quotepath=false diff --name-only --no-renames --diff-filter=ACMR HEAD;
+             [ -n "$BASE" ] && git -c core.quotepath=false diff --name-only --no-renames --diff-filter=ACMR "$BASE"...HEAD; } 2>/dev/null | sort -u )
 # Protected-path hits need DELETED entries too: deleting a protected
 # file is as much an escalation as editing it. Secret scanning keeps
 # the ACMR set - removing a file is not a secret leak.
-PROT_CHANGED=$( { git -c core.quotepath=false diff --name-only --diff-filter=ACMRD --cached;
-                  git -c core.quotepath=false diff --name-only --diff-filter=ACMRD HEAD;
-                  [ -n "$BASE" ] && git -c core.quotepath=false diff --name-only --diff-filter=ACMRD "$BASE"...HEAD; } 2>/dev/null | sort -u )
+PROT_CHANGED=$( { git -c core.quotepath=false diff --name-only --no-renames --diff-filter=ACMRD --cached;
+                  git -c core.quotepath=false diff --name-only --no-renames --diff-filter=ACMRD HEAD;
+                  [ -n "$BASE" ] && git -c core.quotepath=false diff --name-only --no-renames --diff-filter=ACMRD "$BASE"...HEAD; } 2>/dev/null | sort -u )
 # Boundary-correct secret detection: 'token' as a bare substring
 # false-flags tokenizer.py - require it as a basename or separated
 # word, and cover the canonical secret filenames.
@@ -323,19 +323,19 @@ if [ -n "$CONTRACT_HITS" ]; then
   # A deleted contract cannot be signed by file content - removing a
   # frozen contract is itself a contract change, so its envelope is
   # bound to the branch HEAD sha like a manual_gate sign-off.
-  CONTRACT_DELETED=$( { git -c core.quotepath=false diff --name-only --diff-filter=D --cached;
-                        git -c core.quotepath=false diff --name-only --diff-filter=D HEAD;
-                        [ -n "$BASE" ] && git -c core.quotepath=false diff --name-only --diff-filter=D "$BASE"...HEAD; } \
+  CONTRACT_DELETED=$( { git -c core.quotepath=false diff --name-only --no-renames --diff-filter=D --cached;
+                        git -c core.quotepath=false diff --name-only --no-renames --diff-filter=D HEAD;
+                        [ -n "$BASE" ] && git -c core.quotepath=false diff --name-only --no-renames --diff-filter=D "$BASE"...HEAD; } \
                         2>/dev/null | grep -E '(^|/)contract\.(py|ts)$' | sort -u )
   HEAD_SHA_NOW=$(git rev-parse HEAD)
   while IFS= read -r cfile; do
     [ -n "$cfile" ] || continue
     if printf '%s\n' "$CONTRACT_DELETED" | grep -qxF "$cfile"; then
       ARTIFACT="$HEAD_SHA_NOW"
-      SIGN_TARGET="\"$HEAD_SHA_NOW\" (deletion is HEAD-bound)"
+      SIGN_NOTE=" # deletion is HEAD-bound"
     elif [ -f "$cfile" ]; then
       ARTIFACT="$cfile"
-      SIGN_TARGET="$cfile"
+      SIGN_NOTE=""
     else
       continue   # renamed/moved away path without a live file - nothing to bind
     fi
@@ -352,7 +352,7 @@ if [ -n "$CONTRACT_HITS" ]; then
     # basename-derived names collide across modules.
     [ "$ENVOK" = 1 ] \
       || escalate "contract file changed without human sign-off: $cfile" \
-        "human_sign.sh sign --verdict approve --artifact $SIGN_TARGET --out canon/human_signoffs/contract_\$(printf '%s' \"$cfile\" | tr '/' '_').json (or paste the CCSDD-SIGNOFF-1 line into the agent chat)"
+        "human_sign.sh sign --verdict approve --artifact \"$ARTIFACT\" --out canon/human_signoffs/contract_\$(printf '%s' \"$cfile\" | tr '/' '_').json$SIGN_NOTE (or paste the CCSDD-SIGNOFF-1 line into the agent chat)"
   done <<< "$CONTRACT_HITS"
 fi
 
@@ -585,6 +585,49 @@ PY
               "add a test whose name carries each scenario id verbatim inside a test definition (harness §7)"
   else
     echo "SKIP: no G/W/T scenario ids in committed artifacts"
+  fi
+fi
+
+# 6d. roadmap risk_flags -> fragment risk:high binding (review_10
+#     #10): the two-family/human-envelope escalation in issue_merge
+#     activates on `risk: high` in a .changes fragment - an item whose
+#     roadmap entry declares risk_flags must therefore carry a
+#     risk: high fragment in this diff, or the flag is silently ignored.
+if [ -f "$CANON_DIR/roadmap.md" ] && [ -n "${GWT_ISSUES// }" ] \
+    && [ -n "$BASE" ]; then
+  RISKY_ISSUES=$(GWT_ISSUES="$GWT_ISSUES" RM="$CANON_DIR/roadmap.md" python3 - <<'PY'
+import os, re
+issues = set(os.environ["GWT_ISSUES"].split())
+# Per-ITEM parsing: 'risk_flags' precedes 'issue:' in the template,
+# so block-level association (## Item: ... until the next heading)
+# is required - streaming 'last issue seen' misattributes flags.
+risky, cur_issue, cur_flags = [], None, False
+def flush():
+    if cur_issue in issues and cur_flags:
+        risky.append(cur_issue)
+for line in open(os.environ["RM"], encoding="utf-8", errors="replace"):
+    if re.match(r"^##\s", line):
+        flush(); cur_issue, cur_flags = None, False; continue
+    m = re.match(r"^\s*-\s*issue:\s*#?(\d+)\b", line)
+    if m:
+        cur_issue = str(int(m.group(1))); continue
+    m = re.match(r"^\s*-\s*risk_flags:\s*\[([^\]]*)\]", line)
+    if m:
+        cur_flags = bool(m.group(1).strip())
+flush()
+print(" ".join(sorted(set(risky), key=int)))
+PY
+)
+  if [ -n "$RISKY_ISSUES" ]; then
+    RISK_FRAGS=$(git -c core.quotepath=false diff --name-only --no-renames \
+        "$BASE"...HEAD 2>/dev/null \
+      | grep -E '^\.changes/[^/]+\.md$' \
+      | while read -r f; do git show "HEAD:$f" 2>/dev/null; done \
+      | grep -cE '^\s*risk:\s*high\b' || true)
+    [ "${RISK_FRAGS:-0}" -gt 0 ] \
+      && pass "roadmap risk_flags items carry a risk: high fragment" \
+      || escalate "roadmap risk_flags set on issue(s) $RISKY_ISSUES but no .changes fragment declares 'risk: high'" \
+        "add 'risk: high' to the .changes fragment - the merge gate then requires approvals from two model families plus the human envelope"
   fi
 fi
 

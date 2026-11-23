@@ -23,8 +23,20 @@ PR="${1:?usage: repo_status_check.sh <pr_number>}"
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 GH_BIN="$("$CANON_DIR/bin/gh_id.sh" merge)"
 
-GH_OUT=$("$GH_BIN" pr view "$PR" --json statusCheckRollup,mergeable,reviews,headRefOid,author,reviewRequests,files 2>/dev/null) || {
+GH_OUT=$("$GH_BIN" pr view "$PR" --json statusCheckRollup,mergeable,headRefOid,author,reviewRequests,files 2>/dev/null) || {
   echo '{"status":"error","failure_class":"upstream_error","message":"gh pr view failed"}'
+  exit 1
+}
+# Reviews come from the paginated REST endpoint, same as
+# issue_merge.sh - `gh pr view --json reviews` truncates at the
+# first 100 GraphQL nodes, so a fresh APPROVE past the cut would be
+# invisible. Numeric id ordering resolves submittedAt
+# second-resolution ties deterministically.
+REVIEWS_JSONL=$(mktemp "${TMPDIR:-/tmp}/ccsdd-reviews.XXXXXX")
+trap 'rm -f "$REVIEWS_JSONL"' EXIT
+"$GH_BIN" api "repos/{owner}/{repo}/pulls/${PR}/reviews?per_page=100" \
+  --paginate --jq '.[] | @json' > "$REVIEWS_JSONL" 2>/dev/null || {
+  echo '{"status":"error","failure_class":"upstream_error","message":"reviews fetch failed"}'
   exit 1
 }
 CFG=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os
@@ -93,7 +105,8 @@ for p in frags:
             risk = True
 print("yes" if risk else "no")' 2>/dev/null || echo no)
 
-GH_OUT="$GH_OUT" CFG="$CFG" RISK_HIGH="$RISK_HIGH" python3 -c '
+GH_OUT="$GH_OUT" CFG="$CFG" RISK_HIGH="$RISK_HIGH" \
+REVIEWS_JSONL="$REVIEWS_JSONL" python3 -c '
 import json, os, sys
 try:
     d = json.loads(os.environ["GH_OUT"])
@@ -117,18 +130,26 @@ risk_high = os.environ.get("RISK_HIGH") == "yes"
 # never count; a login in reviewRequests holds no standing verdict.
 latest = {}
 self_reviews = []
-for r in (d.get("reviews") or []):
+reviews = []
+for ln in open(os.environ["REVIEWS_JSONL"], encoding="utf-8",
+               errors="replace"):
+    ln = ln.strip()
+    if not ln:
+        continue
+    try:
+        reviews.append(json.loads(ln))
+    except Exception:
+        continue
+reviews.sort(key=lambda r: r.get("id") or 0)
+for r in reviews:
     if r.get("state") not in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
         continue
-    author = ((r.get("author") or {}).get("login") or "").lower()
+    author = ((r.get("user") or {}).get("login") or "").lower()
     if author == pr_author:
         if r.get("state") in ("APPROVED", "CHANGES_REQUESTED"):
             self_reviews.append(author)
         continue
-    cur = latest.get(author)
-    # gh returns reviews oldest-first; keep the last verdict. The id
-    # ordering used by issue_merge is unavailable here, so fall back
-    # to list order (submittedAt is second-resolution and ties).
+    # id-ordered: the last verdict-state review per reviewer wins
     latest[author] = r
 pending_reviewers = {((r.get("login") or "")).lower()
                      for r in (d.get("reviewRequests") or [])
@@ -136,7 +157,7 @@ pending_reviewers = {((r.get("login") or "")).lower()
 approved_on_head, blocking = [], []
 for login, r in latest.items():
     st = r.get("state")
-    rc = (r.get("commit") or {}).get("oid")
+    rc = r.get("commit_id")
     if login not in expected | high_risk_reviewers:
         if st == "CHANGES_REQUESTED":
             blocking.append("%s:CHANGES_REQUESTED" % login)

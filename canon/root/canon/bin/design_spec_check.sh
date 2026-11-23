@@ -121,6 +121,8 @@ def norm(name):
 fence = None
 name, dec = "", False
 named, decided = set(), set()
+in_spec = False
+has_spec = False
 def flush():
     if name and dec:
         decided.add(name)
@@ -138,23 +140,39 @@ for raw in open(os.environ["SPEC"], encoding="utf-8",
     if fence is not None:
         continue
     line = strip_markers(raw)
+    # Axes count only inside the '## Impl spec' section - a spec file
+    # without that section violates the designer.md contract and must
+    # fail loudly, not auto-pass with an empty axis set.
+    if re.match(r"^##\s+Impl spec\b", line):
+        flush(); in_spec = True; has_spec = True
+        name = ""; dec = False; continue
+    if re.match(r"^##\s", line):
+        flush(); in_spec = False; name = ""; dec = False; continue
     m = re.match(r"^###\s+axis:\s*([^|]+)", line)
     if m:
         flush()
-        name = norm(m.group(1)); dec = False
-        if name: named.add(name)
+        if in_spec:
+            name = norm(m.group(1)); dec = False
+            if name: named.add(name)
         continue
     if re.match(r"^#{1,3}\s", line):
         flush(); name = ""; dec = False; continue
     if name and re.match(r"^\s*-\s+decision:\s*\S", line):
         dec = True
 flush()
+print("HAS_SPEC:" + ("1" if has_spec else "0"))
 print("NAMED:" + ",".join(sorted(named)))
 print("DECIDED:" + ",".join(sorted(decided)))
 PY
 )
 NAMED=$(printf '%s\n' "$PARSED" | sed -n 's/^NAMED://p' | tr ',' '\n' | sed '/^$/d' | sort -u)
 DECIDED=$(printf '%s\n' "$PARSED" | sed -n 's/^DECIDED://p' | tr ',' '\n' | sed '/^$/d' | sort -u)
+
+HAS_SPEC=$(printf '%s\n' "$PARSED" | sed -n 's/^HAS_SPEC://p')
+if [ "$HAS_SPEC" != "1" ]; then
+  echo "design_spec_check: FAIL - spec file has no '## Impl spec' section" >&2
+  exit 1
+fi
 
 MISSING=$(comm -23 <(printf '%s\n' "$AXES") <(printf '%s\n' "$DECIDED"))
 EXTRA=$(comm -13 <(printf '%s\n' "$AXES") <(printf '%s\n' "$NAMED"))
