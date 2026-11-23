@@ -20,6 +20,11 @@
 #     - constraint_check: ...
 #     - alternatives: ...
 #
+# Markdown fenced code blocks (``` and ~~~) are opaque on BOTH
+# inputs - an `### axis:` inside a usage example is documentation,
+# not a declaration, and a `- axis:` inside a contract's code sample
+# is not a delegation.
+#
 # Exit 0: no declared axes (designer not required), or every declared
 #   axis is covered by a spec entry carrying a non-empty decision.
 # Exit 1: axes declared but --spec missing, a declared axis uncovered
@@ -44,26 +49,49 @@ done
 # still compiles: python `"""..."""` or `#`-lines, ts `/** ... */`
 # or `//`-lines. Leading comment markers are stripped before
 # matching (but `##` itself is kept, it is the section marker).
-AXES=$(awk '
-  {
-    line=$0
-    sub(/^[[:space:]]+/,"",line)
-    while (line !~ /^##/ && line ~ /^(#|\/\/|\*|\/\*|\*\/|""")/) {
-      sub(/^("""|\/\*|\*\/|\/\/|#|\*)/,"",line)
-      sub(/^[[:space:]]+/,"",line)
-    }
-    if (line ~ /^##[[:space:]]+Delegated decisions/) { insec=1; next }
-    if (line ~ /^##[[:space:]]/ && insec) { insec=0 }
-    if (insec && line ~ /^-[[:space:]]+axis:/) {
-      sub(/^-[[:space:]]+axis:[[:space:]]*/,"",line)
-      sub(/[[:space:]]*\|.*/,"",line)
-      # Unified normalization with fidelity_check.sh: lowercase,
-      # [a-z0-9_-] only - case/whitespace can never make one axis
-      # pass here and fail the fidelity floor.
-      line=tolower(line); gsub(/[^a-z0-9_-]/,"",line)
-      if (line != "") print line
-    }
-  }' "$CONTRACT" | sort -u)
+# Fenced code blocks are skipped BEFORE marker stripping.
+AXES=$(CONTRACT="$CONTRACT" python3 - <<'PY'
+import os, re
+def strip_markers(line):
+    line = line.strip()
+    while line and not line.startswith("##") and \
+            re.match(r'^(#|//|\*|/\*|\*/|""")', line):
+        line = re.sub(r'^("""|/\*|\*/|//|#|\*)', "", line).strip()
+    return line
+def norm(name):
+    # Unified normalization with fidelity_check.sh: lowercase,
+    # [a-z0-9_-] only - case/whitespace can never make one axis
+    # pass here and fail the fidelity floor.
+    return re.sub(r"[^a-z0-9_-]", "", name.lower())
+fence = None
+insec = False
+out = []
+for raw in open(os.environ["CONTRACT"], encoding="utf-8",
+                errors="replace").read().splitlines():
+    s = raw.strip()
+    fm = re.match(r"^(`{3,}|~{3,})", s)
+    if fm:
+        mark = fm.group(1)[0]
+        if fence is None:
+            fence = mark
+        elif mark == fence:
+            fence = None
+        continue
+    if fence is not None:
+        continue
+    line = strip_markers(raw)
+    if re.match(r"^##\s+Delegated decisions", line):
+        insec = True; continue
+    if insec and re.match(r"^##\s", line):
+        insec = False; continue
+    if insec:
+        m = re.match(r"^-\s+axis:\s*([^|]+)", line)
+        if m:
+            a = norm(m.group(1))
+            if a: out.append(a)
+print("\n".join(sorted(set(out))))
+PY
+)
 
 if [ -z "$AXES" ]; then
   echo "design_spec_check: no delegated axes declared - designer not required"
@@ -76,27 +104,57 @@ if [ -z "$SPEC" ] || [ ! -r "$SPEC" ]; then
   exit 1
 fi
 
-# Spec axes with a non-empty decision inside their own block.
-DECIDED=$(awk '
-  /^###[[:space:]]+axis:/ {
-    if (name != "" && dec != "") print name
-    name=$0; sub(/^###[[:space:]]+axis:[[:space:]]*/,"",name)
-    sub(/[[:space:]]*\|.*/,"",name)
-    name=tolower(name); gsub(/[^a-z0-9_-]/,"",name); dec=""
-    next
-  }
-  /^#{1,3}[[:space:]]/ && !/^###[[:space:]]+axis:/ {
-    if (name != "" && dec != "") print name
-    name=""; dec=""; next
-  }
-  name != "" && /^[[:space:]]*-[[:space:]]+decision:[[:space:]]*[^[:space:]]/ { dec=1 }
-  END { if (name != "" && dec != "") print name }' "$SPEC" | sort -u)
-
-NAMED=$(awk '/^###[[:space:]]+axis:/ {
-    name=$0; sub(/^###[[:space:]]+axis:[[:space:]]*/,"",name)
-    sub(/[[:space:]]*\|.*/,"",name)
-    name=tolower(name); gsub(/[^a-z0-9_-]/,"",name)
-    if (name != "") print name }' "$SPEC" | sort -u)
+# Spec axes with a non-empty decision inside their own block; NAMED
+# is every axis heading regardless of decision. Both go through the
+# same marker-strip + fence-skip pipeline as the contract so a spec
+# example can neither invent nor silently cover an axis.
+PARSED=$(SPEC="$SPEC" python3 - <<'PY'
+import os, re
+def strip_markers(line):
+    line = line.strip()
+    while line and not line.startswith("##") and \
+            re.match(r'^(#|//|\*|/\*|\*/|""")', line):
+        line = re.sub(r'^("""|/\*|\*/|//|#|\*)', "", line).strip()
+    return line
+def norm(name):
+    return re.sub(r"[^a-z0-9_-]", "", name.lower())
+fence = None
+name, dec = "", False
+named, decided = set(), set()
+def flush():
+    if name and dec:
+        decided.add(name)
+for raw in open(os.environ["SPEC"], encoding="utf-8",
+                errors="replace").read().splitlines():
+    s = raw.strip()
+    fm = re.match(r"^(`{3,}|~{3,})", s)
+    if fm:
+        mark = fm.group(1)[0]
+        if fence is None:
+            fence = mark
+        elif mark == fence:
+            fence = None
+        continue
+    if fence is not None:
+        continue
+    line = strip_markers(raw)
+    m = re.match(r"^###\s+axis:\s*([^|]+)", line)
+    if m:
+        flush()
+        name = norm(m.group(1)); dec = False
+        if name: named.add(name)
+        continue
+    if re.match(r"^#{1,3}\s", line):
+        flush(); name = ""; dec = False; continue
+    if name and re.match(r"^\s*-\s+decision:\s*\S", line):
+        dec = True
+flush()
+print("NAMED:" + ",".join(sorted(named)))
+print("DECIDED:" + ",".join(sorted(decided)))
+PY
+)
+NAMED=$(printf '%s\n' "$PARSED" | sed -n 's/^NAMED://p' | tr ',' '\n' | sed '/^$/d' | sort -u)
+DECIDED=$(printf '%s\n' "$PARSED" | sed -n 's/^DECIDED://p' | tr ',' '\n' | sed '/^$/d' | sort -u)
 
 MISSING=$(comm -23 <(printf '%s\n' "$AXES") <(printf '%s\n' "$DECIDED"))
 EXTRA=$(comm -13 <(printf '%s\n' "$AXES") <(printf '%s\n' "$NAMED"))

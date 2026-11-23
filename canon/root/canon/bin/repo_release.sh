@@ -180,8 +180,16 @@ names = subprocess.run(
     capture_output=True, text=True).stdout.split()
 if not names:
     raise SystemExit
+# Candidate set mirrors the version sources repo_version_at.sh /
+# repo_version_set.sh actually read and write - omitting one (e.g.
+# Cargo.toml, setup.cfg) makes a legitimate release commit fail the
+# structural provenance check and fall through to a duplicate
+# release. release_history.jsonl is a release-side artifact the
+# flow itself appends.
 cands = ({vf} if vf else set()) | \
-        {"package.json","pyproject.toml","VERSION","version.txt"}
+        {"package.json","pyproject.toml","Cargo.toml","setup.cfg",
+         "VERSION","version.txt",".version",
+         "canon/release_history.jsonl","release_history.jsonl"}
 ok = all(f in cands or f == "CHANGELOG.md" or
          (f.startswith(".changes/") and f.endswith(".md"))
          for f in names)

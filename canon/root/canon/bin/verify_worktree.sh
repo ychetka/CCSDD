@@ -104,8 +104,20 @@ if [ -n "$BASELINE_CMD" ]; then
     if [ -x "$CANON_DIR/baseline_env.sh" ]; then
       bash "$CANON_DIR/baseline_env.sh" "$WT" >/dev/null 2>&1 || ENV_RC=$?
     elif [ -f "$WT/package.json" ]; then
-      (cd "$WT" && ${TIMEOUT_BIN:+$TIMEOUT_BIN 300} \
-        npm ci --silent --ignore-scripts) >/dev/null 2>&1 || ENV_RC=$?
+      # JS repos: same network-free default as the Python path -
+      # `npm ci` reaches the registry, executes the lockfile's
+      # install scripts surface and breaks air-gapped runners.
+      # The default runs the baseline against an already prepared
+      # node_modules (NODE_PATH + .bin on PATH, mirroring the
+      # PYTHONPATH approach); an explicit npm ci is opt-in only via
+      # VW_ALLOW_INSTALL=1 (local/debug - never in gates).
+      if [ "${VW_ALLOW_INSTALL:-0}" = "1" ]; then
+        (cd "$WT" && ${TIMEOUT_BIN:+$TIMEOUT_BIN 300} \
+          npm ci --silent --ignore-scripts) >/dev/null 2>&1 || ENV_RC=$?
+      else
+        export NODE_PATH="$WT/node_modules${NODE_PATH:+:$NODE_PATH}"
+        export PATH="$WT/node_modules/.bin:$PATH"
+      fi
     elif [ -f "$WT/pyproject.toml" ] || [ -f "$WT/setup.py" ] \
          || ls "$WT"/requirements*.txt >/dev/null 2>&1; then
       # Python repos: the baseline runs on the system interpreter

@@ -104,7 +104,19 @@ for rel in files:
     stem = stem_of(rel)
     in_axes = in_spec = False
     cur_axis = None
+    fence = None   # ``` and ~~~ code blocks are opaque - an
+                 # `### axis:` inside a spec example is not a
+                 # declaration
     for raw in body.splitlines():
+        s = raw.strip()
+        fm = re.match(r"^(`{3,}|~{3,})", s)
+        if fm:
+            mark = fm.group(1)[0]
+            if fence is None: fence = mark
+            elif mark == fence: fence = None
+            continue
+        if fence is not None:
+            continue
         line = strip_markers(raw)
         if re.match(r"^##\s+Delegated decisions", line):
             in_axes = True; in_spec = False; continue
@@ -155,7 +167,17 @@ for rel in extra_contracts:
     else:
         body = body.stdout
     in_axes = False
+    fence = None
     for raw in body.splitlines():
+        s = raw.strip()
+        fm = re.match(r"^(`{3,}|~{3,})", s)
+        if fm:
+            mark = fm.group(1)[0]
+            if fence is None: fence = mark
+            elif mark == fence: fence = None
+            continue
+        if fence is not None:
+            continue
         line = strip_markers(raw)
         if re.match(r"^##\s+Delegated decisions", line):
             in_axes = True; continue

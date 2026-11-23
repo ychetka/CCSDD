@@ -179,21 +179,35 @@ def inflight_clear(con, call_id):
 
 
 def inflight_reap_dead(con):
-    """Return and remove inflight rows whose pid no longer exists -
-    a killed caller's orphaned quota, ready for counters_refund."""
-    rows = con.execute(
-        "SELECT call_id, pid, keys_json FROM inflight").fetchall()
-    dead = []
-    for call_id, pid, keys_json in rows:
-        try:
-            os.kill(pid, 0)
-        except (ProcessLookupError, OverflowError, ValueError):
-            dead.append((call_id, keys_json))
-        except PermissionError:
-            continue   # alive, owned by another uid
-    for call_id, _ in dead:
-        con.execute("DELETE FROM inflight WHERE call_id = ?", (call_id,))
-    return [json.loads(k) for _, k in dead]
+    """Reap inflight rows whose pid no longer exists AND refund their
+    quota in ONE BEGIN IMMEDIATE transaction. The row must be removed
+    and the counters decremented atomically: a plain SELECT-then-
+    DELETE-then-refund lets a second caller snapshot the same dead
+    row before the delete commits and refund it twice (quota leak)."""
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        rows = con.execute(
+            "SELECT call_id, pid, keys_json FROM inflight").fetchall()
+        dead = []
+        for call_id, pid, keys_json in rows:
+            try:
+                os.kill(pid, 0)
+            except (ProcessLookupError, OverflowError, ValueError):
+                dead.append((call_id, keys_json))
+            except PermissionError:
+                continue   # alive, owned by another uid
+        for call_id, keys_json in dead:
+            con.execute(
+                "DELETE FROM inflight WHERE call_id = ?", (call_id,))
+            for k in json.loads(keys_json):
+                con.execute(
+                    "UPDATE counters SET value = MAX(value - 1, 0) "
+                    "WHERE key = ?", (k,))
+        con.execute("COMMIT")
+        return len(dead)
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
 
 
 def journal_append(con, entry):

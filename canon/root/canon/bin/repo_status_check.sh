@@ -5,10 +5,13 @@
 #
 # Review verdicts use the SAME semantics as issue_merge.sh /
 # panel_gate.sh: the expected reviewer set comes from project.json
-# (review.reviewer_logins UNION review.reviewer_profiles keys), every
-# expected login must APPROVE bound to the CURRENT head sha, and a
-# pending or stale verdict is reported - never a bare
-# "approved: true" from a single stray APPROVED row.
+# (review.reviewer_logins UNION reviewer_profiles keys MINUS
+# high_risk_only profiles - an ordinary PR never waits on the
+# second-family gate), every expected login must APPROVE bound to
+# the CURRENT head sha, the PR author's own reviews never count,
+# a login in reviewRequests has no standing verdict, and a pending
+# or stale verdict is reported - never a bare "approved: true"
+# from a single stray APPROVED row.
 set -uo pipefail
 TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
 cd "$TOP"
@@ -20,75 +23,148 @@ PR="${1:?usage: repo_status_check.sh <pr_number>}"
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 GH_BIN="$("$CANON_DIR/bin/gh_id.sh" merge)"
 
-GH_OUT=$("$GH_BIN" pr view "$PR" --json statusCheckRollup,mergeable,reviews,headRefOid 2>/dev/null) || {
+GH_OUT=$("$GH_BIN" pr view "$PR" --json statusCheckRollup,mergeable,reviews,headRefOid,author,reviewRequests,files 2>/dev/null) || {
   echo '{"status":"error","failure_class":"upstream_error","message":"gh pr view failed"}'
   exit 1
 }
-EXPECTED=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os
+CFG=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os
 try:
     pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
     rev = pj.get("review") or {}
-    seen = []
+    seen, high, fam = [], [], []
     for x in (rev.get("reviewer_logins") or []):
-        x = str(x)
-        if x not in seen: seen.append(x)
+        x = str(x).strip().lower()
+        if x and x not in seen: seen.append(x)
     rp = rev.get("reviewer_profiles") or {}
     if isinstance(rp, dict):
-        for x in rp:
-            if x not in seen: seen.append(x)
-    print("\n".join(seen))
+        for x, prof in rp.items():
+            lx = str(x).strip().lower()
+            if isinstance(prof, dict) and prof.get("high_risk_only") is True:
+                if lx and lx not in high: high.append(lx)
+            elif lx and lx not in seen:
+                seen.append(lx)
+            if isinstance(prof, dict):
+                fam.append("%s\t%s" % (lx, prof.get("model_family") or "default"))
+    print(json.dumps({"expected": seen, "high_risk": high, "family_map": dict(f.split("\t",1) for f in fam)}))
 except Exception:
-    print("")' 2>/dev/null || true)
-GH_OUT="$GH_OUT" EXPECTED="$EXPECTED" python3 -c '
+    print(json.dumps({"expected": [], "high_risk": [], "family_map": {}}))' 2>/dev/null || true)
+
+# risk:high flag from the PR's .changes fragments - front-zone
+# key:value only, same parser contract as issue_merge's FRAG_SCAN.
+# Fragment bodies come from the PR head via the contents API so the
+# report does not depend on the local checkout having the branch.
+RISK_HIGH=$(GH_OUT="$GH_OUT" GH_BIN="$GH_BIN" python3 -c '
+import json, os, re, subprocess, base64
+try:
+    d = json.loads(os.environ["GH_OUT"])
+except Exception:
+    print("no"); raise SystemExit(0)
+head = d.get("headRefOid") or ""
+frags = [f.get("path") for f in (d.get("files") or [])
+         if (f.get("path") or "").startswith(".changes/")
+         and f.get("path").endswith(".md")
+         and not f.get("path").endswith("/README.md")]
+risk = False
+for p in frags:
+    out = subprocess.run(
+        [os.environ["GH_BIN"], "api",
+         "repos/{owner}/{repo}/contents/" + p + "?ref=" + head,
+         "--jq", ".content"],
+        capture_output=True, text=True)
+    if out.returncode != 0:
+        continue
+    try:
+        body = base64.b64decode(out.stdout.strip()).decode("utf-8", "replace")
+    except Exception:
+        continue
+    lines = body.splitlines()
+    start = 1 if lines and lines[0].strip() == "---" else 0
+    for ln in lines[start:]:
+        s = ln.strip()
+        if not s:
+            continue
+        if s == "---":
+            break
+        m = re.match(r"^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$", s)
+        if not m:
+            break
+        if m.group(1).lower() == "risk" and \
+                m.group(2).strip().strip('"').strip("'") == "high":
+            risk = True
+print("yes" if risk else "no")' 2>/dev/null || echo no)
+
+GH_OUT="$GH_OUT" CFG="$CFG" RISK_HIGH="$RISK_HIGH" python3 -c '
 import json, os, sys
 try:
     d = json.loads(os.environ["GH_OUT"])
+    cfg = json.loads(os.environ.get("CFG") or "{}")
 except Exception:
     print(json.dumps({"status":"error","failure_class":"upstream_error",
                       "message":"unparseable gh output"}))
     sys.exit(1)
 head = d.get("headRefOid")
+pr_author = (((d.get("author") or {}).get("login")) or "").lower()
 checks = [{"name": c.get("name") or c.get("context","?"),
            "state": c.get("conclusion") or c.get("state","?")}
           for c in (d.get("statusCheckRollup") or [])]
 mergeable = d.get("mergeable") == "MERGEABLE"
-expected = [l for l in os.environ.get("EXPECTED","").splitlines() if l.strip()]
+expected = set(cfg.get("expected") or [])
+high_risk_reviewers = set(cfg.get("high_risk") or [])
+family_map = {k.lower(): v for k, v in (cfg.get("family_map") or {}).items()}
+risk_high = os.environ.get("RISK_HIGH") == "yes"
 # Same semantics as the merge gate: the LATEST verdict-state review
-# per reviewer, bound to the current head - a stale APPROVED on an
-# old sha must not report as approved.
+# per reviewer, bound to the current head; reviews by the PR author
+# never count; a login in reviewRequests holds no standing verdict.
 latest = {}
+self_reviews = []
 for r in (d.get("reviews") or []):
-    # verdict events only (see issue_merge.sh): COMMENTED must not
-    # erase a standing APPROVE/CHANGES_REQUESTED verdict
     if r.get("state") not in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
         continue
-    author = (r.get("author") or {}).get("login", "?")
-    cur = latest.get(author)
-    if cur is None or (r.get("submittedAt") or "") > (cur.get("submittedAt") or ""):
-        latest[author] = r
-approved_on_head, blocking, pending = [], [], []
-subjects = expected or sorted(latest)
-for login in subjects:
-    r = latest.get(login)
-    if r is None:
-        if expected:
-            pending.append(login)
+    author = ((r.get("author") or {}).get("login") or "").lower()
+    if author == pr_author:
+        if r.get("state") in ("APPROVED", "CHANGES_REQUESTED"):
+            self_reviews.append(author)
         continue
+    cur = latest.get(author)
+    # gh returns reviews oldest-first; keep the last verdict. The id
+    # ordering used by issue_merge is unavailable here, so fall back
+    # to list order (submittedAt is second-resolution and ties).
+    latest[author] = r
+pending_reviewers = {((r.get("login") or "")).lower()
+                     for r in (d.get("reviewRequests") or [])
+                     if isinstance(r, dict)}
+approved_on_head, blocking = [], []
+for login, r in latest.items():
     st = r.get("state")
     rc = (r.get("commit") or {}).get("oid")
-    # APPROVED counts only when bound to the CURRENT head sha. An
-    # APPROVED without a commit oid is unverifiable, not approved -
-    # fail closed instead of treating "binding unknown" as current.
-    if st == "APPROVED" and rc == head:
+    if login not in expected | high_risk_reviewers:
+        if st == "CHANGES_REQUESTED":
+            blocking.append("%s:CHANGES_REQUESTED" % login)
+        continue
+    if st == "APPROVED" and rc == head and login not in pending_reviewers:
         approved_on_head.append(login)
-    elif st == "CHANGES_REQUESTED" or (st == "APPROVED" and rc != head):
+    elif st == "CHANGES_REQUESTED" or (st == "APPROVED" and rc and rc != head):
         blocking.append("%s:%s" % (login, st))
-approved = bool(subjects) and not blocking and not pending \
-    and len(approved_on_head) == len(subjects)
-print(json.dumps({"checks": checks, "mergeable": mergeable,
-                  "approved": approved, "approved_by": approved_on_head,
-                  "pending_reviewers": pending,
-                  "blocking_reviews": blocking,
-                  "expected_reviewers": expected,
-                  "actual_head": head, "status": "ok"}))
+missing = sorted(expected - set(approved_on_head))
+# risk:high - the two distinct model families count across ordinary
+# AND high_risk_only approvers, exactly like issue_merge.
+approved_families = {family_map.get(l, "default") for l in approved_on_head}
+family_ok = (not risk_high) or len(approved_families) >= 2
+approved = not missing and not blocking and family_ok \
+    and (expected or approved_on_head)
+out = {"checks": checks, "mergeable": mergeable,
+       "approved": approved, "approved_by": approved_on_head,
+       "missing_approvals": missing,
+       "pending_reviewers": sorted(pending_reviewers & (expected | high_risk_reviewers)),
+       "blocking_reviews": blocking,
+       "self_reviews_ignored": self_reviews,
+       "expected_reviewers": sorted(expected),
+       "high_risk_reviewers": sorted(high_risk_reviewers),
+       "risk_high": risk_high,
+       "approved_model_families": sorted(approved_families),
+       "actual_head": head, "status": "ok"}
+if risk_high and not family_ok:
+    out["family_deficit"] = ("risk: high requires APPROVED reviews "
+        "from >=2 distinct model families; got %d" % len(approved_families))
+print(json.dumps(out))
 '

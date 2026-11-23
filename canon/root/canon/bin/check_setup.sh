@@ -129,23 +129,29 @@ if isinstance(r, dict):
         if not isinstance(pn, list) or not all(isinstance(x, str) for x in pn):
             errs.append("review.panel must be an array of domain names")
 m = cfg.get("merge")
-if isinstance(m, dict) and "gh_bin" in m:
-    gb = m["gh_bin"]
-    if not isinstance(gb, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", gb or ""):
-        errs.append("merge.gh_bin must be a bare binary basename (no path separators)")
+if isinstance(m, dict):
+    for _k in ("gh_bin", "api_bin"):
+        if _k in m:
+            _v = m[_k]
+            if not isinstance(_v, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", _v or ""):
+                errs.append(f"merge.{_k} must be a bare binary basename (no path separators)")
 # Identity separation: the merge/author binary must differ from the
 # reviewer binary whenever a reviewer identity is configured on a
-# real forge. The comparison uses EFFECTIVE binaries - an omitted
-# key resolves to "gh" in gh_id.sh, so "one side unset, other side
-# gh" is still a collision, not a pass. Same binary => PR author
-# == reviewer => forge self-approve rejection and a merge identity
-# able to publish review signals.
+# real forge. The comparison uses EFFECTIVE binaries through the
+# same resolution order as gh_id.sh - api_bin beats gh_bin and an
+# omitted key resolves to the forge default - so "api_bin set on
+# one side" can never smuggle an identity collision past the check.
+# Same binary => PR author == reviewer => forge self-approve
+# rejection and a merge identity able to publish review signals.
 _fr = cfg.get("forge")
+_fdef = {"gitlab": "glab"}.get(_fr, "gh")
 _reviewer_cfg = isinstance(r, dict) and (
     bool(r.get("reviewer_logins")) or bool(r.get("reviewer_profiles")))
 if _reviewer_cfg and _fr != "test":
-    _mb = (m.get("gh_bin") if isinstance(m, dict) else None) or "gh"
-    _rb = (r.get("gh_bin") if isinstance(r, dict) else None) or "gh"
+    _mb = ((m.get("api_bin") or m.get("gh_bin"))
+           if isinstance(m, dict) else None) or _fdef
+    _rb = ((r.get("api_bin") or r.get("gh_bin"))
+           if isinstance(r, dict) else None) or _fdef
     if _mb == _rb:
         errs.append("merge.gh_bin must differ from review.gh_bin "
                     "(author and reviewer identities must be separate; "
@@ -161,9 +167,10 @@ if rp is not None:
             if not re.fullmatch(r"[A-Za-z0-9-]+(\[bot\])?", login or ""):
                 errs.append(f"review.reviewer_profiles key {login!r} is not a valid GitHub login")
             if isinstance(prof, dict):
-                gb2 = prof.get("gh_bin")
-                if gb2 is not None and not re.fullmatch(r"[A-Za-z0-9_-]+", str(gb2)):
-                    errs.append(f"review.reviewer_profiles.{login}.gh_bin must be a bare binary basename")
+                for _k in ("gh_bin", "api_bin"):
+                    _v2 = prof.get(_k)
+                    if _v2 is not None and not re.fullmatch(r"[A-Za-z0-9_-]+", str(_v2)):
+                        errs.append(f"review.reviewer_profiles.{login}.{_k} must be a bare binary basename")
                 mf = prof.get("model_family")
                 if mf is not None and not re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", str(mf)):
                     errs.append(f"review.reviewer_profiles.{login}.model_family must be a slug (e.g. 'anthropic', 'openai')")
@@ -589,7 +596,34 @@ PY
 esac
 fi
 
-if gh auth status >/dev/null 2>&1; then ok "gh auth"; else fail "gh not authenticated"; fi
+# Forge-aware credential check: the test forge needs no CLI auth at
+# all; github/gitlab resolve the merge identity through gh_id.sh
+# (api_bin > gh_bin > forge default) and ask THAT binary for auth
+# status - a gitlab project must never be graded on `gh`.
+FORGE=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os
+try: print((json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json"))).get("forge") or "github"))
+except Exception: print("github")' 2>/dev/null || echo github)
+if [ "$FORGE" = "test" ]; then
+  ok "forge=test - no forge CLI auth required"
+else
+  AUTH_BIN=$(bash "$CANON_DIR/bin/gh_id.sh" merge 2>/dev/null || true)
+  AUTH_BIN="${AUTH_BIN:-gh}"
+  case "$AUTH_BIN" in
+    gh|glab)
+      if command -v "$AUTH_BIN" >/dev/null 2>&1 \
+         && "$AUTH_BIN" auth status >/dev/null 2>&1; then
+        ok "$AUTH_BIN auth"
+      else
+        fail "$AUTH_BIN not authenticated"
+      fi ;;
+    *)
+      if command -v "$AUTH_BIN" >/dev/null 2>&1; then
+        ok "forge CLI $AUTH_BIN present (auth check is forge-specific)"
+      else
+        fail "forge CLI $AUTH_BIN not found"
+      fi ;;
+  esac
+fi
 
 # Runtime adapter integrity: the Devin adapter wires .devin/* ->
 # canon/ plus a .windsurfrules symlink and a compiled

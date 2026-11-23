@@ -223,15 +223,11 @@ today = datetime.date.today().isoformat()
 con = gw_store.connect(db_path)
 # Orphan reaper: a caller killed between quota-spend and refund
 # (SIGKILL/OOM leaves no finally-block) strands its increments as an
-# inflight row keyed by pid. Rows whose pid is dead are refunded
-# here so the kill can never silently burn the budget.
+# inflight row keyed by pid. Rows whose pid is dead are reaped and
+# refunded inside ONE transaction (gw_store.inflight_reap_dead) so
+# two concurrent callers can never refund the same orphan twice.
 try:
-    for dead_keys in gw_store.inflight_reap_dead(con):
-        try:
-            gw_store.counters_refund(con, dead_keys)
-        except Exception as re_:
-            print(f"partner_call: WARN orphan refund failed: {re_}",
-                  file=sys.stderr)
+    gw_store.inflight_reap_dead(con)
 except Exception:
     pass   # an older DB without the table must not block the call
 spent_keys = []
