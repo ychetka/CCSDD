@@ -85,7 +85,15 @@ def stem_of(rel):
 declared = {}   # rel -> set(norm(axis))
 frag_stems = {stem_of(f) for f in files
               if f.startswith(".changes/") and f.endswith(".md")}
-decided = {}    # spec_stem -> set(norm(axis))
+decided = {}    # spec_rel -> set(norm(axis))
+# Explicit binding: a spec may name the contract it resolves via
+# '- contract: <repo_rel_path>' inside '## Impl spec'. In multi-item
+# / epic PRs every contract file is literally named contract.py|ts
+# (stem 'contract'), so stem-based binding lets module_A's axes be
+# "covered" by module_B's spec. When a spec declares contract paths
+# only those bind it; a spec with no declarations keeps the legacy
+# stem rule for backward compatibility.
+spec_contracts = {}  # spec_rel -> set(rel_path) or empty set
 for rel in files:
     p = os.path.join(top, rel)
     try:
@@ -111,11 +119,15 @@ for rel in files:
                 name = norm(m.group(1))
                 if name: declared.setdefault(rel, set()).add(name)
         if in_spec:
+            mc = re.match(r"^-\s+contract:\s*(\S+)", line)
+            if mc:
+                spec_contracts.setdefault(rel, set()).add(mc.group(1).strip())
+                continue
             m = re.match(r"^###\s+axis:\s*([^|]+)", line)
             if m:
                 cur_axis = norm(m.group(1)); continue
             if cur_axis and re.match(r"^-\s+decision:\s*\S", line):
-                decided.setdefault(stem, set()).add(cur_axis)
+                decided.setdefault(rel, set()).add(cur_axis)
 
 if not declared:
     print("AXES: none")
@@ -123,12 +135,26 @@ if not declared:
     print("PASS: no delegated axes - fidelity reviewer may auto-pass")
     raise SystemExit(0)
 all_declared = {a for s in declared.values() for a in s}
+def spec_binds(spec_rel):
+    bound = spec_contracts.get(spec_rel)
+    if bound:
+        return bound                      # explicit contract: paths
+    return None                           # legacy stem rule applies
+
 missing = []
 for rel, axes_of_file in declared.items():
     candidates = frag_stems | {stem_of(rel)}
-    covered = any(axes_of_file <= spec_axes
-                  for stem, spec_axes in decided.items()
-                  if stem in candidates)
+    covered = False
+    for spec_rel, spec_axes in decided.items():
+        bound = spec_binds(spec_rel)
+        if bound is not None:
+            if rel not in bound:
+                continue
+        elif stem_of(spec_rel) not in candidates:
+            continue
+        if axes_of_file <= spec_axes:
+            covered = True
+            break
     if not covered:
         missing.extend(sorted(axes_of_file))
 missing = sorted(set(missing))

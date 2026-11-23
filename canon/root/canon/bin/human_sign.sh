@@ -210,11 +210,30 @@ if not (0 <= age <= float(os.environ["WINDOW"])):
 # the pipeline does not strand the human's envelope.
 store = os.environ["NONCE_STORE"]
 consume = os.environ.get("CONSUME") == "1"
-used = set()
+# Store format: '<nonce>|<artifact_hash>' per line (legacy bare
+# '<nonce>' lines still replay-block). Binding the artifact makes
+# consume idempotent: the same envelope re-presented for the SAME
+# artifact after a post-consume pipeline failure is a retry, not a
+# replay; the same nonce on a DIFFERENT artifact is a replay.
+used = {}
 if os.path.isfile(store):
-    used = {ln.strip() for ln in open(store) if ln.strip()}
+    # shared flock on the read path: a concurrent consume's check+
+    # append must not race a verify that reads a half-written file.
+    with open(store, "r") as fh:
+        fcntl.flock(fh, fcntl.LOCK_SH)
+        for ln in fh:
+            ln = ln.strip()
+            if not ln:
+                continue
+            n, _, art = ln.partition("|")
+            used[n] = art or None
 if e["nonce"] in used:
-    sys.exit("human_sign: envelope nonce already consumed (replay)")
+    if used[e["nonce"]] == sha:
+        ALREADY = True
+    else:
+        sys.exit("human_sign: envelope nonce already consumed (replay)")
+else:
+    ALREADY = False
 sig_raw = base64.b64decode(e["signature_b64"])
 tmp = tempfile.mkdtemp(prefix="ccsdd-verify.")
 try:
@@ -232,15 +251,31 @@ try:
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
 if consume:
+    if ALREADY:
+        # Idempotent re-consume: a merge that consumed the nonce and
+        # then failed downstream (release step) can be retried
+        # without forcing the human to re-sign the same artifact.
+        print(f"human_sign: envelope OK - '{e['verdict']}' for artifact {sha[:16]}.. (nonce already consumed for this artifact)")
+        raise SystemExit(0)
     os.makedirs(os.path.dirname(store), exist_ok=True)
     # flock around check+append: concurrent merges must not both
     # pass the replay check before either records the nonce.
     with open(store, "a+") as fh:
         fcntl.flock(fh, fcntl.LOCK_EX)
         fh.seek(0)
-        if e["nonce"] in {ln.strip() for ln in fh if ln.strip()}:
-            sys.exit("human_sign: envelope nonce already consumed (replay)")
-        fh.write(e["nonce"] + "\n")
+        again = False
+        for ln in fh:
+            ln = ln.strip()
+            if not ln:
+                continue
+            n, _, art = ln.partition("|")
+            if n == e["nonce"]:
+                if art == sha:
+                    again = True
+                    break
+                sys.exit("human_sign: envelope nonce already consumed (replay)")
+        if not again:
+            fh.write(e["nonce"] + "|" + sha + "\n")
 print(f"human_sign: envelope OK - '{e['verdict']}' for artifact {sha[:16]}..")
 PY
   ) || exit 2

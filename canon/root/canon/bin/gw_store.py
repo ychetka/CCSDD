@@ -21,6 +21,7 @@ import json
 import os
 import sqlite3
 import sys
+import time
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -39,6 +40,12 @@ CREATE TABLE IF NOT EXISTS journal (
   audit_key  TEXT,
   request    TEXT,
   response   TEXT
+);
+CREATE TABLE IF NOT EXISTS inflight (
+  call_id   TEXT PRIMARY KEY,
+  pid       INTEGER NOT NULL,
+  ts        INTEGER NOT NULL,
+  keys_json TEXT NOT NULL
 );
 """
 
@@ -154,6 +161,39 @@ def counters_refund(con, keys):
     except Exception:
         con.execute("ROLLBACK")
         raise
+
+
+def inflight_add(con, call_id, pid, keys):
+    """Record a quota-spending call BEFORE the network hop. A caller
+    killed mid-call (SIGKILL/OOM, an unhandled signal Python cannot
+    catch) leaves this row; the next partner_call run reaps it and
+    refunds the orphaned increments."""
+    con.execute(
+        "INSERT OR REPLACE INTO inflight (call_id, pid, ts, keys_json) "
+        "VALUES (?,?,?,?)",
+        (call_id, pid, int(time.time()), json.dumps(list(keys))))
+
+
+def inflight_clear(con, call_id):
+    con.execute("DELETE FROM inflight WHERE call_id = ?", (call_id,))
+
+
+def inflight_reap_dead(con):
+    """Return and remove inflight rows whose pid no longer exists -
+    a killed caller's orphaned quota, ready for counters_refund."""
+    rows = con.execute(
+        "SELECT call_id, pid, keys_json FROM inflight").fetchall()
+    dead = []
+    for call_id, pid, keys_json in rows:
+        try:
+            os.kill(pid, 0)
+        except (ProcessLookupError, OverflowError, ValueError):
+            dead.append((call_id, keys_json))
+        except PermissionError:
+            continue   # alive, owned by another uid
+    for call_id, _ in dead:
+        con.execute("DELETE FROM inflight WHERE call_id = ?", (call_id,))
+    return [json.loads(k) for _, k in dead]
 
 
 def journal_append(con, entry):

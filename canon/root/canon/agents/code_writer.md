@@ -44,7 +44,9 @@ trust.
   including one-line import edits, is a `SCOPE_DELTA` in the report.
   The commit wrapper (`ship_commit.sh`, when the commit goes through
   it) mechanically re-checks scope against
-  `canon/scope_whitelist.txt` — that is a wrapper-level gate, not a
+  `.canon_scope_whitelist.txt` at the worktree root (dropped by the
+  director; the shared `canon/scope_whitelist.txt` is only a
+  non-worktree fallback) — that is a wrapper-level gate, not a
   universal control.
 - Do not guess APIs: calling an external function/method/package —
   only after you have seen its signature in real code (grep/read) or

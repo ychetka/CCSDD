@@ -220,6 +220,19 @@ today = datetime.date.today().isoformat()
 # and the transaction commits BEFORE the backend call below (a
 # transaction is never held open across the network).
 con = gw_store.connect(db_path)
+# Orphan reaper: a caller killed between quota-spend and refund
+# (SIGKILL/OOM leaves no finally-block) strands its increments as an
+# inflight row keyed by pid. Rows whose pid is dead are refunded
+# here so the kill can never silently burn the budget.
+try:
+    for dead_keys in gw_store.inflight_reap_dead(con):
+        try:
+            gw_store.counters_refund(con, dead_keys)
+        except Exception as re_:
+            print(f"partner_call: WARN orphan refund failed: {re_}",
+                  file=sys.stderr)
+except Exception:
+    pass   # an older DB without the table must not block the call
 spent_keys = []
 if call_class == "audit":
     # Global daily backstop bounds audit-key spraying: the per-key
@@ -251,6 +264,15 @@ else:
         sys.exit(4)
     spent_keys = [key]
 
+# Inflight ledger: record the spend under THIS pid before the
+# network hop so a SIGKILL orphan is reapable by the next run.
+import uuid
+CALL_ID = uuid.uuid4().hex
+try:
+    gw_store.inflight_add(con, CALL_ID, os.getpid(), spent_keys)
+except Exception:
+    pass
+
 def _refund():
     # A call that never reached a partner answer (timeout, backend
     # error) must not consume irreplaceable budget - return the
@@ -263,6 +285,11 @@ def _refund():
         # must not be silent either - log it for postmortem.
         print(f"partner_call: WARN quota refund failed: {re_}",
               file=sys.stderr)
+    finally:
+        try:
+            gw_store.inflight_clear(con, CALL_ID)
+        except Exception:
+            pass
 
 ts = datetime.datetime.now(datetime.timezone.utc)
 # Every external call carries an explicit deadline (RULES.md) - a
@@ -274,6 +301,10 @@ signal.signal(signal.SIGALRM, _timeout)
 signal.alarm(call_timeout)
 try:
     result = PartnerMCPServer(partner_id=partner).call_tool(tool, call_args)
+    try:
+        gw_store.inflight_clear(con, CALL_ID)
+    except Exception:
+        pass
 except TimeoutError as e:
     _refund()
     print(f"partner_call: REFUSED - {e} - "

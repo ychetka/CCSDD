@@ -190,6 +190,14 @@ fi
 # (info/excluded by item_worktree open); absent that, the shared
 # $CANON_DIR whitelist applies.
 WL="$TOP/.canon_scope_whitelist.txt"
+if [ ! -f "$WL" ] && [ -L "$TOP/canon" ]; then
+  # canon/ is a symlink here -> item worktree under shared control
+  # plane. The shared $CANON_DIR whitelist is NOT a valid fallback:
+  # parallel executors would race on one global file. The director
+  # must drop .canon_scope_whitelist.txt at this worktree's root.
+  echo "SCOPE: item worktree without .canon_scope_whitelist.txt - refusing shared-canon fallback (parallel executors race on it)" >&2
+  exit 1
+fi
 [ -f "$WL" ] || WL="$CANON_DIR/scope_whitelist.txt"
 # Canonicalize only the parent directory, never the leaf: resolving
 # the leaf would let an unstaged symlink at the whitelist path push
@@ -337,20 +345,39 @@ git -c diff.external= diff --cached --text --no-ext-diff | "$CANON_DIR/bin/hygie
 # commit-msg/pre-commit hook from mutating the index or message after
 # the gates passed; the post-checks below detect any residual drift.
 STAGED_LIST=$(tr '\0' '\n' < "$STAGED_Z" | LC_ALL=C sort | $SHA256_BIN | cut -d' ' -f1)
+PRE_COMMIT_HEAD=$(git rev-parse --verify -q HEAD || echo "")
 git commit --no-verify -m "$MSG" || { echo "git commit failed" >&2; exit 1; }
 
 # TOCTOU verification: the committed file set and message must equal
 # exactly what the gates evaluated. A hook that re-staged files or
-# rewrote the message is caught here, never silently shipped.
+# rewrote the message is caught here, never silently shipped. On
+# mismatch the compromised commit is rolled back FIRST - exit 1 with
+# it still on HEAD would let a later ship_push publish it anyway.
+_toctou_rollback() {
+  if [ -n "$PRE_COMMIT_HEAD" ]; then
+    # --soft keeps the (mutated) index contents for forensics while
+    # moving HEAD back; the caller re-stages cleanly on retry.
+    git reset --soft "$PRE_COMMIT_HEAD" >/dev/null 2>&1 || \
+      git update-ref -d HEAD >/dev/null 2>&1 || true
+  else
+    git update-ref -d HEAD >/dev/null 2>&1 || true
+  fi
+}
 COMMIT_LIST=$(git diff-tree --no-commit-id --name-only -z -r --no-renames HEAD | tr '\0' '\n' | LC_ALL=C sort | $SHA256_BIN | cut -d' ' -f1)
 if [ "$COMMIT_LIST" != "$STAGED_LIST" ]; then
   echo "TOCTOU: committed file set differs from the gated index" >&2
   git diff-tree --no-commit-id --name-status -r --no-renames HEAD >&2
-  echo "(a commit hook mutated the index - inspect .git/hooks)" >&2
+  echo "(a commit hook mutated the index - inspect .git/hooks; rolling back)" >&2
+  _toctou_rollback
   exit 1
 fi
-COMMITTED_MSG=$(git log -1 --format=%B)
-if [ "$COMMITTED_MSG" != "$MSG" ]; then
+# git log %B keeps the message's own trailing newline while -m does
+# not add one - compare newline-normalized forms or every clean
+# commit reads as drift.
+COMMITTED_MSG=$(git log -1 --format=%B | sed -e 's/[[:space:]]*$//')
+NORM_MSG=$(printf '%s' "$MSG" | sed -e 's/[[:space:]]*$//')
+if [ "$COMMITTED_MSG" != "$NORM_MSG" ]; then
   echo "TOCTOU: committed message differs from the gated message" >&2
+  _toctou_rollback
   exit 1
 fi

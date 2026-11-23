@@ -157,6 +157,46 @@ elif [[ "$HEAD_MSG" =~ ^Merge[[:space:]]pull[[:space:]]request[[:space:]]#[0-9]+
 elif [[ "$HEAD_MSG" =~ ^Merge[[:space:]]branch[[:space:]]'release/v([0-9]+\.[0-9]+\.[0-9]+)(-r[0-9a-zA-Z]+)?'([[:space:]]+into[[:space:]][^[:space:]]+)?$ ]]; then
   RTAG="v${BASH_REMATCH[1]}"
 fi
+if [ -z "$RTAG" ]; then
+  # Structural fallback: a repo whose merge template doesn't match
+  # the subjects above (custom squash title, rebase + trailer) still
+  # produces a provable release commit - its diff vs first parent
+  # touches ONLY {version source file, CHANGELOG.md, .changes/*} and
+  # the version inside it is a strict semver bump over the parent.
+  # Anything else (a forged subject, a mixed-content commit) stays
+  # unrecognized and the release resumes through the normal path.
+  STRUCT=$(SHA="$SHA" CANON_DIR="$CANON_DIR" python3 - <<'PY'
+import json, os, subprocess
+sha, canon = os.environ["SHA"], os.environ["CANON_DIR"]
+vf = None
+try:
+    pj = json.load(open(os.path.join(canon, "project.json")))
+    vf = (pj.get("version") or {}).get("file")
+except Exception:
+    pass
+names = subprocess.run(
+    ["git","diff-tree","--no-commit-id","--name-only","-r",
+     "--first-parent",sha],
+    capture_output=True, text=True).stdout.split()
+if not names:
+    raise SystemExit
+cands = ({vf} if vf else set()) | \
+        {"package.json","pyproject.toml","VERSION","version.txt"}
+ok = all(f in cands or f == "CHANGELOG.md" or
+         (f.startswith(".changes/") and f.endswith(".md"))
+         for f in names)
+print("yes" if ok else "")
+PY
+)
+  if [ "$STRUCT" = "yes" ]; then
+    HEAD_VER=$(bash "$CANON_DIR/bin/repo_version_at.sh" "$SHA" 2>/dev/null || true)
+    PARENT_VER=$(bash "$CANON_DIR/bin/repo_version_at.sh" "$SHA^" 2>/dev/null || true)
+    if [[ "$HEAD_VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+       && [ -n "$PARENT_VER" ] && [ "$HEAD_VER" != "$PARENT_VER" ]; then
+      RTAG="v$HEAD_VER"
+    fi
+  fi
+fi
 if [ -n "$RTAG" ]; then
   # Provenance: the tag version must equal the version source ON the
   # base head - a hand-crafted commit/PR titled 'release: vX.Y.Z'
@@ -364,21 +404,40 @@ for f in os.environ["FRAGS"].splitlines():
     # strip the whole '## Spec impact' section (up to the next heading)
     body = re.sub(r"(?im)^\s*#+\s*spec impact\s*$[\s\S]*?(?=^\s*#|\Z)",
                   "", body)
-    lines = [l for l in body.splitlines()
-             if not re.match(
-                 r"^\s*(bump|user_visible|issue|manual_gate|ci_bootstrap)\s*:",
-                 l, re.I)
-             and not re.match(r"^\s*---\s*$", l)
-             and not re.match(r"^\s*#", l)]
+    # Structural fold: only frontmatter key:value lines and '---'
+    # fences are metadata. '#' lines INSIDE fenced code blocks are
+    # code comments - they must survive, or generated changelog
+    # snippets lose their comments. Nested list markers are kept and
+    # re-indented under the outer bullet instead of being flattened.
+    lines, in_fence = [], False
+    for l in body.splitlines():
+        if re.match(r"^\s*```", l):
+            in_fence = not in_fence
+            lines.append(l)
+            continue
+        if not in_fence and (
+            re.match(r"^\s*(bump|user_visible|issue|manual_gate|ci_bootstrap|risk)\s*:", l, re.I)
+            or re.match(r"^\s*---\s*$", l)
+            or re.match(r"^\s*#", l)):
+            continue
+        lines.append(l)
     txt = "\n".join(lines).strip()
-    # avoid double bullet markers
-    txt = re.sub(r"(?m)^\s*-\s+", "", txt).strip()
-    if txt: entries.append(txt)
+    # Nest the fragment body under one bullet: first line carries the
+    # marker, every continuation line indents two spaces so nested
+    # lists and fenced code stay valid markdown.
+    if txt:
+        first, _, rest = txt.partition("\n")
+        entry = "- " + first.strip()
+        if rest.strip():
+            entry += "\n" + "\n".join(
+                ("  " + ln if ln.strip() else ln)
+                for ln in rest.splitlines())
+        entries.append(entry)
 cl = os.path.join(wt, "CHANGELOG.md")
 old = open(cl, encoding="utf-8").read() if os.path.isfile(cl) else "# Changelog\n"
 if old and not old.endswith("\n"):
     old += "\n"
-section = f"\n## v{ver} - {date}\n\n" + "\n\n".join(f"- {e}" for e in entries) + "\n"
+section = f"\n## v{ver} - {date}\n\n" + "\n\n".join(entries) + "\n"
 m = re.match(r"^\s*#[^\n]*\n", old)
 if m:
     new = old[:m.end()] + section + old[m.end():]

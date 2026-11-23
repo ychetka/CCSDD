@@ -361,7 +361,7 @@ missing = [f for f in files
 if missing:
     print(f"SETUP FAIL: canon files missing per manifest: {missing[:5]}{'...' if len(missing)>5 else ''}")
     sys.exit(1)
-import hashlib, re as _re
+import hashlib, re as _re, subprocess
 sha = m.get("sha256") or {}
 if not isinstance(sha, dict) or not sha:
     print("SETUP FAIL: canon_manifest.json 'sha256' map is empty/not an object - integrity check disabled")
@@ -410,7 +410,10 @@ extra, drifted_hooks = [], []
 listed = {f for f in files}
 for dp, _dn, fns in os.walk(canon_dir):
     for name in sorted(fns):
-        if name.endswith((".lock", ".pyc")):
+        # Atomic-write siblings (*.tmp, *.lock, *.pyc) are transient
+        # by design - a parallel writer must not trip the tamper
+        # scan on its own rename target.
+        if name.endswith((".lock", ".pyc", ".tmp")):
             continue
         ap = os.path.join(dp, name)
         rel = "canon/" + os.path.relpath(ap, canon_dir)
@@ -423,6 +426,15 @@ for dp, _dn, fns in os.walk(canon_dir):
             if got != want:
                 drifted_hooks.append(rel)
             continue
+        # Declared project hooks (version_source.sh, baseline_env.sh)
+        # added mid-project are legal when the repo itself tracks
+        # them - git ls-files is authoritative, no extra pin needed.
+        if rel in ("canon/version_source.sh", "canon/baseline_env.sh"):
+            tr = subprocess.run(
+                ["git", "ls-files", "--error-unmatch", rel],
+                capture_output=True)
+            if tr.returncode == 0:
+                continue
         extra.append(rel)
 if drifted_hooks:
     print(f"SETUP FAIL: pinned adapter hooks drifted vs deploy stamp: {drifted_hooks[:5]}")

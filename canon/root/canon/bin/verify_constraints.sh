@@ -453,20 +453,54 @@ fi
 #     verbatim in a committed test name. An uncovered id is a
 #     missing test.
 if [ -n "$ISSUE_N" ] && [ -n "$BASE" ]; then
-  GWT_IDS=$(git -c core.quotepath=false diff --name-only "$BASE"...HEAD 2>/dev/null \
+  GWT_IDS=$( { git -c core.quotepath=false diff --name-only "$BASE"...HEAD 2>/dev/null \
             | grep -E '^(\.changes/[^/]+\.md|docs/.*\.md)$' \
-            | while read -r f; do git show "HEAD:$f" 2>/dev/null; done \
+            | while read -r f; do git show "HEAD:$f" 2>/dev/null; done; \
+            # roadmap.md item block is an authoritative source too -
+            # a contract-listed scenario forgotten in .changes must
+            # still reach the gate instead of degrading it to SKIP.
+            [ -f "$CANON_DIR/roadmap.md" ] \
+              && grep -oE "ITEM-${ISSUE_N}\.GWT-[0-9]+" "$CANON_DIR/roadmap.md"; } \
             | grep -oE 'ITEM-[0-9]+\.GWT-[0-9]+' | sort -u || true)
   if [ -n "$GWT_IDS" ]; then
-    MISSING=""
-    for id in $GWT_IDS; do
-      git -C "$TOP" grep -lF "$id" HEAD -- '*test*' '*.spec.*' >/dev/null 2>&1 \
-        || MISSING="$MISSING $id"
-    done
+    MISSING=$(GWT_IDS="$GWT_IDS" TOP="$TOP" python3 - <<'PY'
+import os, re, subprocess
+top = os.environ["TOP"]
+TESTDEF = re.compile(r"(def\s+test_|it\(|test\(|describe\()")
+SKIPMARK = re.compile(r"(@pytest\.mark\.skip|@unittest\.skip|it\.skip|test\.skip|xit\(|xtest\(|TODO|FIXME)")
+missing = []
+for gid in os.environ["GWT_IDS"].split():
+    out = subprocess.run(
+        ["git","-C",top,"grep","-nF",gid,"HEAD","--","*test*","*.spec.*"],
+        capture_output=True, text=True).stdout
+    covered = False
+    for ln in out.splitlines():
+        # HEAD:file:lineno:content
+        m = re.match(r"^HEAD:([^:]+):(\d+):(.*)$", ln)
+        if not m:
+            continue
+        path, lineno = m.group(1), int(m.group(2))
+        body = subprocess.run(
+            ["git","-C",top,"show","HEAD:"+path],
+            capture_output=True, text=True).stdout.splitlines()
+        lo = max(0, lineno-4); hi = min(len(body), lineno+4)
+        window = body[lo:hi]
+        # The id must sit inside a real test definition and carry no
+        # skip/TODO marker in its immediate context - a comment or a
+        # skipped test is not coverage.
+        if any(TESTDEF.search(w) for w in window) \
+           and not any(SKIPMARK.search(w) for w in window):
+            covered = True
+            break
+    if not covered:
+        missing.append(gid)
+print(" ".join(missing))
+PY
+)
     [ -z "$MISSING" ] \
       && pass "G/W/T scenario ids covered by committed tests" \
       || fail "G/W/T scenario ids missing from tests:$MISSING" \
-              "add a test whose name carries each scenario id verbatim (harness §7)"
+              "add a test whose name carries each scenario id verbatim inside a test definition (harness §7)"
   else
     echo "SKIP: no G/W/T scenario ids in committed artifacts"
   fi

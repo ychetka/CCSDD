@@ -56,8 +56,35 @@ jobs:
              || printf '%s' "$SUBJ" | grep -qE "^Merge[[:space:]]+branch[[:space:]]+'release/v[0-9]+\.[0-9]+\.[0-9]+(-r[0-9a-zA-Z]+)?'([[:space:]]+into[[:space:]]+[^[:space:]]+)?$"; then
             :
           else
-            echo "merge subject '$SUBJ' is not a canonical release form - refusing to tag" >&2
-            exit 1
+            # Structural fallback (mirrors repo_release.sh): a custom
+            # merge template still leaves a provable release shape -
+            # the merge's diff vs first parent touches only
+            # {version-source files, CHANGELOG.md, .changes/*}. The
+            # V==VER check below then binds it to the tag version.
+            STRUCT=$(git diff-tree --first-parent --no-commit-id --name-only -r "$MERGE_SHA" 2>/dev/null \
+              | python3 - <<'PYEOF' || true
+          import re, sys
+          names = [l.strip() for l in sys.stdin if l.strip()]
+          vf = None
+          try:
+              import json
+              vf = (json.load(open("canon/project.json")).get("version") or {}).get("file")
+          except Exception:
+              pass
+          cands = ({vf} if vf else set()) | \
+                  {"package.json","pyproject.toml","Cargo.toml","VERSION",
+                   "version.txt","setup.cfg","release_history.jsonl"}
+          ok = bool(names) and all(
+              n in cands or n == "CHANGELOG.md" or
+              (n.startswith(".changes/") and n.endswith(".md"))
+              for n in names)
+          print("yes" if ok else "")
+          PYEOF
+            )
+            if [ "$STRUCT" != "yes" ]; then
+              echo "merge subject '$SUBJ' is not a canonical release form and the diff is not release-shaped - refusing to tag" >&2
+              exit 1
+            fi
           fi
           # The version source ON the merge commit must equal the tag
           # version - provenance over the branch name alone. canon/ is

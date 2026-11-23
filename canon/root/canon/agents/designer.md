@@ -68,6 +68,7 @@ you produce an impl spec, the writer executes it.
 ```
 RESULT: IMPL_SPEC | QUOTA | SPEC_CONFLICT
 ## Impl spec
+- contract: <repo-relative path of the contract file you resolve>   # binds this spec to ONE contract; required when the item/epic touches several contract.* files
 ### axis: <name>            # exactly as declared in the contract
 - decision: <chosen resolution>
 - constraint_check: <why it satisfies the declared constraint>
