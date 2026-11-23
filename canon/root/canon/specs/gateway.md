@@ -88,12 +88,16 @@ not change the class.
   Because the increment lands before the call, a caller killed
   mid-flight (SIGKILL/OOM - no finally-block runs) would orphan the
   spend: the `inflight` table therefore records
-  `{call_id, pid, keys}` before the network hop and clears it after;
+  `{call_id, pid, ts, keys}` before the network hop and clears it after;
   every call first reaps rows whose pid is dead and refunds their
   increments in ONE `BEGIN IMMEDIATE` transaction - a row is deleted
   and its increments returned atomically, so two concurrent callers
   can never refund the same orphan twice - so a hard-killed
   caller's quota is restored by the next run instead of leaking.
+  Rows also carry a TTL: an inflight row older than the call
+  timeout +60s (600s) is reaped even when its pid is alive -
+  pid reuse can put a foreign process on a dead caller's pid,
+  and the quota must not wait for it.
   An unreadable/corrupt store is a fail-closed refusal until
   repaired, never a silent reset. The journal table is
   append-only: no UPDATE/DELETE path exists in `gw_store.py`.

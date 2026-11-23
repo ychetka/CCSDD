@@ -187,9 +187,15 @@ def inflight_reap_dead(con):
     con.execute("BEGIN IMMEDIATE")
     try:
         rows = con.execute(
-            "SELECT call_id, pid, keys_json FROM inflight").fetchall()
+            "SELECT call_id, pid, ts, keys_json FROM inflight").fetchall()
+        now = int(time.time())
         dead = []
-        for call_id, pid, keys_json in rows:
+        for call_id, pid, ts, keys_json in rows:
+            # TTL first: pid reuse could put a live foreign process on
+            # a dead caller's pid - a row older than call_timeout+60s
+            # is an orphan regardless of os.kill(pid, 0) succeeding.
+            if now - (ts or 0) > 600:
+                dead.append((call_id, keys_json)); continue
             try:
                 os.kill(pid, 0)
             except (ProcessLookupError, OverflowError, ValueError):

@@ -50,12 +50,19 @@ def collect_anchors(body):
     (-1/-2 duplicates), <a name|id="x"> and {#custom-id}."""
     anchors = set()
     seen = {}
+    # One registry for every anchor kind, consumed in document order:
+    # a later '## Foo' after an earlier <a id="foo"> must get -1, and
+    # a heading's own '{#id}' occupies that id before the slug lands.
     for l in body.splitlines():
+        inline = []
         if l.startswith("#"):
             h = gh_anchor(l.lstrip("# ").strip())
             n = seen.get(h, 0)
             seen[h] = n + 1
             anchors.add(h if n == 0 else "%s-%d" % (h, n))
-    anchors |= set(HTML_ANCHOR_RE.findall(body))
-    anchors |= set(CUSTOM_ID_INNER.findall(body))
+        inline += HTML_ANCHOR_RE.findall(l)
+        inline += CUSTOM_ID_INNER.findall(l)
+        for a in inline:
+            anchors.add(a)
+            seen[a] = seen.get(a, 0) + 1
     return {a.lower() for a in anchors}

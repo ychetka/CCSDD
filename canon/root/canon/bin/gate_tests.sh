@@ -1088,6 +1088,99 @@ expect T72b-bound-contract-undecided 1 $? "without a decided impl-spec entry"
 (cd "$T72D" && BASE=main bash "$CANON_DIR/bin/fidelity_check.sh") >"$SCRATCH/out" 2>&1
 expect T72c-fenced-axis-not-declared 0 $? "AXES: none"
 
+# --- T73: G/W/T in JS - describe() is a suite CONTAINER, not a test:
+# an id in a comment inside describe() is not coverage, while the
+# same id inside a multi-line it( signature is (review_10 #1).
+T73D="$SCRATCH/t73"; mkdir -p "$T73D"
+(cd "$T73D" && git init -q -b main . && git config user.email t@t \
+  && git config user.name t && git commit -q --allow-empty -m init \
+  && git checkout -qb issue_78-gwt \
+  && mkdir -p .changes tests \
+  && printf -- '---\nbump: patch\nuser_visible: "false"\nissue: 78\n---\nscenarios: ITEM-78.GWT-1 ITEM-78.GWT-2\n' \
+       > .changes/g.md \
+  && printf 'describe("suite", () => {\n  // ITEM-78.GWT-1 in a describe comment is not a test\n  it(\n    "ITEM-78.GWT-2 returns 409 on duplicate",\n    async () => { expect(1).toBe(1) }\n  )\n})\n' \
+       > tests/gwt.spec.ts \
+  && git add -A && git commit -qm gwt)
+(cd "$T73D" && VERIFY_BRANCH=issue_78-gwt VERIFY_BASE=main \
+   bash "$CANON_DIR/bin/verify_constraints.sh") >"$SCRATCH/out" 2>&1
+t73=0
+grep -q "missing.*ITEM-78.GWT-1\b" "$SCRATCH/out" || { echo "  t73: describe-comment id not flagged"; t73=1; }
+grep -q "missing.*ITEM-78.GWT-2\b" "$SCRATCH/out" && { echo "  t73: multi-line it() id flagged"; t73=1; }
+[ "$t73" -eq 0 ] && { echo "PASS T73-gwt-describe"; pass=$((pass+1)); } \
+  || { echo "FAIL T73-gwt-describe"; fail=$((fail+1)); }
+
+# --- T74: fidelity '- contract:' path hygiene - '..' escapes and
+# pointers to non-existent contracts are hard FAILs, not silent
+# skips that degrade the gate to axes=none (review_10 #2).
+T74D="$SCRATCH/t74"; mkdir -p "$T74D"
+(cd "$T74D" && git init -q -b main . && git config user.email t@t \
+  && git config user.name t && git commit -q --allow-empty -m init \
+  && git checkout -qb issue_79-fid \
+  && mkdir -p docs/impl_specs \
+  && printf '## Impl spec\n- contract: ../../etc/passwd\n### axis: x\n- decision: y\n' \
+       > docs/impl_specs/bad.md \
+  && git add -A && git commit -qm badpath)
+(cd "$T74D" && BASE=main bash "$CANON_DIR/bin/fidelity_check.sh") >"$SCRATCH/out" 2>&1
+expect T74a-contract-escape 1 $? "invalid contract path"
+(cd "$T74D" \
+  && printf '## Impl spec\n- contract: src/missing/contract.py\n### axis: x\n- decision: y\n' \
+       > docs/impl_specs/bad.md \
+  && git add -A && git commit -qm missing)
+(cd "$T74D" && BASE=main bash "$CANON_DIR/bin/fidelity_check.sh") >"$SCRATCH/out" 2>&1
+expect T74b-contract-missing 1 $? "non-existent contract"
+# an impl spec deciding axes while nothing is declared fails as
+# improvisation - it must NOT reach the axes=none auto-pass.
+(cd "$T74D" \
+  && printf '## Impl spec\n### axis: x\n- decision: y\n' \
+       > docs/impl_specs/bad.md \
+  && git add -A && git commit -qm improv)
+(cd "$T74D" && BASE=main bash "$CANON_DIR/bin/fidelity_check.sh") >"$SCRATCH/out" 2>&1
+expect T74c-improv-before-autopass 1 $? "never delegated"
+
+# --- T75: design_spec_check - a spec file without the '## Impl
+# spec' section header FAILs (it would later fail fidelity too);
+# axes may only live inside that section (review_10 #8).
+DSX="$CANON_DIR/bin/design_spec_check.sh"
+printf '## Delegated decisions\n- axis: color | c\n' >"$SCRATCH/c75.md"
+printf '# Random doc\n### axis: color\n- decision: red\n' >"$SCRATCH/s75.md"
+"$DSX" --contract "$SCRATCH/c75.md" --spec "$SCRATCH/s75.md" >"$SCRATCH/out" 2>&1
+expect T75-no-impl-spec-section 1 $? "no '## Impl spec'"
+
+# --- T76: roadmap risk_flags -> fragment risk:high binding
+# (review_10 #10): an item whose roadmap risk_flags are non-empty
+# escalates until a .changes fragment declares 'risk: high'.
+T76D="$SCRATCH/t76"; mkdir -p "$T76D/canon/bin"
+# verify_constraints derives CANON_DIR from its own path, so the
+# fixture needs a deployed canon copy (bin scripts + roadmap.md).
+cp "$CANON_DIR/bin/verify_constraints.sh" "$CANON_DIR/bin/roadmap_hash.sh" \
+   "$CANON_DIR/bin/spec_anchor_check.sh" "$CANON_DIR/bin/human_sign.sh" \
+   "$CANON_DIR/bin/secret_scan.py" "$CANON_DIR/bin/md_anchors.py" \
+   "$T76D/canon/bin/"
+(cd "$T76D" && git init -q -b main . && git config user.email t@t \
+  && git config user.name t && git commit -q --allow-empty -m init \
+  && printf '## Item: auth-work\n\n- id: auth-work\n- type: implementation\n- status: in_progress\n- depends_on: []\n- contracts: []\n- stack_area: be\n- risk_flags: [auth]\n- frozen_hash: x\n- issue: 80\n' \
+       > canon/roadmap.md \
+  && git add -A && git commit -qm roadmap \
+  && git checkout -qb issue_80-auth \
+  && mkdir -p .changes \
+  && printf -- '---\nbump: patch\nuser_visible: "false"\nissue: 80\n---\nnote\n' \
+       > .changes/g.md \
+  && git add -A && git commit -qm frag)
+(cd "$T76D" && VERIFY_BRANCH=issue_80-auth VERIFY_BASE=main \
+   bash canon/bin/verify_constraints.sh) >"$SCRATCH/out" 2>&1
+grep -q "risk_flags set on issue(s) 80" "$SCRATCH/out" \
+  && { echo "PASS T76a-risk-flag-escalates"; pass=$((pass+1)); } \
+  || { echo "FAIL T76a-risk-flag-escalates: $(grep -i risk "$SCRATCH/out")"; fail=$((fail+1)); }
+(cd "$T76D" \
+  && printf -- '---\nbump: patch\nuser_visible: "false"\nissue: 80\nrisk: high\n---\nnote\n' \
+       > .changes/g.md \
+  && git add -A && git commit -qm riskfrag)
+(cd "$T76D" && VERIFY_BRANCH=issue_80-auth VERIFY_BASE=main \
+   bash canon/bin/verify_constraints.sh) >"$SCRATCH/out" 2>&1
+grep -q "risk_flags items carry a risk: high fragment" "$SCRATCH/out" \
+  && { echo "PASS T76b-risk-frag-ok"; pass=$((pass+1)); } \
+  || { echo "FAIL T76b-risk-frag-ok: $(grep -i risk "$SCRATCH/out")"; fail=$((fail+1)); }
+
 echo "---"
 echo "gate_tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

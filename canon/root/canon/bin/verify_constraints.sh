@@ -489,6 +489,19 @@ GWT_ISSUES=""
 for tok in $ISSUE_N $ISSUE_NUMS $FRAG_ISSUES; do
   [ -n "$tok" ] && GWT_ISSUES="$GWT_ISSUES $((10#$tok))"
 done
+# On epic branches a local run has no FRAG_ISSUES (issue_merge sets
+# it), so merged task issues never reach the gate. Derive the extra
+# numbers from the .changes fragments this diff actually ships.
+if [ -n "$BASE" ]; then
+  DIFF_ISSUES=$(git -c core.quotepath=false diff --name-only --no-renames \
+      "$BASE"...HEAD 2>/dev/null \
+    | grep -E '^\.changes/[^/]+\.md$' \
+    | while read -r f; do git show "HEAD:$f" 2>/dev/null; done \
+    | grep -oE '^\s*issue:\s*[#0-9, "]+' | grep -oE '[0-9]+' || true)
+  for tok in $DIFF_ISSUES; do
+    GWT_ISSUES="$GWT_ISSUES $((10#$tok))"
+  done
+fi
 GWT_ISSUES=$(printf '%s\n' $GWT_ISSUES | sort -nu | tr '\n' ' ')
 if [ -n "${GWT_ISSUES// }" ] && [ -n "$BASE" ]; then
   ROADMAP_IDS=""

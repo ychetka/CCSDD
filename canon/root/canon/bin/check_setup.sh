@@ -11,10 +11,10 @@ ok()   { echo "  ok: $*"; }
 # Binaries are checked BEFORE any use - a missing python3 would make
 # every later check silently degrade.
 before=$fails
-for bin in gh git python3 flock ssh-keygen; do
+for bin in git python3 flock ssh-keygen; do
   command -v "$bin" >/dev/null || fail "missing binary: $bin"
 done
-[ $fails -eq $before ] && ok "binaries: gh git python3 flock ssh-keygen"
+[ $fails -eq $before ] && ok "binaries: git python3 flock ssh-keygen"
 if ! command -v python3 >/dev/null; then
   echo "SETUP: $fails FAILURES - halt, do not proceed"; exit 1
 fi

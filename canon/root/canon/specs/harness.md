@@ -431,7 +431,11 @@ Principles:
   (`setup.py`, `pip install -e`) can execute during attestation;
   the JavaScript baseline likewise runs against an already
   prepared `node_modules` (`NODE_PATH` + `node_modules/.bin` on
-  `PATH`) instead of a networked `npm ci`. A deployed,
+  `PATH`) instead of a networked `npm ci` - the detached verify
+  worktree never carries `node_modules`, so dependencies resolve
+  from the prepared main workspace (or a `baseline_env.sh`-
+  populated dir); neither present is `env_setup_failed`, not a
+  skipped baseline. A deployed,
   hash-pinned `canon/baseline_env.sh` MAY provide a prepared
   environment; `VW_ALLOW_INSTALL=1` is a local/debug-only override
   that normal gates never set.
@@ -509,6 +513,11 @@ The version policy is fixed at roadmap approval, not at merge
   (same SSH-signature factor as `manual_gate`). A project whose
   configured profiles expose a single family can never satisfy the
   rule - `check_setup.sh` fails that configuration.
+  The binding runs both ways: a roadmap item with a non-empty
+  `risk_flags:` MUST be shipped with a `.changes` fragment
+  declaring `risk: high` - `verify_constraints.sh` check 6d
+  escalates the omission, so the escalation path cannot be
+  silently bypassed by leaving the flag out of the fragment.
   Optional `manual_gate: true` on an
   item with `manual_gate` in the roadmap: `repo_merge.sh` blocks
   the merge (`status=blocked`, `failure_class=manual_gate`) until
