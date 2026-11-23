@@ -82,6 +82,10 @@ A domain reviewer publishes via
  "findings":[{"severity":"CRITICAL|WARNING|MINOR|UNCERTAIN","text":"..."}]}
 ```
 
+`receipt` entries must name actual inspected files - blank strings
+and placeholders (`none`, `n/a`, `todo`, `null`, `-`, ...) are
+rejected by the wrapper before the signal is derived.
+
 Severity taxonomy (identical to harness.md §4.6): CRITICAL/UNCERTAIN
 are blocking and force `failure` mechanically; WARNING and MINOR
 never block - a provably conformant implementation with secondary

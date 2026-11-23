@@ -146,7 +146,8 @@ the partner is stateless and does not know our definitions.
   release boundary.
 - **Branch convention** — `issue_<N>-<slug>` (task/item),
   `epic_issue_<N>-<slug>` (epic), `release/v<X.Y.Z>` (RoM release
-  branch); a version is never carried in a branch name.
+  branch, `release/v<X.Y.Z>-r<sha>` on a release retry after a
+  workflow restart); a version is never carried in a branch name.
 - **Mandatory interrogation** — the exec-committee artifact before
   code starts: a structured record of assumptions and ambiguities;
   ambiguities climb the escalation ladder.

@@ -82,9 +82,11 @@ OUT: {status: ok|error, branch?, commits?: [sha],
   repeated reviewer request on the resolution diff is required.
   A clean rebase with no logic changes — a merge gate on the new
   head_sha suffices, no re-review needed.
-- `release/v<X.Y.Z>` branches are created ONLY by the
-  `repo_release.sh` script when a direct push to protected base
-  is rejected. We do not create or merge such branches by hand:
+- `release/v<X.Y.Z>` branches (and the `release/v<X.Y.Z>-r<sha>`
+  retry form) are created ONLY by the `repo_release.sh` script
+  when a direct push to protected base is rejected; `ship_push.sh`
+  accepts them so the script's head+tag push lands atomically.
+  We do not create or merge such branches by hand:
   their PR goes through repository-agent -> repo_merge.sh like a
   regular PR, and the base tag is caught up by the
   repo_release.sh resume path.

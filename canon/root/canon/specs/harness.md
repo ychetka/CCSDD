@@ -482,6 +482,9 @@ The version policy is fixed at roadmap approval, not at merge
   referenced by the PR body (an epic PR legitimately carries task
   fragments with their own issue numbers) —
   `failure_class=missing_issue_field`/`issue_mismatch` otherwise.
+  The field tolerates the natural forms - `issue: 10`, `issue: #10`,
+  `issue: 10, 11` (several references), `issue: "10"` (quoted);
+  parsers extract every number independently and never weld digits.
   Optional `manual_gate: true` on an
   item with `manual_gate` in the roadmap: `repo_merge.sh` blocks
   the merge (`status=blocked`, `failure_class=manual_gate`) until
@@ -630,7 +633,12 @@ The version policy is fixed at roadmap approval, not at merge
       which the calling instance commits as the tracked artifact
       `docs/impl_specs/<item_slug>.md` on the item branch
       (repo_language; English by default), so the fidelity floor
-      sees it in the PR delta. The
+      sees it in the PR delta. `docs/impl_specs/*` is scope-checked
+      like any other path: the calling instance commits the spec
+      BEFORE the executor's scope_whitelist.txt is installed, so an
+      executor may touch the spec only when its whitelist names the
+      path explicitly - otherwise the writer could retro-fit the
+      designer's decisions to its own code. The
       mechanical gate `canon/bin/design_spec_check.sh --contract
       <contract-file> --spec <impl-spec>` must pass BEFORE the
       executor is spawned: a declared axis left undecided or a spec
