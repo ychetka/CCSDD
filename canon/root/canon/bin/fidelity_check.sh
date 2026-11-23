@@ -121,13 +121,51 @@ for rel in files:
         if in_spec:
             mc = re.match(r"^-\s+contract:\s*(\S+)", line)
             if mc:
-                spec_contracts.setdefault(rel, set()).add(mc.group(1).strip())
+                cp = mc.group(1).strip().strip("'\"")
+                cp = os.path.normpath(cp).replace(os.sep, "/")
+                if cp.startswith("./"):
+                    cp = cp[2:]
+                spec_contracts.setdefault(rel, set()).add(cp)
                 continue
             m = re.match(r"^###\s+axis:\s*([^|]+)", line)
             if m:
                 cur_axis = norm(m.group(1)); continue
             if cur_axis and re.match(r"^-\s+decision:\s*\S", line):
                 decided.setdefault(rel, set()).add(cur_axis)
+
+# A spec's '- contract: <path>' pulls that contract INTO the scan
+# even when the contract file itself is not in this PR delta - it
+# may have been signed off and committed on the base/epic branch
+# earlier, while this PR only carries the impl spec and the code.
+# Declared axes from the HEAD blob still bind the spec; otherwise
+# `declared` stays empty and the gate auto-passes unchecked.
+import subprocess
+extra_contracts = sorted({c for paths in spec_contracts.values()
+                          for c in paths if c not in declared})
+for rel in extra_contracts:
+    body = subprocess.run(["git","-C",top,"show","HEAD:"+rel],
+                          capture_output=True, text=True)
+    if body.returncode != 0:
+        body = None
+        try:
+            body = open(os.path.join(top, rel), encoding="utf-8",
+                        errors="replace").read()
+        except OSError:
+            continue
+    else:
+        body = body.stdout
+    in_axes = False
+    for raw in body.splitlines():
+        line = strip_markers(raw)
+        if re.match(r"^##\s+Delegated decisions", line):
+            in_axes = True; continue
+        if re.match(r"^##\s", line):
+            in_axes = False; continue
+        if in_axes:
+            m = re.match(r"^-\s+axis:\s*([^|]+)", line)
+            if m:
+                name = norm(m.group(1))
+                if name: declared.setdefault(rel, set()).add(name)
 
 if not declared:
     print("AXES: none")

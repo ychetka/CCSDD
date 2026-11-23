@@ -674,11 +674,24 @@ try:
         fam = (prof or {}).get("model_family") or "default"
         print("%s\t%s" % (str(login).strip().lower(), fam))
 except Exception: pass' 2>/dev/null)
+# high_risk_only logins vote on risk:high PRs only: excluded from
+# expected_reviewers (an ordinary PR must not wait on them) but
+# their APPROVED must reach the family set - excluding them from
+# counting entirely would deadlock every risk:high merge on
+# family_deficit.
+HIGH_RISK_REVIEWERS=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os
+try:
+    pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
+    rp = ((pj.get("review") or {}).get("reviewer_profiles") or {})
+    print(",".join(str(l).strip().lower() for l, p in rp.items()
+                   if isinstance(p, dict) and p.get("high_risk_only") is True))
+except Exception: pass' 2>/dev/null)
 
 GATE=$(INFO_FILE="$INFO_FILE" REVIEWS_FILE="$REVIEWS_FILE" REQUIRED="$REQUIRED" \
        REQUIRED_LOOKUP_FAILED="$REQUIRED_LOOKUP_FAILED" REVIEWERS="$REVIEWERS" \
        PR_AUTHOR="$PR_AUTHOR" CI_BOOTSTRAP="$CI_BOOTSTRAP" MERGEABLE="$MERGEABLE" \
        RISK_HIGH="$RISK_HIGH" FAMILY_MAP="$FAMILY_MAP" \
+       HIGH_RISK_REVIEWERS="$HIGH_RISK_REVIEWERS" \
        python3 - "$EXPECTED" <<'PY'
 import json, sys, os
 expected = sys.argv[1]
@@ -687,6 +700,8 @@ required_lookup_failed = os.environ.get("REQUIRED_LOOKUP_FAILED") == "1"
 required = set(filter(None, os.environ.get("REQUIRED", "").splitlines()))
 expected_reviewers = {x.strip().lower() for x in
                       os.environ.get("REVIEWERS", "").split(",") if x.strip()}
+high_risk_reviewers = {x.strip().lower() for x in
+                       os.environ.get("HIGH_RISK_REVIEWERS", "").split(",") if x.strip()}
 pr_author = (os.environ.get("PR_AUTHOR") or "").lower()
 ci_bootstrap = os.environ.get("CI_BOOTSTRAP") == "yes"
 report = {}
@@ -741,7 +756,7 @@ blocking_states = []
 for login, r in by_reviewer.items():
     st = r["state"]
     rc = r.get("commit_id")
-    if login not in expected_reviewers:
+    if login not in expected_reviewers | high_risk_reviewers:
         # An unexpected reviewer objecting is still an objection -
         # but only while CHANGES_REQUESTED remains their latest state.
         if st == "CHANGES_REQUESTED":

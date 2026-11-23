@@ -372,10 +372,12 @@ if [ "$COMMIT_LIST" != "$STAGED_LIST" ]; then
   exit 1
 fi
 # git log %B keeps the message's own trailing newline while -m does
-# not add one - compare newline-normalized forms or every clean
-# commit reads as drift.
-COMMITTED_MSG=$(git log -1 --format=%B | sed -e 's/[[:space:]]*$//')
-NORM_MSG=$(printf '%s' "$MSG" | sed -e 's/[[:space:]]*$//')
+# not add one - and `git commit` normalizes the message internally
+# (collapses blank-line runs, trims leading/trailing blank lines)
+# via stripspace. Compare stripspace-normalized forms or any
+# multi-paragraph message reads as drift.
+COMMITTED_MSG=$(git log -1 --format=%B | git stripspace)
+NORM_MSG=$(printf '%s\n' "$MSG" | git stripspace)
 if [ "$COMMITTED_MSG" != "$NORM_MSG" ]; then
   echo "TOCTOU: committed message differs from the gated message" >&2
   _toctou_rollback

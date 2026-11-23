@@ -44,10 +44,11 @@ fi
 
 # --- 1. canonical release workflow ----------------------------------------
 # Deployed BEFORE branch protection: on an unprotected base the file
-# lands directly; on an already-protected base the bootstrap goes
-# through a release/v0.0.0 branch, the ONLY branch name the merge
-# gates can legally land (a canon/bootstrap-* PR can never merge
-# under its own rules - no issue, no fragment, wrong name).
+# lands directly; on an already-protected base the same direct PUT
+# succeeds under an admin token (our protection payload sets
+# enforce_admins:false). Any PR-based bootstrap can never merge under
+# the canon's own merge rules, so a refusal is an operator action,
+# not a fallback branch.
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 WF=$(cat "$CANON_DIR/templates/release_workflow.yml")
 HAVE_WF=$(gh api "repos/$REPO/contents/.github/workflows/release.yml" \
@@ -63,21 +64,23 @@ else
       -f content="$B64" -f branch="$BASE" >/dev/null 2>&1; then
       echo "setup_repo: release.yml committed directly to $BASE"
     else
-      # Base already protected -> release-shaped bootstrap branch.
-      BASE_SHA=$(gh api "repos/$REPO/git/refs/heads/$BASE" --jq .object.sha) \
-        || { echo "setup_repo: cannot read base ref" >&2; exit 1; }
-      gh api -X POST "repos/$REPO/git/refs" \
-        -f ref="refs/heads/release/v0.0.0" -f sha="$BASE_SHA" \
-        >/dev/null 2>&1 || true   # exists already - fine
-      gh api -X PUT "repos/$REPO/contents/.github/workflows/release.yml" \
-        -f message="canon: serialized release workflow" \
-        -f content="$B64" -f branch="release/v0.0.0" >/dev/null \
-        || { echo "setup_repo: workflow deploy failed" >&2; exit 1; }
-      gh pr create --repo "$REPO" --head release/v0.0.0 --base "$BASE" \
-        --title "release: v0.0.0" \
-        --body "Deploys the canonical release-main concurrency group (bootstrap release)." 2>/dev/null \
-        && echo "setup_repo: bootstrap release PR opened - merge via the normal release flow" \
-        || echo "setup_repo: branch pushed (PR may already exist)"
+      # A branch + PR bootstrap can never merge under the canon's own
+      # rules (no issue_*, no .changes fragment, .github/workflows is
+      # an escalation path) - do not create a dead PR. The direct PUT
+      # above already covers both the unprotected base and an
+      # admin token (protection is applied with enforce_admins:false,
+      # so admins are exempt); a refusal here means the token is not
+      # an admin on an already-protected base.
+      cat >&2 <<'EOT'
+setup_repo: FAIL - cannot write release.yml to the protected base
+  The bootstrap is admin-side by design; do ONE of:
+    1. re-run with an admin token (enforce_admins:false exempts it);
+    2. temporarily remove branch protection on the base, re-run
+       setup_repo.sh, then re-apply protection;
+    3. commit .github/workflows/release.yml to the base manually
+       from canon/root/canon/templates/release_workflow.yml.
+EOT
+      exit 1
     fi
   fi
 fi

@@ -320,19 +320,39 @@ CONTRACT_HITS=$(printf '%s\n' "$PROT_CHANGED" \
   | grep -E '(^|/)contract\.(py|ts)$' || true)
 if [ -n "$CONTRACT_HITS" ]; then
   HS="$CANON_DIR/bin/human_sign.sh"
+  # A deleted contract cannot be signed by file content - removing a
+  # frozen contract is itself a contract change, so its envelope is
+  # bound to the branch HEAD sha like a manual_gate sign-off.
+  CONTRACT_DELETED=$( { git -c core.quotepath=false diff --name-only --diff-filter=D --cached;
+                        git -c core.quotepath=false diff --name-only --diff-filter=D HEAD;
+                        [ -n "$BASE" ] && git -c core.quotepath=false diff --name-only --diff-filter=D "$BASE"...HEAD; } \
+                        2>/dev/null | grep -E '(^|/)contract\.(py|ts)$' | sort -u )
+  HEAD_SHA_NOW=$(git rev-parse HEAD)
   while IFS= read -r cfile; do
     [ -n "$cfile" ] || continue
+    if printf '%s\n' "$CONTRACT_DELETED" | grep -qxF "$cfile"; then
+      ARTIFACT="$HEAD_SHA_NOW"
+      SIGN_TARGET="\"$HEAD_SHA_NOW\" (deletion is HEAD-bound)"
+    elif [ -f "$cfile" ]; then
+      ARTIFACT="$cfile"
+      SIGN_TARGET="$cfile"
+    else
+      continue   # renamed/moved away path without a live file - nothing to bind
+    fi
     ENVOK=0
     for cand in "$CANON_DIR"/human_signoffs/contract_*.json \
                 "$CANON_DIR/human_signoffs/$BRANCH.json"; do
       [ -f "$cand" ] || continue
-      [ -f "$HS" ] && [ -f "$cfile" ] \
-        && bash "$HS" verify --envelope "$cand" --artifact "$cfile" \
+      [ -f "$HS" ] \
+        && bash "$HS" verify --envelope "$cand" --artifact "$ARTIFACT" \
              --verdict approve >/dev/null 2>&1 && { ENVOK=1; break; }
     done
+    # Envelope filename must encode the full contract path - every
+    # module's contract is literally named contract.py|ts, so
+    # basename-derived names collide across modules.
     [ "$ENVOK" = 1 ] \
       || escalate "contract file changed without human sign-off: $cfile" \
-        "human_sign.sh sign --verdict approve --artifact $cfile --out canon/human_signoffs/contract_\$(basename \"$cfile\").json (or paste the CCSDD-SIGNOFF-1 line into the agent chat)"
+        "human_sign.sh sign --verdict approve --artifact $SIGN_TARGET --out canon/human_signoffs/contract_\$(printf '%s' \"$cfile\" | tr '/' '_').json (or paste the CCSDD-SIGNOFF-1 line into the agent chat)"
   done <<< "$CONTRACT_HITS"
 fi
 
@@ -460,24 +480,48 @@ fi
 # 6c. G/W/T scenario coverage (harness §7): every [ITEM-N.GWT-M]
 #     scenario id committed in the branch's tracked artifacts
 #     (.changes fragments, docs/specs requirements) must appear
-#     verbatim in a committed test name. An uncovered id is a
-#     missing test.
-if [ -n "$ISSUE_N" ] && [ -n "$BASE" ]; then
+#     verbatim inside a committed test definition. An uncovered id
+#     is a missing test; a comment or a skipped test is not
+#     coverage. Issue numbers normalize without leading zeros and
+#     cover every item of the PR (ISSUE_NUMS + FRAG_ISSUES), not
+#     just the branch's own number.
+GWT_ISSUES=""
+for tok in $ISSUE_N $ISSUE_NUMS $FRAG_ISSUES; do
+  [ -n "$tok" ] && GWT_ISSUES="$GWT_ISSUES $((10#$tok))"
+done
+GWT_ISSUES=$(printf '%s\n' $GWT_ISSUES | sort -nu | tr '\n' ' ')
+if [ -n "${GWT_ISSUES// }" ] && [ -n "$BASE" ]; then
+  ROADMAP_IDS=""
+  if [ -f "$CANON_DIR/roadmap.md" ]; then
+    for n in $GWT_ISSUES; do
+      ROADMAP_IDS="$ROADMAP_IDS$(grep -oE "ITEM-${n}\.GWT-[0-9]+" \
+        "$CANON_DIR/roadmap.md" 2>/dev/null || true)"
+      ROADMAP_IDS="$ROADMAP_IDS
+"
+    done
+  fi
   GWT_IDS=$( { git -c core.quotepath=false diff --name-only "$BASE"...HEAD 2>/dev/null \
             | grep -E '^(\.changes/[^/]+\.md|docs/.*\.md)$' \
             | while read -r f; do git show "HEAD:$f" 2>/dev/null; done; \
             # roadmap.md item block is an authoritative source too -
             # a contract-listed scenario forgotten in .changes must
             # still reach the gate instead of degrading it to SKIP.
-            [ -f "$CANON_DIR/roadmap.md" ] \
-              && grep -oE "ITEM-${ISSUE_N}\.GWT-[0-9]+" "$CANON_DIR/roadmap.md"; } \
+            printf '%s' "$ROADMAP_IDS"; } \
             | grep -oE 'ITEM-[0-9]+\.GWT-[0-9]+' | sort -u || true)
   if [ -n "$GWT_IDS" ]; then
     MISSING=$(GWT_IDS="$GWT_IDS" TOP="$TOP" python3 - <<'PY'
 import os, re, subprocess
 top = os.environ["TOP"]
-TESTDEF = re.compile(r"(def\s+test_|it\(|test\(|describe\()")
-SKIPMARK = re.compile(r"(@pytest\.mark\.skip|@unittest\.skip|it\.skip|test\.skip|xit\(|xtest\(|TODO|FIXME)")
+# A test definition is a def test_*/it(/test(/describe( line; the id
+# counts when it sits inside that definition's own span, and the
+# test is skipped only when a skip DECORATOR belongs to that same
+# definition (contiguous decorator lines directly above the def) or
+# a skip() call sits in its first body lines. A bare TODO/FIXME
+# comment is work debt, not a skipped test.
+TESTDEF = re.compile(r"^\s*(async\s+def\s+test_|def\s+test_|it\(|test\(|describe\()")
+NEWDEF  = re.compile(r"^\s*(async\s+def\s+|def\s+|class\s+\w|it\(|test\(|describe\(|function\s)")
+SKIPDEC = re.compile(r"(@pytest\.mark\.skip|@pytest\.mark\.skipif|@unittest\.skip|it\.skip|test\.skip|describe\.skip|xit\(|xtest\(|xdescribe\(|@tag\(.skip)")
+SKIPCALL = re.compile(r"(pytest\.skip\(|unittest\.SkipTest|self\.skipTest|this\.skip\(\)|return\s*//\s*skip)")
 missing = []
 for gid in os.environ["GWT_IDS"].split():
     out = subprocess.run(
@@ -485,7 +529,6 @@ for gid in os.environ["GWT_IDS"].split():
         capture_output=True, text=True).stdout
     covered = False
     for ln in out.splitlines():
-        # HEAD:file:lineno:content
         m = re.match(r"^HEAD:([^:]+):(\d+):(.*)$", ln)
         if not m:
             continue
@@ -493,15 +536,41 @@ for gid in os.environ["GWT_IDS"].split():
         body = subprocess.run(
             ["git","-C",top,"show","HEAD:"+path],
             capture_output=True, text=True).stdout.splitlines()
-        lo = max(0, lineno-4); hi = min(len(body), lineno+4)
-        window = body[lo:hi]
-        # The id must sit inside a real test definition and carry no
-        # skip/TODO marker in its immediate context - a comment or a
-        # skipped test is not coverage.
-        if any(TESTDEF.search(w) for w in window) \
-           and not any(SKIPMARK.search(w) for w in window):
-            covered = True
-            break
+        gi = lineno - 1
+        # Walk UP from the id to the enclosing test definition. Any
+        # other def/class boundary first means the id is outside a
+        # test body (comment, fixture helper, docstring).
+        d = gi
+        tdef = -1
+        while d >= 0:
+            l = body[d]
+            if TESTDEF.search(l):
+                tdef = d; break
+            if NEWDEF.search(l):
+                break
+            # a non-indented line above an indented id is a boundary
+            if l.strip() and not l.startswith((" ", "\t")) and d != gi:
+                break
+            d -= 1
+        if tdef < 0:
+            continue
+        # Decorators contiguously above the def belong to it.
+        j = tdef - 1
+        skipped = False
+        while j >= 0 and (body[j].lstrip().startswith("@") or not body[j].strip()):
+            if body[j].strip() and SKIPDEC.search(body[j]):
+                skipped = True; break
+            if body[j].strip() == "":
+                break
+            j -= 1
+        # Explicit skip() calls in the first body lines.
+        for k in range(tdef + 1, min(len(body), tdef + 6)):
+            if SKIPCALL.search(body[k]):
+                skipped = True; break
+            if body[k].strip() and not body[k].startswith((" ", "\t")):
+                break
+        if not skipped:
+            covered = True; break
     if not covered:
         missing.append(gid)
 print(" ".join(missing))
