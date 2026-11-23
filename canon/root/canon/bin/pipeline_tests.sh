@@ -979,6 +979,31 @@ grep -q "Includes #90" "$GHSTATE/create_bodies" \
   || { echo "FAIL PO2-includes-nofences: $(cat "$GHSTATE/create_bodies")"; fail=$((fail+1)); }
 (cd "$WS" && git checkout -q main)
 
+# ---------- PO3: comma lists / quoted issue: must not weld digits --
+# 'issue: 10, 11' yields two references, never a phantom '#1011';
+# 'issue: "93"' keeps its quoting (review_6 #6/#13).
+(cd "$WS" && git checkout -q -b issue_88-po2 main \
+  && mkdir -p .changes \
+  && printf 'bump: patch\nuser_visible: "true"\nissue: 10, 11\n\nmulti\n\n## Spec impact\n- none\n' \
+       > .changes/task-multi.md \
+  && printf 'bump: patch\nuser_visible: "true"\nissue: "93"\n\nquoted\n\n## Spec impact\n- none\n' \
+       > .changes/task-quoted.md \
+  && git add -A && git commit -qm "po3 work")
+: > "$GHSTATE/create_bodies"
+(cd "$WS" && env FAKEGH_REPO="$WS" FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
+       canon/bin/repo_pr_open.sh --branch issue_88-po2 --base main \
+       --issue 88 --title "epic2" --body "epic body") >"$SCRATCH/out" 2>&1
+expect PO3a-open-ok 0 $? '"status": "ok"'
+po3=0
+for want in "Includes #10" "Includes #11" "Includes #93"; do
+  grep -qF "$want" "$GHSTATE/create_bodies" \
+    || { echo "FAIL PO3b-issue-list: missing '$want'"; po3=1; }
+done
+grep -qE "#9011|#1011|#1093" "$GHSTATE/create_bodies" \
+  && { echo "FAIL PO3b-issue-list: welded digits present"; po3=1; }
+[ "$po3" -eq 0 ] && { echo "PASS PO3b-issue-list"; pass=$((pass+1)); } || fail=$((fail+1))
+(cd "$WS" && git checkout -q main && git branch -qD issue_88-po issue_88-po2 2>/dev/null || true)
+
 echo "---"
 echo "pipeline_tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

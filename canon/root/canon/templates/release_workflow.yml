@@ -69,33 +69,89 @@ jobs:
           # source is resolved by the local repo_release.sh gate
           # before this workflow ever runs.
           V=$(python3 - <<'PYEOF' || true
-import json, os, re
-def read(p):
-    try: return open(p, encoding="utf-8", errors="replace").read()
-    except OSError: return None
-body = read("pyproject.toml")
-if body:
-    m = re.search(r"(?ms)^\[project\](?:(?!^\[).)*?^\s*version\s*=\s*[\"']([^\"']+)", body)
-    if m: print(m.group(1)); raise SystemExit(0)
-body = read("package.json")
-if body:
-    try:
-        v = json.loads(body).get("version")
-        if v: print(v); raise SystemExit(0)
-    except Exception: pass
-body = read("Cargo.toml")
-if body:
-    m = re.search(r"(?ms)^\[package\](?:(?!^\[).)*?^\s*version\s*=\s*[\"']([^\"']+)", body)
-    if m: print(m.group(1)); raise SystemExit(0)
-body = read("VERSION")
-if body:
-    print(body.strip().splitlines()[0].strip()); raise SystemExit(0)
-body = read("setup.cfg")
-if body:
-    m = re.search(r"(?ms)^\[metadata\](?:(?!^\[).)*?^\s*version\s*=\s*(\S+)", body)
-    if m: print(m.group(1)); raise SystemExit(0)
-PYEOF
-)
+          import json, os, re
+          def read(p):
+              try: return open(p, encoding="utf-8", errors="replace").read()
+              except OSError: return None
+          body = read("pyproject.toml")
+          if body:
+              m = re.search(r"(?ms)^\[project\](?:(?!^\[).)*?^\s*version\s*=\s*[\"']([^\"']+)", body)
+              if m: print(m.group(1)); raise SystemExit(0)
+          body = read("package.json")
+          if body:
+              try:
+                  v = json.loads(body).get("version")
+                  if v: print(v); raise SystemExit(0)
+              except Exception: pass
+          body = read("Cargo.toml")
+          if body:
+              m = re.search(r"(?ms)^\[package\](?:(?!^\[).)*?^\s*version\s*=\s*[\"']([^\"']+)", body)
+              if m: print(m.group(1)); raise SystemExit(0)
+          body = read("VERSION")
+          if body:
+              print(body.strip().splitlines()[0].strip()); raise SystemExit(0)
+          body = read("setup.cfg")
+          if body:
+              m = re.search(r"(?ms)^\[metadata\](?:(?!^\[).)*?^\s*version\s*=\s*(\S+)", body)
+              if m: print(m.group(1)); raise SystemExit(0)
+          PYEOF
+          )
+          # No standard version file on this checkout - the project
+          # uses a custom source. Two resolutions, in order:
+          #  (a) a TRACKED canon/project.json with a declared
+          #      version.file / version.regex (custom repos where the
+          #      canon layer ships inside the repo);
+          #  (b) diff fallback: the merge commit carries the release
+          #      bump - the unique non-release-artifact file it
+          #      touches is the version source, and its added line
+          #      holds the new version (mirrors repo_version_set.sh
+          #      custom-file logic).
+          if [ -z "${V:-}" ] && [ -x canon/version_source.sh ]; then
+            V=$(canon/version_source.sh 2>/dev/null || true)
+          fi
+          if [ -z "${V:-}" ] && [ -f canon/project.json ]; then
+            V=$(python3 - <<'PYEOF' || true
+          import json, re
+          try:
+              pj = json.load(open("canon/project.json", encoding="utf-8"))
+          except Exception:
+              raise SystemExit(0)
+          vf = (pj.get("version") or {}).get("file")
+          rx = (pj.get("version") or {}).get("regex") or r"([0-9]+\.[0-9]+\.[0-9]+)"
+          if vf:
+              try:
+                  m = re.search(rx, open(vf, encoding="utf-8", errors="replace").read())
+                  if m: print(m.group(1) if m.groups() else m.group(0))
+              except OSError:
+                  pass
+          PYEOF
+            )
+          fi
+          if [ -z "${V:-}" ]; then
+            V=$(git diff-tree --no-commit-id -p -r "$MERGE_SHA" 2>/dev/null | python3 - <<'PYEOF' || true
+          import re, sys
+          cur = None; files = set(); added = {}
+          for ln in sys.stdin:
+              m = re.match(r"^diff --git a/(\S+) b/(\S+)", ln)
+              if m:
+                  cur = m.group(2)
+                  if cur.startswith(".changes/") or cur == "CHANGELOG.md" \
+                     or cur == "release_history.jsonl":
+                      cur = None
+                  elif cur:
+                      files.add(cur)
+                  continue
+              if cur and ln.startswith("+") and not ln.startswith("+++"):
+                  added.setdefault(cur, []).append(ln[1:])
+          if len(files) == 1:
+              f = next(iter(files))
+              for line in added.get(f, []):
+                  m = re.search(r"[0-9]+\.[0-9]+\.[0-9]+", line)
+                  if m:
+                      print(m.group(0)); break
+          PYEOF
+            )
+          fi
           if [ "$V" != "$VER" ]; then
             echo "version source on merge reports '${V:-none}', tag is $TAG - refusing" >&2
             exit 1

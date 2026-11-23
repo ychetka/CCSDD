@@ -762,6 +762,133 @@ EOF
 (cd "$PANEL_DIR" && BASE=main bash canon/bin/fidelity_check.sh) >"$SCRATCH/out" 2>&1
 expect T58b-bound-spec-ok 0 $? "covered"
 
+# --- T59: git_ro branch - a dash-leading arg must die even when a
+# list flag is present ('--contains HEAD -D victim' would otherwise
+# DELETE a branch inside the read-only path - review_6 #8).
+GIT_RO="$CANON_DIR/bin/git_ro.sh"
+(cd "$PANEL_DIR" && bash "$GIT_RO" branch --contains HEAD -D victim) >/dev/null 2>&1
+expect T59-branch-dashD 2 $?
+(cd "$PANEL_DIR" && bash "$GIT_RO" branch -l 'ma*') >"$SCRATCH/out" 2>&1
+expect T59b-branch-list-ok 0 $? "main"
+# and the pattern slot itself never accepts a leading '-'
+(cd "$PANEL_DIR" && bash "$GIT_RO" branch -l '-D') >/dev/null 2>&1
+expect T59c-branch-dashpattern 2 $?
+
+# --- T60: fidelity - an impl spec may not decide axes no contract
+# delegated (improvisation, review_6 #3).
+cat > "$PANEL_DIR/docs/impl_specs/contract_t58.md" <<'EOF'
+## Impl spec
+### axis: control_placement
+- decision: top-right
+- constraint_check: inside grid bounds
+### axis: color
+- decision: neon pink
+EOF
+(cd "$PANEL_DIR" && git add docs/impl_specs/contract_t58.md \
+  && git commit -qm "improvised axis")
+(cd "$PANEL_DIR" && BASE=main bash canon/bin/fidelity_check.sh) >"$SCRATCH/out" 2>&1
+expect T60-extra-axis 1 $? "never delegated"
+
+# --- T61: same-named axes in TWO contracts - per-file declaration
+# must stop contract_b's spec from covering contract_a's axis.
+(cd "$PANEL_DIR" \
+  && printf '## Delegated decisions\n- axis: layout | c\n' > docs/specs/cx.md \
+  && printf '## Delegated decisions\n- axis: layout | c\n' > docs/specs/cy.md \
+  && printf '## Impl spec\n### axis: control_placement\n- decision: top-right\n- constraint_check: b\n### axis: layout\n- decision: grid\n' \
+       > docs/impl_specs/cx.md \
+  && git add -A && git commit -qm "two contracts, same axis, one spec")
+(cd "$PANEL_DIR" && BASE=main bash canon/bin/fidelity_check.sh) >"$SCRATCH/out" 2>&1
+expect T61-sameaxis-second-uncovered 1 $? "layout"
+# the color extra-axis still trips too - fix both at once
+cat > "$PANEL_DIR/docs/impl_specs/cy.md" <<'EOF'
+## Impl spec
+### axis: layout
+- decision: stack
+EOF
+cat > "$PANEL_DIR/docs/impl_specs/contract_t58.md" <<'EOF'
+## Impl spec
+### axis: control_placement
+- decision: top-right
+- constraint_check: inside grid bounds
+EOF
+(cd "$PANEL_DIR" && git add -A && git commit -qm "second spec + drop extra axis")
+(cd "$PANEL_DIR" && BASE=main bash canon/bin/fidelity_check.sh) >"$SCRATCH/out" 2>&1
+expect T61b-sameaxis-both-covered 0 $? "covered"
+
+# --- T62: ship_commit - docs/impl_specs/* is NOT a blanket scope
+# exemption anymore; only an explicit whitelist entry allows it
+# (review_6 #4).
+(cd "$SCRATCH/repo" \
+  && git reset -q --hard HEAD >/dev/null 2>&1 \
+  && mkdir -p docs/impl_specs \
+  && echo 'docs/x.md' > "$SCRATCH/canon/scope_whitelist.txt" \
+  && echo '## Impl spec' > docs/impl_specs/x.md \
+  && git add docs/impl_specs/x.md)
+(cd "$SCRATCH/repo" && bash "$SHIP" "leak spec") >"$SCRATCH/out" 2>&1
+expect T62-implspec-scope-block 2 $? "SCOPE_GATE"
+(cd "$SCRATCH/repo" \
+  && printf 'docs/x.md\ndocs/impl_specs/\n' > "$SCRATCH/canon/scope_whitelist.txt" \
+  && git reset -q && git add docs/impl_specs/x.md)
+(cd "$SCRATCH/repo" && bash "$SHIP" "spec in scope") >"$SCRATCH/out" 2>&1
+expect T62b-implspec-whitelisted 0 $?
+rm -f "$SCRATCH/canon/scope_whitelist.txt"
+
+# --- T63: spec_anchor_check - a delta with no pending fragments is
+# a SKIP, not a fail on an empty adapter list (review_6 #5).
+PHEAD=$(cd "$PANEL_DIR" && git rev-parse HEAD)
+(cd "$PANEL_DIR" && BASE="$PHEAD" bash canon/bin/spec_anchor_check.sh) >"$SCRATCH/out" 2>&1
+expect T63-empty-pending-skip 0 $? "SKIP"
+
+# --- T64: panel_verdict receipts - blanks and stop words are
+# placeholders, not inspected files (review_6 #12).
+t64=0
+for r in '"none"' '"  "' '"todo"' '"-"'; do
+  printf '{"domain":"docs","head":"%s","summary":"s","receipt":[%s],"findings":[]}\n' \
+    "$PHEAD" "$r" > "$SCRATCH/vbad.json"
+  (cd "$PANEL_DIR" && bash "$PV" set --pr 1 --sha "$PHEAD" --record "$SCRATCH/vbad.json") \
+    >"$SCRATCH/out" 2>&1
+  [ $? -eq 2 ] \
+    || { echo "FAIL T64-receipt-stopword: receipt [$r] accepted"; t64=1; }
+done
+[ "$t64" -eq 0 ] && { echo "PASS T64-receipt-stopwords"; pass=$((pass+1)); } \
+  || fail=$((fail+1))
+
+# --- T65: docs_check - markdown links with a title still resolve;
+# {#id} anchors behave the same in both checkers (review_6 #11).
+cat > "$PANEL_DIR/docs/specs/titled.md" <<'EOF'
+## Target
+See [the guide](spec.md "Spec file") and [anchor](#target) plus
+[custom](spec.md#req-a 'Req A').
+EOF
+(cd "$PANEL_DIR" && git add docs/specs/titled.md && git commit -qm "titled links")
+(cd "$PANEL_DIR" && bash canon/bin/docs_check.sh) >"$SCRATCH/out" 2>&1
+expect T65-title-links 0 $?
+# a title link to a missing file is still a broken link, not noise
+cat > "$PANEL_DIR/docs/specs/titled.md" <<'EOF'
+## Target
+See [gone](nope.md "Missing").
+EOF
+(cd "$PANEL_DIR" && git add docs/specs/titled.md && git commit -qm "bad link")
+(cd "$PANEL_DIR" && bash canon/bin/docs_check.sh) >"$SCRATCH/out" 2>&1
+expect T65b-title-link-broken 1 $? "nope.md"
+(cd "$PANEL_DIR" && git rm -q docs/specs/titled.md && git commit -qm "cleanup titled")
+
+# --- T66: forbidden_patterns must actually scan the delta file (the
+# FORB block once read a removed bash variable - silent fail-open).
+cp "$PANEL_DIR/canon/project.json" "$SCRATCH/pj_t66.bak"
+python3 - "$PANEL_DIR/canon/project.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["security"] = {"forbidden_patterns": ["dangerous_call\\("]}
+json.dump(d, open(sys.argv[1], "w"), indent=2)
+PY
+(cd "$PANEL_DIR" && printf 'dangerous_call(x)\n' > src/forbid.py \
+  && git add src/forbid.py && git commit -qm "forbidden api")
+(cd "$PANEL_DIR" && BASE=main bash canon/bin/security_check.sh) >"$SCRATCH/out" 2>&1
+expect T66-forbidden-scan 1 $? "forbidden"
+cp "$SCRATCH/pj_t66.bak" "$PANEL_DIR/canon/project.json"
+(cd "$PANEL_DIR" && git reset -q --hard HEAD~1 >/dev/null 2>&1)
+
 echo "---"
 echo "gate_tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

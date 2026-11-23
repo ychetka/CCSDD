@@ -86,7 +86,10 @@ if pj:
         head = val[0]
         if isinstance(head, str) and head and "\x00" not in head:
             allow.append(f"Exec({head})")
-out = {"permissions": {"deny": deny, "allow": allow}}
+# Dedup preserving order: a gate_checks command head that repeats a
+# policy allow entry would otherwise appear twice.
+out = {"permissions": {"deny": list(dict.fromkeys(deny)),
+                       "allow": list(dict.fromkeys(allow))}}
 print(json.dumps(out, indent=2, ensure_ascii=False))
 PY
 

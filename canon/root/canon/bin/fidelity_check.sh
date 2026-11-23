@@ -79,7 +79,10 @@ def stem_of(rel):
 # declaring literally same-named axes still share the namespace -
 # the full fix is <item_slug>.<axis> prefixes (documented in
 # review_5 #2).
-declared = {}   # norm(axis) -> declaring file rel
+# declared keyed by FILE: two contracts declaring a same-named axis
+# must not overwrite each other - each file's axes are checked
+# against its own bound spec independently.
+declared = {}   # rel -> set(norm(axis))
 frag_stems = {stem_of(f) for f in files
               if f.startswith(".changes/") and f.endswith(".md")}
 decided = {}    # spec_stem -> set(norm(axis))
@@ -106,7 +109,7 @@ for rel in files:
             m = re.match(r"^-\s+axis:\s*([^|]+)", line)
             if m:
                 name = norm(m.group(1))
-                if name: declared[name] = rel
+                if name: declared.setdefault(rel, set()).add(name)
         if in_spec:
             m = re.match(r"^###\s+axis:\s*([^|]+)", line)
             if m:
@@ -119,9 +122,9 @@ if not declared:
     print("GATE_NOTE: axes=none")
     print("PASS: no delegated axes - fidelity reviewer may auto-pass")
     raise SystemExit(0)
+all_declared = {a for s in declared.values() for a in s}
 missing = []
-for rel in {f for f in declared.values()}:
-    axes_of_file = {a for a, f in declared.items() if f == rel}
+for rel, axes_of_file in declared.items():
     candidates = frag_stems | {stem_of(rel)}
     covered = any(axes_of_file <= spec_axes
                   for stem, spec_axes in decided.items()
@@ -129,12 +132,20 @@ for rel in {f for f in declared.values()}:
     if not covered:
         missing.extend(sorted(axes_of_file))
 missing = sorted(set(missing))
-print("AXES: " + ",".join(sorted(declared)))
+# Improvisation check (same direction as design_spec_check's EXTRA):
+# an impl spec may not decide axes no contract in this PR delegated.
+extra = sorted({a for spec_axes in decided.values() for a in spec_axes}
+               - all_declared)
+print("AXES: " + ",".join(sorted(all_declared)))
 print("GATE_NOTE: axes=present")
 if missing:
     print("FAIL: delegated axes without a decided impl-spec entry "
           "(expected under docs/impl_specs/<item>.md): "
           + ", ".join(missing))
     raise SystemExit(1)
-print(f"PASS: {len(declared)} delegated axis/axes covered by impl spec")
+if extra:
+    print("FAIL: impl spec decides axes the contracts never delegated "
+          "(improvisation): " + ", ".join(extra))
+    raise SystemExit(1)
+print(f"PASS: {len(all_declared)} delegated axis/axes covered by impl spec")
 PY

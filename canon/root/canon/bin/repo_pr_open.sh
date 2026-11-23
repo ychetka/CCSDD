@@ -69,7 +69,10 @@ for frag in .changes/*.md; do
   [ -f "$frag" ] || continue
   # Leading key: value zone, optional '---' fences - same contract as
   # spec_anchor_check.sh front_fields (fragments may omit '---').
-  fi_n=$(python3 - "$frag" <<'PY' | tr -cd '0-9'
+  # 'issue:' may be a comma list or carry '#' marks/quotes/comments:
+  # every number is extracted in Python - concatenating digits via
+  # tr would weld '10, 11' into a phantom '#1011'.
+  fi_nums=$(python3 - "$frag" <<'PY'
 import re, sys
 lines = open(sys.argv[1], encoding="utf-8", errors="replace").read().splitlines()
 start = 1 if lines and lines[0].strip() == "---" else 0
@@ -79,17 +82,20 @@ for ln in lines[start:]:
         break
     m = re.match(r"^issue\s*:\s*(.+?)\s*$", ln)
     if m:
-        print(m.group(1)); break
+        v = m.group(1).strip().strip('"').strip("'")
+        v = re.sub(r"\s+#(?!\d).*$", "", v)   # trailing ' #comment'
+        nums = re.findall(r"#?(\d+)", v)      # '10', '#10', '10, 11', '10, #11'
+        print(" ".join(str(int(n)) for n in nums)); break
     if s and not re.match(r"^[A-Za-z_]+\s*:", ln):
         break
 PY
 )
-  [ -n "$fi_n" ] || continue
-  fi_n=$((10#$fi_n))
-  printf '%s' "$BODY" | grep -qE "#$fi_n([^0-9]|$)" \
-    || BODY="${BODY:+$BODY
+  for fi_n in $fi_nums; do
+    printf '%s' "$BODY" | grep -qE "#$fi_n([^0-9]|$)" \
+      || BODY="${BODY:+$BODY
 
 }Includes #$fi_n"
+  done
 done
 
 HYGIENE_OUT=$(printf '%s\n%s\n' "$TITLE" "$BODY" | "$CANON_DIR/bin/hygiene_check.sh")

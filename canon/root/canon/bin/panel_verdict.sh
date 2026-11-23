@@ -115,9 +115,15 @@ if v.get("head") != os.environ["SHA"]:
 receipt = v.get("receipt")
 # Protocol requires min(3, files_in_diff) receipts; the wrapper can
 # only enforce the non-empty invariant - reviewers report honestly.
-if not isinstance(receipt, list) or not receipt or not all(isinstance(x,str) and x for x in receipt):
+# Entries must also look like paths: blank/whitespace strings and
+# stop words ('none', 'n/a', 'todo', 'null', '-') are placeholders,
+# not inspected files.
+STOP = {"none", "n/a", "na", "todo", "null", "-", "tbd", "unknown"}
+if not isinstance(receipt, list) or not receipt \
+   or not all(isinstance(x, str) and x.strip() for x in receipt) \
+   or any(x.strip().lower() in STOP for x in receipt):
     print(json.dumps({"status":"error","failure_class":"malformed_input",
-                      "message":"receipt must be a non-empty list of inspected files"})); sys.exit(2)
+                      "message":"receipt must be a non-empty list of inspected file paths (no blanks/placeholders)"})); sys.exit(2)
 findings = v.get("findings")
 if not isinstance(findings, list):
     print(json.dumps({"status":"error","failure_class":"malformed_input","message":"findings must be a list"})); sys.exit(2)

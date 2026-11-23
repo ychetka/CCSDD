@@ -50,7 +50,7 @@ case "$op" in
   status|log|show|rev-parse|rev-list|merge-base|\
   ls-files|ls-remote|blame|cat-file|for-each-ref)
     case "$op" in
-      log|show|blame) exec $G "$op" --no-textconv "$@";;
+      log|show|blame) exec $G "$op" --no-ext-diff --no-textconv "$@";;
       *)              exec $G "$op" "$@";;
     esac;;
   branch)
@@ -62,10 +62,12 @@ case "$op" in
       case "$a" in
         -l|--list|--list=*|--show-current|--merged|--no-merged|\
         --contains|--contains=*|--points-at|--points-at=*) listy=1;;
-        -v|-vv|-a|-r|--sort=*|--format=*|--abbrev*|--column*|\
-        --no-column|*'?'*|*'*'*|*'['*) :;;
-        [A-Za-z0-9._/-]*) names=1;;
-        *) die "git_ro: branch argument not allowed: $a";;
+        -v|-vv|-a|-r|--sort=*|--format=*|--abbrev*|--column*|--no-column) :;;
+        # Any other dash-leading arg is a flag we did not whitelist:
+        # '-D victim' alongside '--contains HEAD' would otherwise
+        # reach git and DELETE a branch inside the read-only path.
+        -*) die "git_ro: branch flag not allowed: $a";;
+        *) names=1;;   # bare name or glob pattern (may hold * ? [)
       esac
     done
     [ "$names" -eq 0 ] || [ "$listy" -eq 1 ] \

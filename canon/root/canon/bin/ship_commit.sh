@@ -275,10 +275,12 @@ PY
     # The whitelist file itself is always in-scope: the self-edit
     # check above already forces it to be the only staged file.
     [ -n "$REL_WL" ] && [ "$f" = "$REL_WL" ] && continue
-    # Canon artifacts are always in scope: the tracked impl spec the
-    # designer's package ships (fidelity floor reads it from the PR
-    # delta).
-    case "$f" in docs/impl_specs/*) continue;; esac
+    # docs/impl_specs/* is NOT a blanket exemption: the designer's
+    # impl spec is a contract-bound artifact committed by the calling
+    # instance before the writer's whitelist is installed - letting an
+    # executor edit it freely would let it retro-fit the designer's
+    # decisions to its own code. It is in scope only when the
+    # whitelist names it explicitly (handled by the normal rules).
     ok=0
     while IFS= read -r line; do
       line="${line%$'\r'}"

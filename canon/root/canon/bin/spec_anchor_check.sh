@@ -52,6 +52,15 @@ if [ -z "${PENDING_FRAGS:-}" ]; then
   fi
 fi
 
+# Nothing pending in THIS delta: a release PR (deletes fragments), a
+# no-changes-entry path, or a worktree where only .changes/README.md
+# exists must not run the anchor checks or the repo adapter with an
+# empty list.
+if [ -z "${PENDING_FRAGS:-}" ]; then
+  echo "SKIP: no pending .changes entries in delta"
+  exit 0
+fi
+
 # A. Mandatory fragment fields (bump / user_visible / issue) and a
 #    non-empty '## Spec impact' (adds/modifies/removes lines or the
 #    bare '-' none-marker). CANONICAL contract - runs even when a repo
@@ -161,11 +170,17 @@ bad = []
 
 def gh_anchor(heading):
     # GitHub-style anchor: lowercase, drop punctuation, spaces->dash.
+    # An explicit '{#custom-id}' marker is NOT part of the slug -
+    # same contract as docs_check.sh (the id is collected as its own
+    # anchor by collect_anchors).
+    heading = re.sub(r"\{#[^}]+\}", "", heading)
     return re.sub(r"[^\w\- ]", "", heading.strip().lower()).replace(" ", "-")
 
 def strip_fenced(body):
-    # headings inside ``` fenced blocks are not real anchors
-    return re.sub(r"```[\s\S]*?```", "", body)
+    # headings inside fenced blocks (``` and ~~~) are not real
+    # anchors - same fence set as docs_check.sh.
+    body = re.sub(r"```[\s\S]*?```", "", body)
+    return re.sub(r"~~~[\s\S]*?~~~", "", body)
 
 def collect_anchors(body):
     # Full anchor set of a markdown body: GitHub-style heading slugs

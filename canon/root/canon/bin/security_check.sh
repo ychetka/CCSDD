@@ -23,19 +23,26 @@ except Exception: print("main")' 2>/dev/null)
     git rev-parse --verify --quiet "$r" >/dev/null 2>&1 && { BASE=$r; break; }
   done
 fi
+# --text: a secret added inside a binary/non-UTF-8 file must still
+# reach the scanner (without it git prints "Binary files differ" and
+# the secret never appears). --no-ext-diff pins the builtin differ
+# against attacker-controlled diff.external config. The stream goes
+# to a FILE, never a bash variable: bash drops NUL bytes inside $(),
+# mangling the scan input. grep -aE on both sides (BRE '\+' would
+# delete every '+' line; without -a grep emits 'binary file matches'
+# and nothing else).
+DIFF_F=$(mktemp); trap 'rm -f "$DIFF_F"' EXIT
 if [ -n "$BASE" ]; then
-  # --text: a secret added inside a binary/non-UTF-8 file must still
-  # reach the scanner (without it git prints "Binary files differ"
-  # and the secret never appears). --no-ext-diff pins the builtin
-  # differ against attacker-controlled diff.external config.
-  # grep -a: the --text diff of a NUL-bearing file is itself binary
-  # output - without -a grep reports 'binary file matches' and emits
-  # nothing, silently dropping the secret. And the '+++' exclusion
-  # must be -E too: BRE '\+' is the one-or-more operator, which would
-  # match (and -v-delete) EVERY '+' line.
-  DIFF=$(git diff --text --no-ext-diff --unified=0 "$BASE"...HEAD 2>/dev/null | grep -aE '^\+' | grep -avE '^\+\+\+')
+  git diff --text --no-ext-diff --unified=0 "$BASE"...HEAD 2>/dev/null \
+    | grep -aE '^\+' | grep -avE '^\+\+\+' > "$DIFF_F" || true
 else
-  DIFF=$(git diff --text --no-ext-diff --unified=0 --cached 2>/dev/null | grep -aE '^\+' | grep -avE '^\+\+\+'; git ls-files -z --others --exclude-standard | xargs -0 cat 2>/dev/null)
+  { git diff --text --no-ext-diff --unified=0 --cached 2>/dev/null \
+      | grep -aE '^\+' | grep -avE '^\+\+\+' || true
+    # Untracked files are added content too - concat with a newline
+    # separator so two files never glue into one line.
+    git ls-files -z --others --exclude-standard 2>/dev/null \
+      | while IFS= read -r -d '' uf; do cat "$uf" 2>/dev/null; printf '\n'; done
+  } > "$DIFF_F"
 fi
 
 # --- 1. secret patterns on added lines ---
@@ -43,7 +50,7 @@ fi
 # partner gateway enforces on outbound args. A scanner crash must
 # fail the check, never silently pass: capture the exit code
 # explicitly (empty stdout + ||true would swallow UnicodeDecodeError).
-SECRET_BAD=$(printf '%s\n' "$DIFF" | python3 "$CANON_DIR/bin/secret_scan.py")
+SECRET_BAD=$(python3 "$CANON_DIR/bin/secret_scan.py" < "$DIFF_F")
 SCAN_RC=$?
 if [ $SCAN_RC -eq 2 ] || [ $SCAN_RC -gt 2 ]; then
   echo "FAIL: secret scanner crashed (rc=$SCAN_RC)"; fails=$((fails+1))
@@ -61,11 +68,11 @@ try:
     print("\n".join(v) if isinstance(v, list) else "")
 except Exception: print("")' 2>/dev/null)
 if [ -n "$FORB" ]; then
-  FP_BAD=$(printf '%s\n' "$DIFF" | FORB="$FORB" python3 - <<'PY'
-import os, re, sys
+  FP_BAD=$(FORB="$FORB" DIFF_F="$DIFF_F" python3 - <<'PY'
+import os, re
 pats = [p for p in os.environ["FORB"].splitlines() if p.strip()]
 bad = []
-for line in sys.stdin:
+for line in open(os.environ["DIFF_F"], encoding="utf-8", errors="replace"):
     for rx in pats:
         try:
             if re.search(rx, line):

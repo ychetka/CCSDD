@@ -107,7 +107,8 @@ publish_tag_release() {
     else
       "$GH" release create "$tag" --generate-notes >/dev/null 2>&1
     fi || {
-      printf '{"status":"error","failure_class":"upstream_error","message":"tag pushed but "$GH" release create failed - create release for %s manually"}' "$tag"
+      GH_NAME=$(basename "$GH" 2>/dev/null || printf 'gh')
+      printf '{"status":"error","failure_class":"upstream_error","message":"tag pushed but %s release create failed - create release for %s manually"}' "$GH_NAME" "$tag"
       return 14; }
   fi
   # Release journal (harness.md §3 "Release history"): a durable

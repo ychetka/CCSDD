@@ -25,8 +25,10 @@ parallel reviewers).
    * Read `canon/project.json`: the reviewer binary is
      `review.gh_bin` (basename), expected login is the first
      element of `review.reviewer_logins`; fallback `gh`.
-   * Resolve the binary in the very first exec:
-     `REVIEWER_GH="$(basename "$(python3 -c 'import json;print((json.load(open("canon/project.json")).get("review") or {}).get("gh_bin") or "gh")' 2>/dev/null || echo gh)")"; command -v "$REVIEWER_GH" >/dev/null || { echo 'reviewer token unavailable'; exit 1; }`.
+   * Resolve the binary in the very first exec through the canon
+     resolver (never an inline json read - the exec policy may deny
+     interpreter one-liners):
+     `REVIEWER_GH="$(canon/bin/gh_id.sh review)"; command -v "$REVIEWER_GH" >/dev/null || { echo 'reviewer token unavailable'; exit 1; }`.
      HARD RULE: `GH_TOKEN=... gh` via a variable is forbidden -
      use the declared wrapper, not bare `gh` from the author
      account.
@@ -38,19 +40,26 @@ parallel reviewers).
      unavailable" to the parent, publish nothing.
 2. Extract PR metadata:
    `$REVIEWER_GH pr view <URL> --json number,title,body,author,headRefOid,headRefName,baseRefName`
-   * **Release-PR fast path** (`headRefName` = `release/v<X.Y.Z>`):
-     a release PR carries no new review surface - its diff is the
-     generated version bump + CHANGELOG fold + fragment consumption,
-     already domain-reviewed on each contributing task PR. Domain
-     signals are NOT required. Verify provenance instead:
-     - title matches `release: v<X.Y.Z>` and equals the branch version;
+   * **Release-PR fast path** (`headRefName` =
+     `release/v<X.Y.Z>` or `release/v<X.Y.Z>-r<sha>` - the `-r<sha>`
+     suffix is a release retry after a workflow restart): a release
+     PR carries no new review surface - its diff is the generated
+     version bump + CHANGELOG fold + fragment consumption, already
+     domain-reviewed on each contributing task PR. Domain signals
+     are NOT required. Verify provenance instead:
+     - title matches `release: v<X.Y.Z>` and equals the branch
+       version;
+     - the PR carries EXACTLY ONE commit
+       (`canon/bin/git_ro.sh rev-list --count <base>...<headRefOid>`
+       = 1 - a release head is one bump commit; a second commit
+       means a human hand or a botched rebase);
      - the version source on `headRefOid` reports exactly `X.Y.Z`
        (`canon/bin/repo_version_at.sh <headRefOid>`);
      - the PR diff touches ONLY `{version file, CHANGELOG.md,
        .changes/* deletions}` - any other modified file means the
        branch was tampered with: report `release_provenance_fail`,
        do NOT publish.
-     All three hold -> publish `APPROVE` via `repo_pr_review.sh`
+     All four hold -> publish `APPROVE` via `repo_pr_review.sh`
      (step 6) and stop; the merge gate binds it to the head sha.
    * For any other headRefName continue to step 3.
 3. Read the panel registry `canon/config/review_panel.json`:

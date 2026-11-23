@@ -61,7 +61,11 @@ def anchors_of(path):
     out |= {a.lower() for a in re.findall(r'(?:name|id)\s*=\s*["\']([^"\']+)["\']', body)}
     return out
 
-link_re = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)\)")
+# [text](target) plus the optional Markdown title form
+# [text](target "Title") / (target 'Title') - the title is not part
+# of the resolved path.
+link_re = re.compile(
+    r'''(?<!!)\[[^\]]*\]\(\s*([^\s)]+)(?:\s+["'][^"']*["'])?\s*\)''')
 for p in md_files:
     rel = os.path.relpath(p, top)
     body = open(p, encoding="utf-8", errors="replace").read()

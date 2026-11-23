@@ -150,10 +150,11 @@ for f in frags:
         s = ln.strip()
         if s == "---" or s.startswith("#"):
             break
-        m = re.match(r"^issue\s*:\s*([#\d,\s]+)", ln)
+        m = re.match(r"^issue\s*:\s*([#\d,\s'\"]+)", ln)
         if m:
-            have.update(x.strip().lstrip("#") for x in m.group(1).split(",")
-                        if x.strip().lstrip("#"))
+            have.update(x.strip().strip('"').strip("'").lstrip("#")
+                        for x in m.group(1).split(",")
+                        if x.strip().strip('"').strip("'").lstrip("#"))
             break
         if s and not re.match(r"^[A-Za-z_]+\s*:", ln):
             break
