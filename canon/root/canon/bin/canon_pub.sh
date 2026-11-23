@@ -79,7 +79,15 @@ def fail(msg, code=3):
 
 if not cand.is_dir():
     fail(f"candidate dir missing: {cand}")
-files = sorted(p for p in cand.rglob("*") if p.is_file())
+all_entries = list(cand.rglob("*"))
+# Path.is_file() follows symlinks: a candidate symlink to an outside
+# file (e.g. ~/.ssh/id_rsa) would be dereferenced and PUBLISHED into
+# the canon root; a broken symlink would be silently skipped. The
+# canon tree ships regular files only - reject any symlink.
+for p in all_entries:
+    if p.is_symlink():
+        fail(f"symlink forbidden in candidate: {p}")
+files = sorted(p for p in all_entries if p.is_file())
 if not files:
     fail("candidate tree is empty")
 
@@ -206,6 +214,14 @@ for old in canon_root.rglob("*"):
 if removed:
     print(f"canon_pub: swept {len(removed)} stale file(s): "
           f"{removed[:5]}", file=sys.stderr)
+# Drop directories emptied by the sweep (deepest first) so the
+# published root mirrors the candidate exactly.
+for d in sorted((q for q in canon_root.rglob("*") if q.is_dir()),
+                key=lambda q: len(q.parts), reverse=True):
+    try:
+        d.rmdir()  # succeeds only on an empty dir
+    except OSError:
+        pass
 for p in files:
     rel = p.relative_to(cand)
     dst = canon_root / rel

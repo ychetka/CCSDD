@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # harness_log.sh - append a completed-item record to canon/harness_log.jsonl.
-# One JSON line per closed roadmap item, 7 fields (harness.md spec):
+# One JSON line per closed roadmap item, 8 fields (harness.md spec):
 #
 #   harness_log.sh append --item item_03 --category implementation \
 #     --arch-revisions 1 --exec-review-rounds 2 \

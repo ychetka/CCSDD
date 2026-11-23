@@ -53,13 +53,15 @@ CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 PRODUCT="$(cd "$CANON_DIR/../../.." && pwd)"   # canon/root/canon -> product root
 DEPLOY="$PRODUCT/tools/start_project.sh"
 
-SCRATCH=$(mktemp -d)
-trap 'rm -rf "$SCRATCH"' EXIT
+SCRATCH=${SCRATCH:-$(mktemp -d)}
+[ -n "${KEEP_SCRATCH:-}" ] || trap 'rm -rf "$SCRATCH"' EXIT
 pass=0; fail=0
 expect() { # name expected_rc actual_rc [pattern_in_out_file]
   local name="$1" want="$2" got="$3" pat="${4:-}"
   if [ "$got" != "$want" ]; then
-    echo "FAIL $name: expected exit $want, got $got"; fail=$((fail+1)); return
+    echo "FAIL $name: expected exit $want, got $got"
+    tail -n 15 "$SCRATCH/out" 2>/dev/null | sed 's/^/    out: /'
+    fail=$((fail+1)); return
   fi
   if [ -n "$pat" ] && ! grep -q "$pat" "$SCRATCH/out"; then
     echo "FAIL $name: output missing '$pat'"; fail=$((fail+1)); return

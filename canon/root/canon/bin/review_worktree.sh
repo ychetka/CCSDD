@@ -2,8 +2,9 @@
 # review_worktree.sh open|close --pr <N> --domain <d> [--sha <40hex>]
 #
 # Detached, credential-free read worktrees for panel reviewers.
-# `open` creates /tmp/pr-<repo_hash>-<domain>-<N> at the PR head
-# commit without touching the main checkout; `close` removes it.
+# `open` creates ${TMPDIR:-/tmp}/ccsdd-rev-$(id -u)/pr-<repo_hash>-
+# <domain>-<N> at the PR head commit (private per-user dir, 0700)
+# without touching the main checkout; `close` removes it.
 # Every reviewer gets a private worktree so reads at the PR head
 # never disturb the main workspace or each other. Mutations
 # (checkout/branch/commit) inside the worktree are the reviewer's
@@ -41,7 +42,11 @@ done
 case "$PR" in ''|*[!0-9]*) die "--pr must be a positive integer";; esac
 case "$DOMAIN" in ''|*[!a-z0-9_]*) die "--domain must be a lowercase panel domain name";; esac
 REPO_HASH=$(printf '%s' "$TOP" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-8)
-DIR="/tmp/pr-${REPO_HASH}-${DOMAIN}-${PR}"
+# Private per-user root: a predictable name straight in world-writable
+# /tmp is raceable (pre-created dir/symlink by another local process).
+REV_ROOT="${TMPDIR:-/tmp}/ccsdd-rev-$(id -u)"
+mkdir -p "$REV_ROOT" && chmod 700 "$REV_ROOT"
+DIR="$REV_ROOT/pr-${REPO_HASH}-${DOMAIN}-${PR}"
 case "$CMD" in
   close)
     if [ -d "$DIR" ]; then

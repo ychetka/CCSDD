@@ -39,9 +39,17 @@ if ! compgen -G "$TOP/.changes/*.md" >/dev/null 2>&1; then
 fi
 
 if [ -z "${PENDING_FRAGS:-}" ]; then
-  PENDING_FRAGS=$( { [ -n "$BASE" ] && git -c core.quotepath=false diff --name-only --diff-filter=ACMR "$BASE"...HEAD 2>/dev/null; } \
-                   | grep -E '^\.changes/[^/]+\.md$' | grep -v '/README\.md$' || true)
-  [ -z "$PENDING_FRAGS" ] && PENDING_FRAGS=$(cd "$TOP" && ls .changes/*.md 2>/dev/null | grep -v 'README\.md$' || true)
+  if [ -n "$BASE" ]; then
+    # Strict diff scope: fragments on base that were never consumed
+    # must not re-enter the check - they are base history, not this
+    # PR's pending release notes.
+    PENDING_FRAGS=$(git -c core.quotepath=false diff --name-only --diff-filter=ACMR "$BASE"...HEAD 2>/dev/null \
+                    | grep -E '^\.changes/[^/]+\.md$' | grep -v '/README\.md$' || true)
+  else
+    # No resolvable base (detached/fixture context): fall back to
+    # whatever pending fragments exist in the worktree.
+    PENDING_FRAGS=$(cd "$TOP" && ls .changes/*.md 2>/dev/null | grep -v 'README\.md$' || true)
+  fi
 fi
 
 # A. Mandatory fragment fields (bump / user_visible / issue) and a

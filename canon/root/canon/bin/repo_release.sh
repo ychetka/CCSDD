@@ -115,9 +115,18 @@ publish_tag_release() {
   # identity, UTC time. Approval envelopes and review verdicts live
   # in cycle_log/gate_runs; this row is the audit anchor for them.
   MERGER=$("$GH" api user --jq '.login' 2>/dev/null || basename "$GH")
-  printf '{"version":"%s","tag":"%s","sha":"%s","merger":"%s","utc":"%s"}\n' \
-    "${tag#v}" "$tag" "$sha" "$MERGER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    >> "$CANON_DIR/release_history.jsonl" 2>/dev/null || true
+  if command -v flock >/dev/null 2>&1; then
+    ( exec 9>"$CANON_DIR/release_history.jsonl.lock"
+      flock 9 || exit 1
+      printf '{"version":"%s","tag":"%s","sha":"%s","merger":"%s","utc":"%s"}\n' \
+        "${tag#v}" "$tag" "$sha" "$MERGER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        >> "$CANON_DIR/release_history.jsonl"
+    ) 2>/dev/null || true
+  else
+    printf '{"version":"%s","tag":"%s","sha":"%s","merger":"%s","utc":"%s"}\n' \
+      "${tag#v}" "$tag" "$sha" "$MERGER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      >> "$CANON_DIR/release_history.jsonl" 2>/dev/null || true
+  fi
   TAG="$tag" SHA_V="$sha" NOTE_V="${note:-}" python3 -c 'import json,os
 print(json.dumps({"status":"released","tag":os.environ["TAG"],"sha":os.environ["SHA_V"],
                   **({"note":os.environ["NOTE_V"]} if os.environ["NOTE_V"] else {})}))'

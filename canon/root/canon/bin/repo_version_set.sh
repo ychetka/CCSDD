@@ -34,9 +34,22 @@ fi
 
 # 2. project.json-declared file+regex
 PJ="$CANON_DIR/project.json"
-if [ -f "$PJ" ] && python3 -c "import json;d=json.load(open('$PJ'));exit(0 if d.get('version') else 1)" 2>/dev/null; then
-  VFILE=$(python3 -c "import json;print(json.load(open('$PJ'))['version']['file'])")
-  VREGEX=$(python3 -c "import json;print(json.load(open('$PJ'))['version']['regex'])")
+PJ_V=$(PJ="$PJ" python3 - 2>/dev/null <<'PY' || true
+import json, os, sys
+try:
+    v = (json.load(open(os.environ["PJ"], encoding="utf-8")).get("version") or {})
+except Exception:
+    sys.exit(1)
+# Both keys mandatory: a 'version' block without regex would crash
+# below with KeyError and no diagnosis.
+if isinstance(v.get("file"), str) and isinstance(v.get("regex"), str):
+    print(v["file"]); print(v["regex"]); sys.exit(0)
+sys.exit(1)
+PY
+)
+if [ -n "$PJ_V" ]; then
+  VFILE=$(printf '%s\n' "$PJ_V" | sed -n 1p)
+  VREGEX=$(printf '%s\n' "$PJ_V" | sed -n 2p)
   # The declared file must be a normalized relative path inside the
   # repo - a project.json pointing at '../x' or '/etc/y' would make
   # the release commit write outside the worktree.

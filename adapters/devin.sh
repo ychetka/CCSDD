@@ -56,9 +56,10 @@ fi
 ln -s canon/RULES.md "$WS/.windsurfrules"
 
 # --- compile .devin/config.json from the neutral policy -----------
-python3 - "$POLICY" "$WS/.devin/config.json" <<'PY'
-import json, sys
-policy = json.load(open(sys.argv[1], encoding="utf-8"))
+PJ="$CANON/project.json"; [ -f "$PJ" ] || PJ=""
+POLICY="$POLICY" PJ="$PJ" python3 - <<'PY' > "$WS/.devin/config.json"
+import json, os
+policy = json.load(open(os.environ["POLICY"], encoding="utf-8"))
 ex = policy.get("exec") or {}
 deny = [f"Exec({v})" for v in ex.get("deny", [])]
 # canon/bin + the symlinked .devin/bin alias both allowed
@@ -67,10 +68,26 @@ for v in ex.get("allow", []):
     allow += [f"Exec({v})", f"Exec(./{v})"]
     if v == "canon/bin/":
         allow += ["Exec(.devin/bin/)", "Exec(./.devin/bin/)"]
+# Project-declared gate checks (project.json gate_checks.*): the
+# code_writer/judge roles legitimately exec the project's own test
+# and lint binaries inside the worktree. Allow each declared command
+# head so whitelist-mode runtimes do not strangle gate_work.
+pj = os.environ.get("PJ") or ""
+if pj:
+    try:
+        gc = (json.load(open(pj, encoding="utf-8")).get("gate_checks") or {})
+    except Exception:
+        gc = {}
+    for name, val in gc.items():
+        # gate_checks.<name> is an argv array (["pytest","-x"]);
+        # <name>_optional is a bool flag - skip it.
+        if not isinstance(val, list) or not val:
+            continue
+        head = val[0]
+        if isinstance(head, str) and head and "\x00" not in head:
+            allow.append(f"Exec({head})")
 out = {"permissions": {"deny": deny, "allow": allow}}
-with open(sys.argv[2], "w", encoding="utf-8") as fh:
-    json.dump(out, fh, indent=2, ensure_ascii=False)
-    fh.write("\n")
+print(json.dumps(out, indent=2, ensure_ascii=False))
 PY
 
 echo "adapter devin: .devin/ links + config.json + .windsurfrules -> canon/RULES.md"

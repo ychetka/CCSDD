@@ -148,9 +148,14 @@ if [ -n "$PEND_LIST" ]; then
 fi
 
 # Tracker evidence: every declared task issue must be CLOSED.
+# A failed upstream call is an infrastructure error (upstream_error),
+# not a substantive epic_incomplete block - the routings differ.
 OPEN_TASKS=""
 for t in $(TASKS="$TASKS" python3 -c 'import json,os;print(" ".join(json.loads(os.environ["TASKS"])["tasks"]))'); do
-  st=$("$GH" issue view "$t" --json state 2>/dev/null | python3 -c 'import json,sys;print((json.load(sys.stdin) or {}).get("state") or "")' 2>/dev/null)
+  st_json=$("$GH" issue view "$t" --json state 2>/dev/null) \
+    || json_error upstream_error "failed to query issue #$t state"
+  st=$(printf '%s' "$st_json" | python3 -c 'import json,sys;print((json.load(sys.stdin) or {}).get("state") or "")' 2>/dev/null) \
+    || json_error upstream_error "unparseable issue #$t state payload"
   [ "$st" = "CLOSED" ] || OPEN_TASKS="$OPEN_TASKS $t"
 done
 if [ -n "$OPEN_TASKS" ]; then

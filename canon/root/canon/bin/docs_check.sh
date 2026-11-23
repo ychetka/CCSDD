@@ -28,7 +28,19 @@ for root, dirs, files in os.walk(top):
         if f.endswith(".md"):
             md_files.append(os.path.join(root, f))
 
+def strip_nonlink(body):
+    # Fenced blocks (``` and ~~~) and inline code spans are literal
+    # text - a `[a](b)` inside a code example is not a live link.
+    body = re.sub(r"```[\s\S]*?```", "", body)
+    body = re.sub(r"~~~[\s\S]*?~~~", "", body)
+    body = re.sub(r"`[^`\n]+`", "", body)
+    return body
+
 def gh_anchor(h):
+    # Drop an explicit {#id} marker from the header text first - the
+    # GitHub slug of 'Req foo {#req-foo}' is 'req-foo-req-foo', while
+    # the custom id is a separate anchor (collected below).
+    h = re.sub(r"\{#[^}]+\}", "", h)
     return re.sub(r"[^\w\- ]", "", h.strip().lower()).replace(" ", "-")
 
 def anchors_of(path):
@@ -36,10 +48,13 @@ def anchors_of(path):
         body = open(path, encoding="utf-8", errors="replace").read()
     except OSError:
         return set()
-    body = re.sub(r"```[\s\S]*?```", "", body)
+    body = strip_nonlink(body)
     out, seen = set(), {}
     for l in body.splitlines():
         if l.startswith("#"):
+            # Custom anchor syntax '## Title {#custom-id}' - same
+            # contract as spec_anchor_check.sh.
+            out |= {a.lower() for a in re.findall(r"\{#([^}\s]+)\}", l)}
             h = gh_anchor(l.lstrip("# ").strip())
             n = seen.get(h, 0); seen[h] = n + 1
             out.add(h if n == 0 else f"{h}-{n}")
@@ -50,7 +65,7 @@ link_re = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)\)")
 for p in md_files:
     rel = os.path.relpath(p, top)
     body = open(p, encoding="utf-8", errors="replace").read()
-    body = re.sub(r"```[\s\S]*?```", "", body)
+    body = strip_nonlink(body)
     for m in link_re.finditer(body):
         url = m.group(1).strip("<>")
         if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", url) or url.startswith("//"):

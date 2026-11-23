@@ -385,7 +385,7 @@ aj = os.path.join(canon_dir, "actors.json")
 if os.path.isfile(aj):
     try:
         actors = json.load(open(aj, encoding="utf-8"))
-        roles = {"orchestrator","director","executor","code_writer",
+        roles = {"orchestrator","root","director","executor","code_writer",
                  "designer","judge","reviewer","resolver","repository","git",
                  "reader","hygiene","partner",
                  # the seven review-panel domain reviewers (policy.json)

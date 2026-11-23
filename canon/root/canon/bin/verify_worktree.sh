@@ -113,11 +113,18 @@ if [ -n "$BASELINE_CMD" ]; then
       # Every network step is bounded by the same timeout binary.
       python3 -m venv "$WT/.venv" >/dev/null 2>&1 || ENV_RC=$?
       if [ "$ENV_RC" = "0" ]; then
-        REQ=$(ls "$WT"/requirements*.txt 2>/dev/null | head -n1 || true)
-        if [ -n "$REQ" ]; then
+        # Install EVERY requirements*.txt (dev/test pins live in
+        # siblings - taking only the alphabetically first starves the
+        # baseline of test deps) plus the package itself when a
+        # packaging manifest is present.
+        for REQ in "$WT"/requirements*.txt; do
+          [ -f "$REQ" ] || continue
           (cd "$WT" && ${TIMEOUT_BIN:+$TIMEOUT_BIN 300} \
-            "$WT/.venv/bin/pip" install -q -r "$REQ") >/dev/null 2>&1 || ENV_RC=$?
-        else
+            "$WT/.venv/bin/pip" install -q -r "$REQ") >/dev/null 2>&1 \
+            || { ENV_RC=$?; break; }
+        done
+        if [ "$ENV_RC" = "0" ] && \
+           { [ -f "$WT/pyproject.toml" ] || [ -f "$WT/setup.py" ]; }; then
           (cd "$WT" && ${TIMEOUT_BIN:+$TIMEOUT_BIN 300} \
             "$WT/.venv/bin/pip" install -q -e .) >/dev/null 2>&1 || ENV_RC=$?
         fi
@@ -177,7 +184,15 @@ PY_RC=$?
 # must refuse to read as green.
 # ("status":"skipped" carries exit:0 and stays a 0.)
 [ "$PY_RC" != "0" ] && exit "$PY_RC"
-case "$BASELINE_JSON" in
-  *'"error"'*|*'"exit":'[1-9]*) exit 1 ;;
-esac
+# Top-level fields only: the "tail" blob is test-runner output that
+# legitimately contains the substring "error" - a glob match over the
+# whole JSON would fail a green baseline.
+BASELINE_JSON="$BASELINE_JSON" python3 -c 'import json,os,sys
+try:
+    b = json.loads(os.environ["BASELINE_JSON"])
+except Exception:
+    sys.exit(1)
+if b.get("error") or (b.get("exit") or 0) != 0:
+    sys.exit(1)
+sys.exit(0)' || exit 1
 exit 0

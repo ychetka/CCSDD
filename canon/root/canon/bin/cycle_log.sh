@@ -6,6 +6,7 @@
 #       capability token ONCE on stdout. Only sha256(token) is stored;
 #       the token travels to the actor inside its spawn/context
 #       package and authenticates `close`. Roles: orchestrator,
+#       root (privileged alias of director, per policy.json),
 #       director, executor|code_writer, designer, judge, reviewer,
 #       resolver, repository, git, reader, hygiene, partner, plus the
 #       seven domain reviewers reviewer_<design|docs|fidelity|
@@ -63,7 +64,7 @@ if [ "$CMD" = "register" ]; then
   done
   [ -n "$ACTOR" ] && [ -n "$ROLE" ] || { echo "register: --actor and --role required" >&2; exit 2; }
   case "$ROLE" in
-    orchestrator|director|executor|code_writer|designer|judge|reviewer|resolver|repository|git|reader|hygiene|partner|\
+    orchestrator|root|director|executor|code_writer|designer|judge|reviewer|resolver|repository|git|reader|hygiene|partner|\
     reviewer_design|reviewer_docs|reviewer_fidelity|reviewer_product|reviewer_quality|reviewer_security|reviewer_tester) ;;
     *) echo "register: bad role '$ROLE'" >&2; exit 2;;
   esac
@@ -72,7 +73,7 @@ if [ "$CMD" = "register" ]; then
 import datetime, hashlib, json, os, secrets, sys
 path, actor, role, project, reg_tok, own_tok = (os.environ[k] for k in
     ("ACTORS","ACTOR","ROLE","PROJECT","REG_TOKEN","OWN_TOKEN"))
-PRIVILEGED = {"orchestrator", "director"}
+PRIVILEGED = {"orchestrator", "director", "root"}
 def h(t): return hashlib.sha256(t.encode()).hexdigest()
 reg = {"actors": []}
 if os.path.isfile(path):
@@ -135,7 +136,7 @@ if [ "$CMD" = "unregister" ]; then
 import hashlib, json, os, sys
 path, actor, reg_tok, own_tok = (os.environ[k] for k in
     ("ACTORS","ACTOR","REG_TOKEN","OWN_TOKEN"))
-PRIVILEGED = {"orchestrator", "director"}
+PRIVILEGED = {"orchestrator", "director", "root"}
 def h(t): return hashlib.sha256(t.encode()).hexdigest()
 if not os.path.isfile(path):
     print("unregister: no actors registry", file=sys.stderr); sys.exit(1)
@@ -218,7 +219,7 @@ import hashlib, json, os, sys
 actors_path = os.environ["ACTORS"]
 caller, token, target = (os.environ[k] for k in ("BY","TOKEN","ACTOR"))
 def h(t): return hashlib.sha256(t.encode()).hexdigest()
-PRIV = {"orchestrator", "director"}
+PRIV = {"orchestrator", "director", "root"}
 role = "unregistered"
 try:
     reg = json.load(open(actors_path, encoding="utf-8"))
@@ -303,7 +304,7 @@ if os.path.isfile(actors_path):
         sys.exit(3)
 
 target = for_actor or caller
-if target != caller and role not in ("orchestrator", "director"):
+if target != caller and role not in ("orchestrator", "director", "root"):
     print(f"cycle_log close: caller {caller} (role={role}) may not close "
           f"records of actor {target} - orchestrator/director only",
           file=sys.stderr)
@@ -363,7 +364,7 @@ for rec in records:
 # them is a privileged operation even for the owning actor - an
 # executor must not self-resolve an escalation it was told to park.
 if any(r.get("verdict") == "escalated" for r in matched) \
-        and role not in ("orchestrator", "director", "resolver"):
+        and role not in ("orchestrator", "director", "root", "resolver"):
     print(f"cycle_log close: escalated records require "
           f"orchestrator/director/resolver role (caller role={role})",
           file=sys.stderr)

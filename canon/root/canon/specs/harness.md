@@ -283,10 +283,11 @@ delta in the next PR.
 
 In the repo's `canon/`. One JSON line per branch item, written
 after the item's terminal outcome (PR merge, terminal escalation,
-abandon) — the outcome is recorded as fact, not forecast. 7 fields:
+abandon) — the outcome is recorded as fact, not forecast. 8 fields:
 
 ```json
-{"item_id": "item_03", "category": "implementation",
+{"ts_utc": "2026-03-01T12:00:00Z",
+ "item_id": "item_03", "category": "implementation",
  "arch_revisions": 1, "exec_review_rounds": 2,
  "deviations_reported": {"autonomous": 1, "contract_escalations": 0},
  "model_tier_upgraded": false,
@@ -362,8 +363,11 @@ Globally, several
 orchestrators with scoped ownership may exist (disjoint sets of
 tasks/instances — e.g. when one runs out of context window); two
 orchestrators on one project is a forbidden case. Roles:
-orchestrator, director, executor/code_writer, designer, judge,
-reviewer, resolver, repository, git, reader, hygiene, partner.
+orchestrator, root (director alias per policy.json), director,
+executor/code_writer, designer, judge, reviewer, resolver,
+repository, git, reader, hygiene, partner, and the seven panel
+domain reviewers reviewer_<domain> (design, docs, fidelity,
+product, quality, security, tester).
 
 Actor retirement: when an agent instance ends, its record in
 `actors.json` is removed by `cycle_log.sh unregister` (with the

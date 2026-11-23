@@ -67,7 +67,23 @@ done
 # reference, not a close: task issues close on task->epic landing).
 for frag in .changes/*.md; do
   [ -f "$frag" ] || continue
-  fi_n=$(awk '/^---/{d++; next} d==1 && /^issue:/{print $2; exit} d==2{exit}' "$frag" | tr -cd '0-9')
+  # Leading key: value zone, optional '---' fences - same contract as
+  # spec_anchor_check.sh front_fields (fragments may omit '---').
+  fi_n=$(python3 - "$frag" <<'PY' | tr -cd '0-9'
+import re, sys
+lines = open(sys.argv[1], encoding="utf-8", errors="replace").read().splitlines()
+start = 1 if lines and lines[0].strip() == "---" else 0
+for ln in lines[start:]:
+    s = ln.strip()
+    if s == "---" or s.startswith("#"):
+        break
+    m = re.match(r"^issue\s*:\s*(.+?)\s*$", ln)
+    if m:
+        print(m.group(1)); break
+    if s and not re.match(r"^[A-Za-z_]+\s*:", ln):
+        break
+PY
+)
   [ -n "$fi_n" ] || continue
   fi_n=$((10#$fi_n))
   printf '%s' "$BODY" | grep -qE "#$fi_n([^0-9]|$)" \
