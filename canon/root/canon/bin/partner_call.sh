@@ -101,6 +101,11 @@ if r.returncode == 1:
     print("partner_call: REFUSED - args contain secret-looking material "
           "(gateway.md: secrets never cross the boundary)", file=sys.stderr)
     sys.exit(3)
+if r.returncode != 0:
+    # scanner crash (decode error etc.) - fail closed, never pass silently
+    print(f"partner_call: REFUSED - secret scanner error rc={r.returncode}",
+          file=sys.stderr)
+    sys.exit(3)
 
 # Audit key: an explicitly passed --audit-key is used as-is; without
 # one the key is derived deterministically from the audited payload -
@@ -240,13 +245,12 @@ def _refund():
     # increments in one short transaction. A refund failure must
     # never mask the original error.
     try:
-        for k in spent_keys:
-            con.execute(
-                "UPDATE counters SET value = MAX(value - 1, 0) "
-                "WHERE key = ?", (k,))
-        con.commit()
-    except Exception:
-        pass
+        gw_store.counters_refund(con, spent_keys)
+    except Exception as re_:
+        # A refund failure must never mask the original error, but it
+        # must not be silent either - log it for postmortem.
+        print(f"partner_call: WARN quota refund failed: {re_}",
+              file=sys.stderr)
 
 ts = datetime.datetime.now(datetime.timezone.utc)
 # Every external call carries an explicit deadline (RULES.md) - a

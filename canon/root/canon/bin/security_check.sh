@@ -24,16 +24,25 @@ except Exception: print("main")' 2>/dev/null)
   done
 fi
 if [ -n "$BASE" ]; then
-  DIFF=$(git diff --unified=0 "$BASE"...HEAD 2>/dev/null | grep -E '^\+' | grep -v '^\+\+\+')
+  # --text: a secret added inside a binary/non-UTF-8 file must still
+  # reach the scanner (without it git prints "Binary files differ"
+  # and the secret never appears). --no-ext-diff pins the builtin
+  # differ against attacker-controlled diff.external config.
+  DIFF=$(git diff --text --no-ext-diff --unified=0 "$BASE"...HEAD 2>/dev/null | grep -E '^\+' | grep -v '^\+\+\+')
 else
-  DIFF=$(git diff --unified=0 --cached 2>/dev/null | grep -E '^\+' | grep -v '^\+\+\+'; git ls-files -z --others --exclude-standard | xargs -0 cat 2>/dev/null)
+  DIFF=$(git diff --text --no-ext-diff --unified=0 --cached 2>/dev/null | grep -E '^\+' | grep -v '^\+\+\+'; git ls-files -z --others --exclude-standard | xargs -0 cat 2>/dev/null)
 fi
 
 # --- 1. secret patterns on added lines ---
 # Unified scanner (bin/secret_scan.py) - the same pattern set the
-# partner gateway enforces on outbound args.
-SECRET_BAD=$(printf '%s\n' "$DIFF" | python3 "$CANON_DIR/bin/secret_scan.py" || true)
-if [ -n "$SECRET_BAD" ]; then
+# partner gateway enforces on outbound args. A scanner crash must
+# fail the check, never silently pass: capture the exit code
+# explicitly (empty stdout + ||true would swallow UnicodeDecodeError).
+SECRET_BAD=$(printf '%s\n' "$DIFF" | python3 "$CANON_DIR/bin/secret_scan.py")
+SCAN_RC=$?
+if [ $SCAN_RC -eq 2 ] || [ $SCAN_RC -gt 2 ]; then
+  echo "FAIL: secret scanner crashed (rc=$SCAN_RC)"; fails=$((fails+1))
+elif [ $SCAN_RC -eq 1 ]; then
   printf '%s\n' "$SECRET_BAD" | sed 's/^/  secret: /'
   echo "FAIL: possible secrets in the delta"; fails=$((fails+1))
 else

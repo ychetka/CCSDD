@@ -49,6 +49,11 @@ import os, re
 top = os.environ["TOP"]
 files = os.environ.get("SCAN_FILES","").split()
 
+# An impl spec only counts when it lives in the tracked artifact
+# location docs/impl_specs/<item>.md - an "## Impl spec" heading
+# smuggled into a contract/code comment must never satisfy the gate.
+IMPL_SPEC_RE = re.compile(r"^docs/impl_specs/[^/]+\.md$")
+
 def strip_markers(line):
     line = line.strip()
     while line and not line.startswith("##") and \
@@ -56,24 +61,43 @@ def strip_markers(line):
         line = re.sub(r'^("""|/\*|\*/|//|#|\*)', "", line).strip()
     return line
 
-declared = {}   # axis -> file
-decided = set() # axes with a non-empty decision
-in_axes = False
-cur_axis = None
+def norm(name):
+    # Unified axis normalization with design_spec_check.sh:
+    # lowercase, [a-z0-9_-] only - whitespace/case/punctuation can
+    # never make one axis pass one gate and fail the other.
+    return re.sub(r"[^a-z0-9_-]", "", name.lower())
+
+def stem_of(rel):
+    return os.path.splitext(os.path.basename(rel))[0]
+
+# Axes bind to their declaring contract file: ALL axes of one file
+# must be decided inside ONE docs/impl_specs/<stem>.md whose stem
+# names an item of this PR (a .changes fragment slug or the
+# declaring file's own stem). A spec block smuggled into a code
+# comment never counts, and axes can no longer be covered piecemeal
+# across unrelated impl specs. Residual: two contracts in one PR
+# declaring literally same-named axes still share the namespace -
+# the full fix is <item_slug>.<axis> prefixes (documented in
+# review_5 #2).
+declared = {}   # norm(axis) -> declaring file rel
+frag_stems = {stem_of(f) for f in files
+              if f.startswith(".changes/") and f.endswith(".md")}
+decided = {}    # spec_stem -> set(norm(axis))
 for rel in files:
     p = os.path.join(top, rel)
     try:
         body = open(p, encoding="utf-8", errors="replace").read()
     except OSError:
         continue
-    in_axes = False
-    in_spec = False
+    is_spec = bool(IMPL_SPEC_RE.match(rel))
+    stem = stem_of(rel)
+    in_axes = in_spec = False
     cur_axis = None
     for raw in body.splitlines():
         line = strip_markers(raw)
         if re.match(r"^##\s+Delegated decisions", line):
-            in_axes = True; continue
-        if re.match(r"^##\s+Impl spec", line):
+            in_axes = True; in_spec = False; continue
+        if is_spec and re.match(r"^##\s+Impl spec", line):
             in_spec = True; in_axes = False; continue
         if re.match(r"^##\s", line):
             in_axes = False; in_spec = False; cur_axis = None
@@ -81,25 +105,35 @@ for rel in files:
         if in_axes:
             m = re.match(r"^-\s+axis:\s*([^|]+)", line)
             if m:
-                name = m.group(1).strip()
+                name = norm(m.group(1))
                 if name: declared[name] = rel
         if in_spec:
             m = re.match(r"^###\s+axis:\s*([^|]+)", line)
             if m:
-                cur_axis = m.group(1).strip(); continue
+                cur_axis = norm(m.group(1)); continue
             if cur_axis and re.match(r"^-\s+decision:\s*\S", line):
-                decided.add(cur_axis)
+                decided.setdefault(stem, set()).add(cur_axis)
 
 if not declared:
     print("AXES: none")
     print("GATE_NOTE: axes=none")
     print("PASS: no delegated axes - fidelity reviewer may auto-pass")
     raise SystemExit(0)
-missing = sorted(set(declared) - decided)
+missing = []
+for rel in {f for f in declared.values()}:
+    axes_of_file = {a for a, f in declared.items() if f == rel}
+    candidates = frag_stems | {stem_of(rel)}
+    covered = any(axes_of_file <= spec_axes
+                  for stem, spec_axes in decided.items()
+                  if stem in candidates)
+    if not covered:
+        missing.extend(sorted(axes_of_file))
+missing = sorted(set(missing))
 print("AXES: " + ",".join(sorted(declared)))
 print("GATE_NOTE: axes=present")
 if missing:
-    print("FAIL: delegated axes without a decided impl-spec entry: "
+    print("FAIL: delegated axes without a decided impl-spec entry "
+          "(expected under docs/impl_specs/<item>.md): "
           + ", ".join(missing))
     raise SystemExit(1)
 print(f"PASS: {len(declared)} delegated axis/axes covered by impl spec")

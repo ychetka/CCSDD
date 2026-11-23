@@ -137,6 +137,25 @@ def counters_check_incr(con, pairs):
         raise
 
 
+def counters_refund(con, keys):
+    """Return spent quota increments in ONE transaction.
+
+    Autocommit (isolation_level=None) makes each bare UPDATE its own
+    auto-transaction - a crash between keys would desynchronize the
+    per-key and daily counters, and a bare con.commit() is a no-op.
+    All-or-nothing BEGIN IMMEDIATE keeps the pair atomic."""
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        for k in keys:
+            con.execute(
+                "UPDATE counters SET value = MAX(value - 1, 0) "
+                "WHERE key = ?", (k,))
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+
+
 def journal_append(con, entry):
     """Append an audit journal row. entry: dict with ts/partner/..."""
     con.execute(

@@ -56,7 +56,11 @@ AXES=$(awk '
     if (line ~ /^##[[:space:]]/ && insec) { insec=0 }
     if (insec && line ~ /^-[[:space:]]+axis:/) {
       sub(/^-[[:space:]]+axis:[[:space:]]*/,"",line)
-      sub(/[[:space:]]*\|.*/,"",line); gsub(/[[:space:]]/,"",line)
+      sub(/[[:space:]]*\|.*/,"",line)
+      # Unified normalization with fidelity_check.sh: lowercase,
+      # [a-z0-9_-] only - case/whitespace can never make one axis
+      # pass here and fail the fidelity floor.
+      line=tolower(line); gsub(/[^a-z0-9_-]/,"",line)
       if (line != "") print line
     }
   }' "$CONTRACT" | sort -u)
@@ -77,7 +81,8 @@ DECIDED=$(awk '
   /^###[[:space:]]+axis:/ {
     if (name != "" && dec != "") print name
     name=$0; sub(/^###[[:space:]]+axis:[[:space:]]*/,"",name)
-    sub(/[[:space:]]*\|.*/,"",name); gsub(/[[:space:]]/,"",name); dec=""
+    sub(/[[:space:]]*\|.*/,"",name)
+    name=tolower(name); gsub(/[^a-z0-9_-]/,"",name); dec=""
     next
   }
   /^#{1,3}[[:space:]]/ && !/^###[[:space:]]+axis:/ {
@@ -89,7 +94,8 @@ DECIDED=$(awk '
 
 NAMED=$(awk '/^###[[:space:]]+axis:/ {
     name=$0; sub(/^###[[:space:]]+axis:[[:space:]]*/,"",name)
-    sub(/[[:space:]]*\|.*/,"",name); gsub(/[[:space:]]/,"",name)
+    sub(/[[:space:]]*\|.*/,"",name)
+    name=tolower(name); gsub(/[^a-z0-9_-]/,"",name)
     if (name != "") print name }' "$SPEC" | sort -u)
 
 MISSING=$(comm -23 <(printf '%s\n' "$AXES") <(printf '%s\n' "$DECIDED"))

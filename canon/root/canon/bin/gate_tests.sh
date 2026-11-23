@@ -621,6 +621,7 @@ for f in gate_run panel_verdict panel_gate spec_anchor_check docs_check \
          security_check quality_check fidelity_check hygiene_check gh_id; do
   cp "$CANON_DIR/bin/$f.sh" "$PANEL_DIR/canon/bin/"
 done
+cp "$CANON_DIR/bin/secret_scan.py" "$PANEL_DIR/canon/bin/"
 cp "$CANON_DIR/forge/test.sh" "$CANON_DIR/forge/github.sh" \
    "$CANON_DIR/forge/gitlab.sh" "$PANEL_DIR/canon/forge/"
 cp "$CANON_DIR/config/review_panel.json" "$PANEL_DIR/canon/config/"

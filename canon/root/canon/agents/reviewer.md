@@ -37,7 +37,22 @@ parallel reviewers).
      `review.reviewer_logins`. Otherwise return "reviewer token
      unavailable" to the parent, publish nothing.
 2. Extract PR metadata:
-   `$REVIEWER_GH pr view <URL> --json number,title,body,author,headRefOid,baseRefName`
+   `$REVIEWER_GH pr view <URL> --json number,title,body,author,headRefOid,headRefName,baseRefName`
+   * **Release-PR fast path** (`headRefName` = `release/v<X.Y.Z>`):
+     a release PR carries no new review surface - its diff is the
+     generated version bump + CHANGELOG fold + fragment consumption,
+     already domain-reviewed on each contributing task PR. Domain
+     signals are NOT required. Verify provenance instead:
+     - title matches `release: v<X.Y.Z>` and equals the branch version;
+     - the version source on `headRefOid` reports exactly `X.Y.Z`
+       (`canon/bin/repo_version_at.sh <headRefOid>`);
+     - the PR diff touches ONLY `{version file, CHANGELOG.md,
+       .changes/* deletions}` - any other modified file means the
+       branch was tampered with: report `release_provenance_fail`,
+       do NOT publish.
+     All three hold -> publish `APPROVE` via `repo_pr_review.sh`
+     (step 6) and stop; the merge gate binds it to the head sha.
+   * For any other headRefName continue to step 3.
 3. Read the panel registry `canon/config/review_panel.json`:
    required domains (`required: true`) and their classes. If
    `canon/project.json -> review.panel` is set, the ACTIVE domain

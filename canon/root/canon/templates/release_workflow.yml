@@ -60,13 +60,45 @@ jobs:
             exit 1
           fi
           # The version source ON the merge commit must equal the tag
-          # version - provenance over the branch name alone.
-          if [ -f canon/bin/repo_version_at.sh ]; then
-            V=$(bash canon/bin/repo_version_at.sh HEAD 2>/dev/null || true)
-            if [ "$V" != "$VER" ]; then
-              echo "version source on merge reports '${V:-none}', tag is $TAG - refusing" >&2
-              exit 1
-            fi
+          # version - provenance over the branch name alone. canon/ is
+          # gitignored in deployed projects, so canon/bin/repo_version_at.sh
+          # does NOT exist on a CI checkout: the autodetect logic is
+          # inlined here (same priority: pyproject.toml [project],
+          # package.json, Cargo.toml [package], VERSION, setup.cfg
+          # [metadata]). A repo-declared canon/project.json version
+          # source is resolved by the local repo_release.sh gate
+          # before this workflow ever runs.
+          V=$(python3 - <<'PYEOF' || true
+import json, os, re
+def read(p):
+    try: return open(p, encoding="utf-8", errors="replace").read()
+    except OSError: return None
+body = read("pyproject.toml")
+if body:
+    m = re.search(r"(?ms)^\[project\](?:(?!^\[).)*?^\s*version\s*=\s*[\"']([^\"']+)", body)
+    if m: print(m.group(1)); raise SystemExit(0)
+body = read("package.json")
+if body:
+    try:
+        v = json.loads(body).get("version")
+        if v: print(v); raise SystemExit(0)
+    except Exception: pass
+body = read("Cargo.toml")
+if body:
+    m = re.search(r"(?ms)^\[package\](?:(?!^\[).)*?^\s*version\s*=\s*[\"']([^\"']+)", body)
+    if m: print(m.group(1)); raise SystemExit(0)
+body = read("VERSION")
+if body:
+    print(body.strip().splitlines()[0].strip()); raise SystemExit(0)
+body = read("setup.cfg")
+if body:
+    m = re.search(r"(?ms)^\[metadata\](?:(?!^\[).)*?^\s*version\s*=\s*(\S+)", body)
+    if m: print(m.group(1)); raise SystemExit(0)
+PYEOF
+)
+          if [ "$V" != "$VER" ]; then
+            echo "version source on merge reports '${V:-none}', tag is $TAG - refusing" >&2
+            exit 1
           fi
           echo "finalizing release $TAG on merge commit $MERGE_SHA"
           git config user.name "ccsdd-release[bot]"

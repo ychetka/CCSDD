@@ -50,6 +50,10 @@ def scan_lines(lines):
 
 if __name__ == "__main__":
     quiet = "--quiet" in sys.argv[1:]
+    # Force UTF-8 with replacement: diffs may contain non-UTF-8 bytes
+    # (binary blobs scanned with --text, legacy encodings) - a decode
+    # crash must never silently skip the scan.
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
     hits = scan_lines(sys.stdin)
     if not quiet:
         for h in hits[:30]:
