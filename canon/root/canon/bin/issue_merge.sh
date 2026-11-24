@@ -76,11 +76,20 @@ PR_AUTHOR=$(INFO_FILE="$INFO_FILE" python3 -I -c 'import json,os;print(((json.lo
 # clones update remote-tracking too) and the expected head BEFORE any
 # diff gate: every three-dot diff below must run against the fetched
 # $REMOTE/$BASE, never a stale local ref or a hard-coded 'origin'.
-# The gate must fetch/diff against the GitHub repo - pick the remote
-# whose URL points at github.com first; 'origin' may be a mirror.
-REMOTE=$(git remote -v | awk '$2 ~ /github\.com/ {print $1; exit}')
+# The gate must fetch/diff against the forge repo.
+# Remote: prefer the remote whose URL ends with the project.json
+# repo slug (forge-agnostic - works for github/gitlab/custom hosts),
+# then any forge-looking URL; 'origin' is only the last resort.
+REPO_SLUG=$(CANON_DIR="$CANON_DIR" python3 -I -c 'import json,os
+try: print((json.load(open(os.path.join(os.environ["CANON_DIR"],"project.json"))).get("repo") or "").strip("/"))
+except Exception: print("")' 2>/dev/null)
+REMOTE=""
+if [ -n "$REPO_SLUG" ]; then
+  REMOTE=$(git remote -v | awk -v s="$REPO_SLUG" '$2 ~ ("(^|[:/])" s "(\\.git)?$") {print $1; exit}')
+fi
+[ -z "${REMOTE:-}" ] && REMOTE=$(git remote -v | awk '$2 ~ /github\.com|gitlab\./ {print $1; exit}')
 [ -z "${REMOTE:-}" ] && REMOTE=$(git remote get-url origin >/dev/null 2>&1 && echo origin)
-[ -n "${REMOTE:-}" ] || json_error upstream_error "no github remote"
+[ -n "${REMOTE:-}" ] || json_error upstream_error "no forge remote for project repo slug"
 git fetch "$REMOTE" "+refs/heads/$BASE:refs/remotes/$REMOTE/$BASE" --tags >/dev/null 2>&1 || {
   json_error upstream_error "fetch of base failed - refusing to gate on stale refs"
 }

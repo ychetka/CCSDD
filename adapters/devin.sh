@@ -58,7 +58,7 @@ ln -s canon/RULES.md "$WS/.windsurfrules"
 # --- compile .devin/config.json from the neutral policy -----------
 PJ="$CANON/project.json"; [ -f "$PJ" ] || PJ=""
 POLICY="$POLICY" PJ="$PJ" python3 - <<'PY' > "$WS/.devin/config.json"
-import json, os
+import json, os, shlex
 policy = json.load(open(os.environ["POLICY"], encoding="utf-8"))
 ex = policy.get("exec") or {}
 deny = [f"Exec({v})" for v in ex.get("deny", [])]
@@ -88,7 +88,11 @@ if pj:
         # invocation while Exec(python3 exploit.py) stays denied.
         if not isinstance(val, list) or not val:
             continue
-        argv = " ".join(str(a) for a in val)
+        # shlex.join preserves argument boundaries: a plain " ".join
+        # drops quoting, so ["pytest","-k","not slow"] compiled as
+        # "pytest -k not slow" would never match the real argv and
+        # could accidentally allow a broader prefix than declared.
+        argv = shlex.join(str(a) for a in val)
         if argv and "\x00" not in argv:
             allow.append(f"Exec({argv})")
 # Dedup preserving order: a gate_checks command head that repeats a

@@ -649,17 +649,17 @@ if [ -d "$WS_DIR/.devin" ]; then
   # denied at exec time.
   if [ -f "$WS_DIR/.devin/config.json" ] && [ -f "$CANON_DIR/project.json" ]; then
     DRIFT=$(WS_DIR="$WS_DIR" CANON_DIR="$CANON_DIR" python3 -I - <<'PY'
-import json, os, sys
+import json, os, shlex, sys
 try:
     pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
     cfg = json.load(open(os.path.join(os.environ["WS_DIR"], ".devin", "config.json")))
 except Exception:
     sys.exit(0)
 gc = pj.get("gate_checks") or {}
-# devin.sh compiles each gate_checks argv as its full joined prefix
-# (Exec(python3 -I -m pytest), not Exec(python3)) so interpreter heads
-# can stay denied globally - drift compares the same join.
-argvs = {" ".join(str(a) for a in v) for v in gc.values()
+# devin.sh compiles each gate_checks argv as its full shlex.join-ed
+# prefix (Exec(python3 -m pytest), not Exec(python3)) so interpreter
+# heads can stay denied globally - drift compares the same join.
+argvs = {shlex.join(str(a) for a in v) for v in gc.values()
          if isinstance(v, list) and v and isinstance(v[0], str) and v[0]}
 allow = set((cfg.get("permissions") or {}).get("allow") or [])
 missing = sorted(a for a in argvs if f"Exec({a})" not in allow)

@@ -56,11 +56,33 @@ export API_BIN CANON_DIR
 # --- 1. mechanical floors ---
 # canon scripts: safe to run here (file reads only). project argv:
 # code execution - verify the journal, never run under merge creds.
-BB=$(PJ="$PJ" python3 -I -c 'import json,os
-try: print(json.load(open(os.environ["PJ"])).get("base_branch") or "main")
-except Exception: print("main")' 2>/dev/null)
+# Base branch = the PR's own baseRefName (INFO_FILE), not
+# project.json base_branch: merging a task PR into an epic branch
+# must gate the task-vs-epic diff - checking the whole epic vs main
+# would re-judge every previously merged task (and their fragments
+# would fail spec_anchor's issue binding).
+BB=$(INFO_FILE="$INFO_FILE" PJ="$PJ" python3 -I - <<'PY'
+import json, os
+bb = ""
+try:
+    f = os.environ.get("INFO_FILE") or ""
+    if f and os.path.isfile(f):
+        bb = (json.load(open(f)).get("baseRefName") or "").strip()
+except Exception:
+    bb = ""
+if not bb:
+    try:
+        bb = json.load(open(os.environ["PJ"])).get("base_branch") or "main"
+    except Exception:
+        bb = "main"
+print(bb)
+PY
+)
+# Remote like issue_merge: the forge remote is not always 'origin'.
+REMOTE=$(git remote -v | awk '$2 ~ /github\.com|gitlab\./ {print $1; exit}')
+[ -z "$REMOTE" ] && REMOTE=$(git remote get-url origin >/dev/null 2>&1 && echo origin)
 BREF=""
-for r in "origin/$BB" "$BB"; do
+for r in ${REMOTE:+"$REMOTE/$BB"} "origin/$BB" "$BB"; do
   git rev-parse --verify --quiet "$r" >/dev/null 2>&1 && { BREF=$r; break; }
 done
 FLOOR_FAIL=""; FLOOR_NOTES="{}"
@@ -73,9 +95,9 @@ while IFS= read -r chk; do
   # credential-free journal attestations are verified.
   if { [ -n "$BREF" ] && git cat-file -e "$BREF:canon/bin/$chk.sh" 2>/dev/null; } \
      || [ -f "$CANON_DIR/bin/$chk.sh" ]; then
-    (cd "$WT" && bash "$CANON_DIR/bin/gate_run.sh" run --check "$chk" --candidate "$SHA") >/dev/null 2>&1
+    (cd "$WT" && BASE_REF="$BREF" bash "$CANON_DIR/bin/gate_run.sh" run --check "$chk" --candidate "$SHA") >/dev/null 2>&1
   fi
-  bash "$CANON_DIR/bin/gate_run.sh" verify --check "$chk" --candidate "$SHA" >/dev/null 2>&1 \
+  BASE_REF="$BREF" bash "$CANON_DIR/bin/gate_run.sh" verify --check "$chk" --candidate "$SHA" >/dev/null 2>&1 \
     || FLOOR_FAIL="$FLOOR_FAIL $chk"
   NREC=$(bash "$CANON_DIR/bin/gate_run.sh" status --check "$chk" --candidate "$SHA" 2>/dev/null)
   FLOOR_NOTES=$(FN="$FLOOR_NOTES" NR="$NREC" CHK="$chk" python3 -I -c 'import json,os
@@ -102,7 +124,7 @@ print(" ".join(sorted({e.get("gate_check") or "" for e in
 while IFS= read -r chk; do
   [ -z "$chk" ] && continue
   case " $REG_CHECKS " in *" $chk "*) continue;; esac
-  bash "$CANON_DIR/bin/gate_run.sh" verify --check "$chk" --candidate "$SHA" >/dev/null 2>&1 \
+  BASE_REF="$BREF" bash "$CANON_DIR/bin/gate_run.sh" verify --check "$chk" --candidate "$SHA" >/dev/null 2>&1 \
     || FLOOR_FAIL="$FLOOR_FAIL $chk"
 done < <(PJ="$PJ" python3 -I -c 'import json,os
 try:

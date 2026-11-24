@@ -656,7 +656,8 @@ fi
 #    inherited: BASE/BASE_REF (diff base + base-existence proofs),
 #    ISSUE_LIST/FRAG_LIST (allowed issue numbers in fragments).
 if compgen -G "$TOP/.changes/*.md" >/dev/null 2>&1; then
-  SPEC_OUT=$(ISSUE_LIST="$ISSUE_LIST" FRAG_LIST="${FRAG_LIST:-}" \
+  SPEC_OUT=$(BASE="$BASE" BASE_REF="$BASE_REF" \
+             ISSUE_LIST="$ISSUE_LIST" FRAG_LIST="${FRAG_LIST:-}" \
              CANON_DIR="$CANON_DIR" bash "$CANON_DIR/bin/spec_anchor_check.sh" 2>&1)
   SPEC_RC=$?
   case $SPEC_RC in

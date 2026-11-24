@@ -55,14 +55,32 @@ done
 [[ "$CHECK" =~ ^[a-z][a-z0-9_]*$ ]] || { echo "gate_run: bad check name '$CHECK'" >&2; exit 2; }
 [[ "$CAND" =~ ^[0-9a-f]{40}$ ]] || { echo "gate_run: --candidate must be a 40-hex sha" >&2; exit 2; }
 
-# Base ref: the trusted source of canon gate scripts.
+# Base ref: the trusted source of canon gate scripts. A caller that
+# knows the PR's real base (panel_gate hands down the PR baseRefName)
+# passes BASE_REF/BASE in the env - otherwise we derive from
+# project.json base_branch. Guessing 'main' on an epic-bound PR would
+# attest the whole epic diff, not the task diff.
 BASE_BRANCH=$(CANON_DIR="$CANON_DIR" python3 -I -c 'import json,os
-try: print(json.load(open(os.path.join(os.environ["CANON_DIR"],"project.json"))).get("base_branch") or "main")
+try: print(json.load(open(os.environ["CANON_DIR"],"project.json"))).get("base_branch") or "main")
 except Exception: print("main")' 2>/dev/null)
-BASE_REF=""
-for cand_ref in "origin/$BASE_BRANCH" "$BASE_BRANCH"; do
-  git rev-parse --verify --quiet "$cand_ref" >/dev/null 2>&1 && { BASE_REF=$cand_ref; break; }
-done
+BASE_REF="${BASE_REF:-}"
+if [ -z "$BASE_REF" ]; then
+  for cand_ref in "origin/$BASE_BRANCH" "$BASE_BRANCH"; do
+    git rev-parse --verify --quiet "$cand_ref" >/dev/null 2>&1 && { BASE_REF=$cand_ref; break; }
+  done
+fi
+# Resolved base head: the attestation records what base the floor
+# ran against so a later verify can detect a moved base (stale
+# evidence must not validate a new diff window).
+BASE_HEAD=""
+[ -n "$BASE_REF" ] && BASE_HEAD=$(git rev-parse "$BASE_REF" 2>/dev/null || true)
+# Child check scripts take BASE as their diff base ref: honor an
+# explicit caller BASE, else give them the merge-base so
+# three-dot diffs compute exactly what we attested.
+CHILD_BASE="${BASE:-}"
+if [ -z "$CHILD_BASE" ] && [ -n "$BASE_REF" ]; then
+  CHILD_BASE=$(git merge-base HEAD "$BASE_REF" 2>/dev/null || true)
+fi
 
 # Resolve the runner: canon script at base ref when canon is tracked
 # in the repo; otherwise the deployed canon itself - its drift is
@@ -135,13 +153,21 @@ if [ "$CMD" = "verify" ]; then
     exit 0
   fi
   [ -n "$REC" ] || { echo "gate_run verify: no record for $CHECK @ ${CAND:0:8}" >&2; exit 4; }
-  echo "$REC" | REC_SHA="$BASE_SHA" ARGV="${ARGV:-}" python3 -I -c 'import json,os,sys
+  echo "$REC" | REC_SHA="$BASE_SHA" REC_BASE_HEAD="$BASE_HEAD" ARGV="${ARGV:-}" python3 -I -c 'import json,os,sys
 r = json.loads(sys.stdin.read() or "null") or {}
 if r.get("exit_code") != 0:
     print("gate_run verify: %s recorded exit_code=%s" % (r.get("check"), r.get("exit_code")), file=sys.stderr); sys.exit(1)
 want = os.environ.get("REC_SHA") or ""
 if r.get("runner") == "canon" and want and r.get("script_sha256") != want:
     print("gate_run verify: script_sha256 drift vs base for %s" % r.get("check"), file=sys.stderr); sys.exit(1)
+# base binding: the attestation is evidence for the diff window
+# (base,candidate]. If the base moved since the run, the verdict was
+# computed on a different window - stale evidence must not pass.
+cur_base = os.environ.get("REC_BASE_HEAD") or ""
+if r.get("base_head") and cur_base and r["base_head"] != cur_base:
+    print("gate_run verify: base moved since attestation for %s "
+          "(%s -> %s)" % (r.get("check"), r["base_head"][:12], cur_base[:12]),
+          file=sys.stderr); sys.exit(1)
 # project runner: the recorded argv must still match project.json -
 # a config change after attestation invalidates the record.
 if r.get("runner") == "project" and "argv" in r:
@@ -205,7 +231,8 @@ PY
     fi
     cat "$DEPLOYED" > "$SCRIPT_TMP"
   fi
-  CANON_DIR="$CANON_DIR" bash "$SCRIPT_TMP" ${EXTRA[@]+"${EXTRA[@]}"} > "$OUT" 2>&1
+  CANON_DIR="$CANON_DIR" BASE="$CHILD_BASE" BASE_REF="$BASE_REF" \
+    bash "$SCRIPT_TMP" ${EXTRA[@]+"${EXTRA[@]}"} > "$OUT" 2>&1
   RC=$?
 elif [ "$OPTIONAL" = "yes" ]; then
   echo "SKIP: $CHECK optional and unconfigured" > "$OUT"; RC=0
@@ -222,7 +249,8 @@ NOTE=$(grep -m1 '^GATE_NOTE: ' "$OUT" 2>/dev/null | sed 's/^GATE_NOTE: //')
 exec 9>"$JOURNAL.lock"
 flock 9 || { echo "gate_run: cannot acquire lock" >&2; rm -f "$OUT" "$SCRIPT_TMP"; exit 1; }
 CANON_DIR="$CANON_DIR" OUT_SHA="$OUT_SHA" RC="$RC" CHECK="$CHECK" CAND="$CAND" \
-  RUNNER="$RUNNER" BASE_SHA="$BASE_SHA" BASE_REF="$BASE_REF" ARGV="${ARGV:-}" \
+  RUNNER="$RUNNER" BASE_SHA="$BASE_SHA" BASE_REF="$BASE_REF" \
+  BASE_HEAD="$BASE_HEAD" ARGV="${ARGV:-}" \
   NOTE="${NOTE:-}" python3 -I - <<'PY' >> "$JOURNAL"
 import datetime, hashlib, json, os, sys
 rec = {"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -232,6 +260,8 @@ rec = {"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
        "candidate_sha": os.environ["CAND"],
        "exit_code": int(os.environ["RC"]),
        "output_sha256": os.environ["OUT_SHA"]}
+if os.environ.get("BASE_HEAD"):
+    rec["base_head"] = os.environ["BASE_HEAD"]
 if os.environ["RUNNER"] == "canon":
     rec["script_sha256"] = os.environ["BASE_SHA"]
 else:

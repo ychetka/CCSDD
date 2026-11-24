@@ -27,7 +27,10 @@ if [ -z "$BASE_REF" ]; then
   BB=$(PJ="$PJ" python3 -I -c 'import json,os
 try: print(json.load(open(os.environ["PJ"])).get("base_branch") or "main")
 except Exception: print("main")' 2>/dev/null)
-  for r in "origin/$BB" "$BB"; do
+  # Probe every configured remote, not just 'origin' - repo_merge
+  # accepts any forge remote name, and CI may fetch a single branch
+  # under a differently named remote.
+  for r in $(git remote 2>/dev/null | sed "s#\$#/$BB#") "$BB"; do
     git rev-parse --verify --quiet "$r" >/dev/null 2>&1 && { BASE_REF=$r; break; }
   done
 fi

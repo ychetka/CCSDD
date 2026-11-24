@@ -29,9 +29,17 @@ if [ "${DIRTY:-0}" -gt 0 ]; then
   exit 2
 fi
 
-# Remote: prefer the remote whose URL points at github.com (the PR
-# target), fall back to origin only when no github remote exists.
-REMOTE=$(git remote -v | awk '$2 ~ /github\.com/ {print $1; exit}')
+# Remote: prefer the remote whose URL ends with the project.json
+# repo slug (forge-agnostic - works for github/gitlab/custom hosts),
+# then any forge-looking URL; 'origin' is only the last resort.
+REPO_SLUG=$(CANON_DIR="$CANON_DIR" python3 -I -c 'import json,os
+try: print((json.load(open(os.path.join(os.environ["CANON_DIR"],"project.json"))).get("repo") or "").strip("/"))
+except Exception: print("")' 2>/dev/null)
+REMOTE=""
+if [ -n "$REPO_SLUG" ]; then
+  REMOTE=$(git remote -v | awk -v s="$REPO_SLUG" '$2 ~ ("(^|[:/])" s "(\\.git)?$") {print $1; exit}')
+fi
+[ -z "${REMOTE:-}" ] && REMOTE=$(git remote -v | awk '$2 ~ /github\.com|gitlab\./ {print $1; exit}')
 if [ -z "${REMOTE:-}" ] && git remote get-url origin >/dev/null 2>&1; then
   REMOTE=origin
 fi

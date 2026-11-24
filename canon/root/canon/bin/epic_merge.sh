@@ -58,7 +58,17 @@ BASE=$(INFO="$INFO" python3 -I -c 'import json,os;print((json.loads(os.environ["
 EN=$((10#${BASH_REMATCH[1]}))
 [ -n "$BASE" ] || json_error upstream_error "baseRefName missing from PR metadata"
 
-REMOTE=$(git remote -v | awk '$2 ~ /github\.com/ {print $1; exit}')
+# Remote: prefer the remote whose URL ends with the project.json
+# repo slug (forge-agnostic - works for github/gitlab/custom hosts),
+# then any forge-looking URL; 'origin' is only the last resort.
+REPO_SLUG=$(CANON_DIR="$CANON_DIR" python3 -I -c 'import json,os
+try: print((json.load(open(os.path.join(os.environ["CANON_DIR"],"project.json"))).get("repo") or "").strip("/"))
+except Exception: print("")' 2>/dev/null)
+REMOTE=""
+if [ -n "$REPO_SLUG" ]; then
+  REMOTE=$(git remote -v | awk -v s="$REPO_SLUG" '$2 ~ ("(^|[:/])" s "(\\.git)?$") {print $1; exit}')
+fi
+[ -z "${REMOTE:-}" ] && REMOTE=$(git remote -v | awk '$2 ~ /github\.com|gitlab\./ {print $1; exit}')
 [ -z "${REMOTE:-}" ] && REMOTE=$(git remote get-url origin >/dev/null 2>&1 && echo origin)
 [ -n "${REMOTE:-}" ] || json_error upstream_error "no git remote found"
 

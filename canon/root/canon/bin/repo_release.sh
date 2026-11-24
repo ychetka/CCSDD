@@ -58,10 +58,19 @@ if [ -n "$BUMP" ]; then
   esac
 fi
 
-# The github remote is picked by URL - 'origin' may be a mirror.
-REMOTE=$(git remote -v | awk '$2 ~ /github\.com/ {print $1; exit}')
+# Remote: prefer the remote whose URL ends with the project.json
+# repo slug (forge-agnostic - works for github/gitlab/custom hosts),
+# then any forge-looking URL; 'origin' is only the last resort.
+REPO_SLUG=$(CANON_DIR="$CANON_DIR" python3 -I -c 'import json,os
+try: print((json.load(open(os.path.join(os.environ["CANON_DIR"],"project.json"))).get("repo") or "").strip("/"))
+except Exception: print("")' 2>/dev/null)
+REMOTE=""
+if [ -n "$REPO_SLUG" ]; then
+  REMOTE=$(git remote -v | awk -v s="$REPO_SLUG" '$2 ~ ("(^|[:/])" s "(\\.git)?$") {print $1; exit}')
+fi
+[ -z "${REMOTE:-}" ] && REMOTE=$(git remote -v | awk '$2 ~ /github\.com|gitlab\./ {print $1; exit}')
 [ -z "${REMOTE:-}" ] && REMOTE=$(git remote get-url origin >/dev/null 2>&1 && echo origin)
-[ -z "${REMOTE:-}" ] && json_error upstream_error "no github remote"
+[ -z "${REMOTE:-}" ] && json_error upstream_error "no forge remote for project repo slug"
 # The base is the merged PR's baseRefName when the caller passes it
 # (repo_merge.sh does); without it defaultBranchRef is the only
 # sane default - but a merge into a non-default base must never
@@ -79,6 +88,34 @@ SHA=$(git rev-parse "$REMOTE/$BASE" 2>/dev/null) || \
 # partially published release (tag pushed but "$GH" release failed, or
 # vice versa). A failed tag push removes the local tag so a retry is
 # not poisoned by a stale local ref.
+# Release journal (harness.md §3 "Release history"): a durable
+# JSONL record of every publication - version, tag, sha, merger
+# identity, UTC time. Approval envelopes and review verdicts live
+# in cycle_log/gate_runs; this row is the audit anchor for them.
+# Idempotent on tag: a second call (e.g. the already-existed resume
+# path after the release workflow finalized the tag server-side)
+# appends only when the tag is not journaled yet.
+record_release_history() {
+  local tag="$1" sha="$2"
+  grep -q "\"tag\":\"$tag\"" "$CANON_DIR/release_history.jsonl" 2>/dev/null && return 0
+  local MERGER
+  MERGER=$("$GH" api user --jq '.login' 2>/dev/null || basename "$GH")
+  if command -v flock >/dev/null 2>&1; then
+    ( exec 9>"$CANON_DIR/release_history.jsonl.lock"
+      flock 9 || exit 1
+      # Re-check inside the lock: the grep above races a parallel writer.
+      grep -q "\"tag\":\"$tag\"" "$CANON_DIR/release_history.jsonl" 2>/dev/null \
+      || printf '{"version":"%s","tag":"%s","sha":"%s","merger":"%s","utc":"%s"}\n' \
+        "${tag#v}" "$tag" "$sha" "$MERGER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        >> "$CANON_DIR/release_history.jsonl"
+    ) 2>/dev/null || true
+  else
+    printf '{"version":"%s","tag":"%s","sha":"%s","merger":"%s","utc":"%s"}\n' \
+      "${tag#v}" "$tag" "$sha" "$MERGER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      >> "$CANON_DIR/release_history.jsonl" 2>/dev/null || true
+  fi
+}
+
 publish_tag_release() {
   local tag="$1" sha="$2" note="$3"
   if ! git rev-parse "refs/tags/$tag" >/dev/null 2>&1; then
@@ -111,23 +148,7 @@ publish_tag_release() {
       printf '{"status":"error","failure_class":"upstream_error","message":"tag pushed but %s release create failed - create release for %s manually"}' "$GH_NAME" "$tag"
       return 14; }
   fi
-  # Release journal (harness.md §3 "Release history"): a durable
-  # JSONL record of every publication - version, tag, sha, merger
-  # identity, UTC time. Approval envelopes and review verdicts live
-  # in cycle_log/gate_runs; this row is the audit anchor for them.
-  MERGER=$("$GH" api user --jq '.login' 2>/dev/null || basename "$GH")
-  if command -v flock >/dev/null 2>&1; then
-    ( exec 9>"$CANON_DIR/release_history.jsonl.lock"
-      flock 9 || exit 1
-      printf '{"version":"%s","tag":"%s","sha":"%s","merger":"%s","utc":"%s"}\n' \
-        "${tag#v}" "$tag" "$sha" "$MERGER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        >> "$CANON_DIR/release_history.jsonl"
-    ) 2>/dev/null || true
-  else
-    printf '{"version":"%s","tag":"%s","sha":"%s","merger":"%s","utc":"%s"}\n' \
-      "${tag#v}" "$tag" "$sha" "$MERGER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      >> "$CANON_DIR/release_history.jsonl" 2>/dev/null || true
-  fi
+  record_release_history "$tag" "$sha"
   TAG="$tag" SHA_V="$sha" NOTE_V="${note:-}" python3 -I -c 'import json,os
 print(json.dumps({"status":"released","tag":os.environ["TAG"],"sha":os.environ["SHA_V"],
                   **({"note":os.environ["NOTE_V"]} if os.environ["NOTE_V"] else {})}))'
@@ -343,6 +364,9 @@ if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
   # source inside it matching the tag. A random descendant or an
   # unmerged branch tip must never read as "already released".
   if [ "$EXISTING" = "$SHA" ]; then
+    # The release workflow (or a prior run) finalized the tag
+    # server-side; the audit journal may still lack the row.
+    record_release_history "$TAG" "$EXISTING"
     printf '{"status":"released","tag":"%s","sha":"%s","note":"already-existed"}\n' "$TAG" "$EXISTING"
     exit 0
   fi
@@ -350,6 +374,7 @@ if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
      && [ "$(git log -1 --format=%s "$EXISTING" 2>/dev/null)" = "release: $TAG" ] \
      && [ "$(git rev-list --count "$SHA..$EXISTING" 2>/dev/null || echo 9)" = "1" ] \
      && [ "$(bash "$CANON_DIR/bin/repo_version_at.sh" "$EXISTING" 2>/dev/null || true)" = "$NEXT" ]; then
+    record_release_history "$TAG" "$EXISTING"
     printf '{"status":"released","tag":"%s","sha":"%s","note":"already-existed"}\n' "$TAG" "$EXISTING"
     exit 0
   fi
@@ -504,10 +529,16 @@ else
   # competing release PRs race the same version namespace.
   RELEASE_PRS=$("$GH" pr list --base "$BASE" --state open \
     --json headRefName,headRefOid,url --jq '.[] | select(.headRefName | startswith("release/v")) | .headRefName + " " + .headRefOid + " " + .url' 2>/dev/null || true)
-  EXISTING_PR=$(printf '%s\n' "$RELEASE_PRS" | grep -F "release/$TAG" | head -n1 || true)
+  # Exact branch match - 'release/v1.2.1' is a PREFIX of
+  # 'release/v1.2.10', so substring greps collide and would adopt or
+  # close the wrong PR. Match the full ref (+ optional -r<suffix>).
+  EXISTING_PR=$(printf '%s\n' "$RELEASE_PRS" \
+    | awk -v t="release/$TAG" '$1 == t || index($1, t "-r") == 1 {print; exit}')
   # Superseded release PRs (different tag): close them so they cannot
   # be merged later and tag a stale tree. Best-effort, never fatal.
-  printf '%s\n' "$RELEASE_PRS" | grep -vF "release/$TAG" | while read -r ob _osha ourl; do
+  printf '%s\n' "$RELEASE_PRS" \
+    | awk -v t="release/$TAG" '!($1 == t || index($1, t "-r") == 1)' \
+    | while read -r ob _osha ourl; do
     [ -n "$ob" ] || continue
     "$GH" pr close "$ourl" --comment "superseded by release $TAG" >/dev/null 2>&1 || true
     git push "$REMOTE" --delete "$ob" >/dev/null 2>&1 || true

@@ -61,33 +61,43 @@ def connect(db_path):
 
 
 def _migrate_legacy(con, db_path):
-    """Import the retired JSON counters file exactly once."""
+    """Import the retired JSON counters file exactly once.
+
+    The whole read-import-rename runs under BEGIN IMMEDIATE: without
+    that, two racing callers both see the legacy file, both add its
+    counters (double spend), and the loser then crashes on the
+    already-renamed path. The DB write lock serializes migrations.
+    """
     legacy = os.path.join(os.path.dirname(db_path), "gateway_counters.json")
-    if not os.path.exists(legacy):
-        return
-    try:
-        data = json.load(open(legacy, encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise ValueError("not an object")
-    except Exception as e:
-        # Same fail-closed rule as before: corrupt quota state must
-        # not silently reset budgets - refuse until a human repairs.
-        print(f"gw_store: legacy counters unreadable ({e}) - "
-              f"fail closed, repair {legacy}", file=sys.stderr)
-        sys.exit(4)
     con.execute("BEGIN IMMEDIATE")
     try:
+        if not os.path.exists(legacy):
+            con.execute("COMMIT")
+            return
+        try:
+            data = json.load(open(legacy, encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("not an object")
+        except Exception as e:
+            # Same fail-closed rule as before: corrupt quota state must
+            # not silently reset budgets - refuse until a human repairs.
+            print(f"gw_store: legacy counters unreadable ({e}) - "
+                  f"fail closed, repair {legacy}", file=sys.stderr)
+            con.execute("ROLLBACK")
+            sys.exit(4)
         for k, v in data.items():
             if isinstance(k, str) and isinstance(v, (int, float)):
                 con.execute(
                     "INSERT INTO counters(key,value) VALUES(?,?) "
                     "ON CONFLICT(key) DO UPDATE SET value = value + excluded.value",
                     (k, int(v)))
+        os.replace(legacy, legacy + ".migrated")
         con.execute("COMMIT")
+    except SystemExit:
+        raise
     except Exception:
         con.execute("ROLLBACK")
         raise
-    os.replace(legacy, legacy + ".migrated")
 
 
 def counter_get(con, key):
