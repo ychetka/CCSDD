@@ -15,6 +15,20 @@ for bin in git python3 flock ssh-keygen; do
   command -v "$bin" >/dev/null || fail "missing binary: $bin"
 done
 [ $fails -eq $before ] && ok "binaries: git python3 flock ssh-keygen"
+# sha256 is invoked in several gates - macOS ships shasum, not
+# sha256sum; either one satisfies the contract.
+if command -v sha256sum >/dev/null || command -v shasum >/dev/null; then
+  ok "sha256 tool: $(command -v sha256sum || command -v shasum)"
+else
+  fail "missing sha256 tool (sha256sum or shasum)"
+fi
+# migration_gate/verify_worktree bound project commands - GNU
+# 'timeout' or the BSD 'gtimeout' twin; either satisfies it.
+if command -v timeout >/dev/null || command -v gtimeout >/dev/null; then
+  ok "timeout tool: $(command -v timeout || command -v gtimeout)"
+else
+  fail "missing timeout tool (timeout or gtimeout)"
+fi
 if ! command -v python3 >/dev/null; then
   echo "SETUP: $fails FAILURES - halt, do not proceed"; exit 1
 fi
@@ -209,6 +223,21 @@ if isinstance(gc, dict):
         if not isinstance(argv, list) or not argv \
                 or not all(isinstance(x, str) and x for x in argv):
             errs.append(f"gate_checks.{name} must be a non-empty argv array")
+mdr = cfg.get("migration_dry_run_argv")
+if mdr is not None:
+    if not isinstance(mdr, list) or not mdr \
+            or not all(isinstance(x, str) and x for x in mdr):
+        errs.append("migration_dry_run_argv must be a non-empty argv array")
+    elif mdr[0].rsplit("/", 1)[-1] in {
+            "sh", "bash", "zsh", "dash", "fish", "env", "eval", "source"}:
+        errs.append("migration_dry_run_argv head must not be a shell "
+                    "(it execs directly; wrap logic in a project script)")
+if isinstance(cfg.get("migration_dry_run_cmd"), str) \
+        and cfg["migration_dry_run_cmd"].strip() \
+        and mdr is None:
+    # Legacy string form is shlex-split and exec'd - never shelled -
+    # but the argv form is the documented contract going forward.
+    pass
 ec = cfg.get("external_checks")
 if isinstance(ec, list):
     for n in ec:
@@ -505,6 +534,23 @@ PY
   [ $? -eq 0 ] && ok "canon manifest completeness" || fails=$((fails+1))
 fi
 
+# External root-of-trust stamp: canon_manifest.json is workspace-
+# writable, so every in-manifest hash check above is self-attested
+# until the manifest itself is compared against the deploy-time
+# stamp outside the workspace (~/.config/ccsdd/workspaces/). A
+# present-but-mismatched stamp is a hard fail; a missing stamp means
+# the workspace predates external stamping (report, do not fail -
+# the operator may deploy in a sandbox without HOME persistence).
+if [ -x "$CANON_DIR/bin/stamp_verify.sh" ]; then
+  SRC=0; "$CANON_DIR/bin/stamp_verify.sh" || SRC=$?
+  case "$SRC" in
+    0) ok "external manifest stamp" ;;
+    3) echo "  note: no external manifest stamp for this workspace (pre-stamp deploy or ephemeral HOME)" ;;
+    2) fail "external manifest stamp corrupt/unreadable" ;;
+    *) fail "canon_manifest.json differs from the external deploy stamp (manifest rewritten in-workspace)" ;;
+  esac
+fi
+
 # Canon gitignore block: harness files are deployed, not tracked - the
 # GIT REPO's .gitignore must carry every canon pattern so the harness
 # does not pollute it. In nested workspaces canon/ sits at the
@@ -653,65 +699,53 @@ if [ -d "$WS_DIR/.devin" ]; then
   done
   [ -f "$WS_DIR/.devin/config.json" ] \
     || ADAPT_FAIL="$ADAPT_FAIL .devin/config.json"
-  # gate_checks drift: adapters/devin.sh compiles project.json
-  # gate_checks.* command heads into .devin/config.json allow
-  # entries at adapter-run time; editing project.json afterwards
-  # leaves the compiled policy stale - every new check head is
-  # denied at exec time.
-  if [ -f "$WS_DIR/.devin/config.json" ] && [ -f "$CANON_DIR/project.json" ]; then
+  # Exec-policy drift: adapters/devin.sh compiles .devin/config.json
+  # allow/deny ONLY from canon/config/policy.json - project
+  # gate_checks are deliberately NOT compiled (an Exec() entry is a
+  # prefix, i.e. a broadening primitive; project commands run through
+  # canon/bin/project_run.sh). Verify the deployed allow set equals
+  # the policy-derived set EXACTLY: a stale compile missing
+  # canon/bin is broken, and an EXTRA Exec() entry is a hand-granted
+  # exec.deny bypass (or a leftover from the old compiling adapter).
+  if [ -f "$WS_DIR/.devin/config.json" ] && [ -f "$CANON_DIR/config/policy.json" ]; then
     DRIFT=$(WS_DIR="$WS_DIR" CANON_DIR="$CANON_DIR" python3 -I - <<'PY'
-import json, os, shlex, sys
+import json, os, sys
 try:
-    pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
-    cfg = json.load(open(os.path.join(os.environ["WS_DIR"], ".devin", "config.json")))
+    pol = json.load(open(os.path.join(os.environ["CANON_DIR"],
+                                      "config", "policy.json")))
+    cfg = json.load(open(os.path.join(os.environ["WS_DIR"],
+                                      ".devin", "config.json")))
 except Exception:
     sys.exit(0)
-gc = pj.get("gate_checks") or {}
-# devin.sh compiles each gate_checks argv as its full shlex.join-ed
-# prefix (Exec(python3 -m pytest), not Exec(python3)) so interpreter
-# heads can stay denied globally - drift compares the same join,
-# AND the same admissibility filter: an argv the adapter refuses to
-# compile (shell metachars in an element, a shell head, or a bare
-# interpreter head) is an explicit config failure, not silent drift
-# that trips exec.deny at runtime.
-import re
-_tok = re.compile(r"^[A-Za-z0-9_./:=+@%,~-]+$")
-_shell = {"sh","bash","zsh","dash","fish","env"}
-_interp = {"python","python2","python3","node","nodejs","deno","bun",
-           "perl","ruby","php","npx"}
-def compilable(v):
-    if not isinstance(v, list) or not v or not all(isinstance(a, str) for a in v):
-        return False
-    elems = [str(a) for a in v]
-    if not all(_tok.match(e) for e in elems):
-        return False
-    head = elems[0].rsplit("/", 1)[-1]
-    if head in _shell:
-        return False
-    if len(elems) == 1 and head in _interp:
-        return False
-    return True
-comp, uncomp = [], []
-for name, v in gc.items():
-    if name.endswith("_optional") or not isinstance(v, list):
-        continue
-    (comp if compilable(v) else uncomp).append(name)
-argvs = {shlex.join(str(a) for a in v) for n, v in gc.items()
-         if n in comp}
-allow = set((cfg.get("permissions") or {}).get("allow") or [])
-missing = sorted(a for a in argvs if f"Exec({a})" not in allow)
+ex = pol.get("exec") or {}
+exp_allow = []
+for v in ex.get("allow", []):
+    exp_allow += [f"Exec({v})", f"Exec(./{v})"]
+    if v == "canon/bin/":
+        exp_allow += ["Exec(.devin/bin/)", "Exec(./.devin/bin/)"]
+exp_deny = [f"Exec({v})" for v in ex.get("deny", [])]
+perm = cfg.get("permissions") or {}
+allow = set(perm.get("allow") or [])
+deny = set(perm.get("deny") or [])
+extra = sorted(a for a in allow if a not in set(exp_allow))
+miss = sorted(a for a in set(exp_allow) if a not in allow)
+dmiss = sorted(d for d in set(exp_deny) if d not in deny)
 out = []
-if uncomp:
-    out.append("UNCOMPILABLE:" + ",".join(sorted(uncomp)))
-if missing:
-    out.append("MISSING:" + " ".join(missing))
+if extra:
+    out.append("EXTRA:" + " ".join(extra))
+if miss:
+    out.append("MISSING:" + " ".join(miss))
+if dmiss:
+    out.append("DENY-MISSING:" + " ".join(dmiss))
 print("\n".join(out))
 PY
 )
-    printf '%s\n' "$DRIFT" | grep -q 'UNCOMPILABLE:' \
-      && ADAPT_FAIL="$ADAPT_FAIL gate_checks-uncompilable"
+    printf '%s\n' "$DRIFT" | grep -q 'EXTRA:' \
+      && ADAPT_FAIL="$ADAPT_FAIL exec-allow-extra($(printf '%s\n' "$DRIFT" | sed -n 's/^EXTRA://p' | head -1))"
     printf '%s\n' "$DRIFT" | grep -q 'MISSING:' \
-      && ADAPT_FAIL="$ADAPT_FAIL gate_checks-not-compiled($(printf '%s\n' "$DRIFT" | sed -n 's/^MISSING://p'))"
+      && ADAPT_FAIL="$ADAPT_FAIL exec-allow-missing($(printf '%s\n' "$DRIFT" | sed -n 's/^MISSING://p' | head -1))"
+    printf '%s\n' "$DRIFT" | grep -q 'DENY-MISSING:' \
+      && ADAPT_FAIL="$ADAPT_FAIL exec-deny-missing"
   fi
   if [ -L "$WS_DIR/.windsurfrules" ]; then
     [ "$(readlink "$WS_DIR/.windsurfrules")" = "canon/RULES.md" ] \

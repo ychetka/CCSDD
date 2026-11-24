@@ -123,6 +123,19 @@ PY
     echo "GATE_INTEGRITY: gate scripts do not match canon_manifest.json - refuse to run rewritten gates" >&2
     exit 1
   fi
+  # The manifest itself is workspace state: when the deploy left an
+  # external stamp in ~/.config/ccsdd/workspaces/, the local manifest
+  # must hash to it - otherwise the sha256 table above is self-
+  # attested and proves nothing.
+  if [ -x "$CANON_DIR/bin/stamp_verify.sh" ]; then
+    "$CANON_DIR/bin/stamp_verify.sh" || SRC=$?
+    case "${SRC:-0}" in
+      0|3) ;;   # match, or unmanaged workspace (no stamp)
+      *) echo "GATE_INTEGRITY: canon_manifest.json fails the external stamp check - refuse to run on a rewritten manifest" >&2
+         exit 1 ;;
+    esac
+    unset SRC
+  fi
 fi
 
 # --- Gate 0b: precommit re-grounding (mechanical, unconditional) -----

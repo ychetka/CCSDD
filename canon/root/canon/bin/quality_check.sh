@@ -44,9 +44,19 @@ CHANGED=""
 
 if [ -z "$CHANGED" ]; then
   echo "SKIP: no changed source files for metrics"
-elif command -v radon >/dev/null 2>&1; then
+else
+  # radon covers .py, lizard the rest - INDEPENDENT blocks: a host
+  # with both tools must not let 'radon present, no .py changed'
+  # shadow the lizard run for a JS/Go-only delta. lizard also covers
+  # .py when radon is absent.
   PYFILES=$(printf '%s\n' "$CHANGED" | grep '\.py$' || true)
-  if [ -n "$PYFILES" ]; then
+  NONPY=$(printf '%s\n' "$CHANGED" | grep -v '\.py$' || true)
+  LIZFILES="$NONPY"
+  command -v radon >/dev/null 2>&1 || LIZFILES="$CHANGED"
+  covered=""
+  QCDIR=$(mktemp -d "${TMPDIR:-/tmp}/ccsdd-qc.XXXXXX")
+  if [ -n "$PYFILES" ] && command -v radon >/dev/null 2>&1; then
+    covered=1
     # py_compile first: radon emits 'ERROR: <file>' on unparseable
     # input, which the rank grep would silently read as "no D+ block"
     # -> a syntax-broken file would PASS. Both must fail the gate.
@@ -60,12 +70,10 @@ elif command -v radon >/dev/null 2>&1; then
     # -I (isolated) drops CWD/site-packages/PYTHONPATH. radon/lizard
     # likewise run from an empty scratch dir with absolute paths - a
     # PR's setup.cfg/.radon.cfg/flake8 plugins must never load here.
-    QCDIR=$(mktemp -d "${TMPDIR:-/tmp}/ccsdd-qc.XXXXXX")
     BADSYNTAX=$(printf '%s\n' "$PYFILES" | tr '\n' '\0' \
       | xargs -0 -n1 sh -c 'python3 -I -m py_compile "$1" 2>/dev/null || printf "%s\n" "$1"' _ || true)
     RADON_OUT=$(cd "$QCDIR" && printf '%s\n' "$PYFILES" | sed "s|^|$TOP/|" \
       | tr '\n' '\0' | xargs -0 radon cc -s -n C 2>/dev/null || true)
-    rm -rf "$QCDIR"
     RADON_ERR=$(printf '%s\n' "$RADON_OUT" | grep -E '^ERROR:' || true)
     HOT=$(printf '%s\n' "$RADON_OUT" | grep -E ' - [DEF]\(' || true)
     if [ -n "$BADSYNTAX" ]; then
@@ -83,33 +91,37 @@ elif command -v radon >/dev/null 2>&1; then
     if [ -z "$BADSYNTAX" ] && [ -z "$RADON_ERR" ] && [ -z "$HOT" ]; then
       echo "PASS: radon cyclomatic complexity (no rank D+ blocks)"
     fi
-  else
-    echo "SKIP: no changed .py files for radon"
+  elif [ -n "$PYFILES" ]; then
+    echo "SKIP: no changed .py files analyzed (radon absent)"
   fi
-elif command -v lizard >/dev/null 2>&1; then
-  # Same isolation as radon: run from an empty dir on absolute paths.
-  QCDIR=$(mktemp -d "${TMPDIR:-/tmp}/ccsdd-qc.XXXXXX")
-  HOT=$(cd "$QCDIR" && printf '%s\n' "$CHANGED" | sed "s|^|$TOP/|" \
-    | tr '\n' '\0' | xargs -0 lizard -C 15 -L 100 2>/dev/null | grep -E '^\s+[0-9]+' || true)
+  if [ -n "$LIZFILES" ] && command -v lizard >/dev/null 2>&1; then
+    covered=1
+    # Same isolation as radon: run from an empty dir on absolute paths.
+    HOT=$(cd "$QCDIR" && printf '%s\n' "$LIZFILES" | sed "s|^|$TOP/|" \
+      | tr '\n' '\0' | xargs -0 lizard -C 15 -L 100 2>/dev/null | grep -E '^\s+[0-9]+' || true)
+    if [ -n "$HOT" ]; then
+      printf '%s\n' "$HOT" | head -20 | sed 's/^/  complexity: /'
+      echo "FAIL: lizard CCN>=15 or length>100 in changed files"; fails=$((fails+1))
+    else
+      echo "PASS: lizard complexity thresholds"
+    fi
+  elif [ -n "$LIZFILES" ]; then
+    echo "SKIP: non-python complexity unchecked (lizard absent)"
+  fi
   rm -rf "$QCDIR"
-  if [ -n "$HOT" ]; then
-    printf '%s\n' "$HOT" | head -20 | sed 's/^/  complexity: /'
-    echo "FAIL: lizard CCN>=15 or length>100 in changed files"; fails=$((fails+1))
-  else
-    echo "PASS: lizard complexity thresholds"
-  fi
-else
-  # No metrics tool: a bare SKIP reads as a pass. On a repo that HAS
-  # changed source files, require the project to declare the floor
-  # optional explicitly - silence is not consent.
-  OPT=$(PJ="$PJ" python3 -I -c 'import json,os
+  if [ -z "$covered" ]; then
+    # No metrics tool: a bare SKIP reads as a pass. On a repo that HAS
+    # changed source files, require the project to declare the floor
+    # optional explicitly - silence is not consent.
+    OPT=$(PJ="$PJ" python3 -I -c 'import json,os
 try: print("yes" if (json.load(open(os.environ["PJ"])).get("gate_checks") or {}).get("complexity_optional") is True else "no")
 except Exception: print("no")' 2>/dev/null)
-  if [ -n "$CHANGED" ] && [ "$OPT" != "yes" ]; then
-    echo "FAIL: no complexity tool (radon/lizard) and gate_checks.complexity_optional not declared - the floor is unconfigured, not passed"
-    fails=$((fails+1))
-  else
-    echo "SKIP: no metrics tool found (radon/lizard) - complexity floor unconfigured"
+    if [ "$OPT" != "yes" ]; then
+      echo "FAIL: no complexity tool (radon/lizard) and gate_checks.complexity_optional not declared - the floor is unconfigured, not passed"
+      fails=$((fails+1))
+    else
+      echo "SKIP: no metrics tool found (radon/lizard) - complexity floor unconfigured"
+    fi
   fi
 fi
 

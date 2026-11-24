@@ -70,7 +70,7 @@ if [ "$CMD" = "register" ]; then
   esac
   ACTORS="$ACTORS" ACTOR="$ACTOR" ROLE="$ROLE" PROJECT="$PROJECT" \
     REG_TOKEN="$REG_TOKEN" OWN_TOKEN="$OWN_TOKEN" python3 -I - <<'PY'
-import datetime, hashlib, json, os, secrets, sys
+import datetime, hashlib, json, os, secrets, sys, tempfile
 path, actor, role, project, reg_tok, own_tok = (os.environ[k] for k in
     ("ACTORS","ACTOR","ROLE","PROJECT","REG_TOKEN","OWN_TOKEN"))
 PRIVILEGED = {"orchestrator", "director", "root"}
@@ -110,8 +110,12 @@ reg["actors"].append({
     "token_sha256": h(token),
     "registered_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     "project": project or None})
-tmp = path + ".tmp"
-with open(tmp, "w") as f:
+# Unique tmp name: a fixed 'actors.json.tmp' collides when two
+# writers race outside the flock protocol (e.g. called via two
+# different wrappers).
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".",
+                           prefix=".actors.", suffix=".tmp")
+with os.fdopen(fd, "w") as f:
     f.write(json.dumps(reg, indent=2) + "\n")
     f.flush(); os.fsync(f.fileno())
 os.replace(tmp, path)
@@ -133,7 +137,7 @@ if [ "$CMD" = "unregister" ]; then
   done
   [ -n "$ACTOR" ] || { echo "unregister: --actor required" >&2; exit 2; }
   ACTORS="$ACTORS" ACTOR="$ACTOR" REG_TOKEN="$REG_TOKEN" OWN_TOKEN="$OWN_TOKEN" python3 -I - <<'PY'
-import hashlib, json, os, sys
+import hashlib, json, os, sys, tempfile
 path, actor, reg_tok, own_tok = (os.environ[k] for k in
     ("ACTORS","ACTOR","REG_TOKEN","OWN_TOKEN"))
 PRIVILEGED = {"orchestrator", "director", "root"}
@@ -154,8 +158,9 @@ if not (own_ok or registrar_ok):
           "(orchestrator/director)", file=sys.stderr)
     sys.exit(3)
 reg["actors"] = [a for a in entries if a.get("actor_id") != actor]
-tmp = path + ".tmp"
-with open(tmp, "w") as f:
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".",
+                           prefix=".actors.", suffix=".tmp")
+with os.fdopen(fd, "w") as f:
     f.write(json.dumps(reg, indent=2) + "\n")
     f.flush(); os.fsync(f.fileno())
 os.replace(tmp, path)
@@ -225,8 +230,12 @@ role = "unregistered"
 try:
     reg = json.load(open(actors_path, encoding="utf-8"))
     entries = reg.get("actors") if isinstance(reg, dict) else reg
-except Exception:
-    entries = []
+except Exception as e:
+    # A corrupt registry must not degrade to a silent 'deny' - the
+    # operator has to see that auth failed on a broken file, not on
+    # a bad token (same visibility as 'close' gives).
+    print(f"cycle_log append: actors.json unreadable: {e}", file=sys.stderr)
+    sys.exit(3)
 me = next((a for a in (entries or []) if a.get("actor_id") == caller), None)
 if not me or me.get("token_sha256") != h(token):
     print("deny", file=sys.stderr); sys.exit(3)

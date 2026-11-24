@@ -32,9 +32,19 @@ try:
     gh_anchor, strip_nonlink = _md.gh_anchor, _md.strip_nonlink
 except Exception:
     def strip_nonlink(body):
-        body = re.sub(r"```[\s\S]*?```", "", body)
-        body = re.sub(r"~~~[\s\S]*?~~~", "", body)
-        return re.sub(r"`[^`\n]+`", "", body)
+        out, fchar, flen = [], None, None
+        for l in body.splitlines():
+            s = l.strip()
+            if fchar is not None:
+                if s and set(s) <= {fchar} and len(s) >= flen:
+                    fchar = None
+                continue
+            fm = re.match(r"^\s*(`{3,}|~{3,})", l)
+            if fm:
+                fchar, flen = fm.group(1)[0], len(fm.group(1))
+                continue
+            out.append(l)
+        return re.sub(r"`[^`\n]+`", "", "\n".join(out))
     def gh_anchor(h):
         h = re.sub(r"\{#[^}]+\}", "", h)
         return re.sub(r"[^\w\- ]", "", h.strip().lower()).replace(" ", "-")

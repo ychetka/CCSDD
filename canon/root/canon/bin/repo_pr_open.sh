@@ -87,22 +87,12 @@ for frag in $DELTA_FRAGS; do
   # 'issue:' may be a comma list or carry '#' marks/quotes/comments:
   # every number is extracted in Python - concatenating digits via
   # tr would weld '10, 11' into a phantom '#1011'.
-  fi_nums=$(python3 -I - "$frag" <<'PY'
-import re, sys
-lines = open(sys.argv[1], encoding="utf-8", errors="replace").read().splitlines()
-start = 1 if lines and lines[0].strip() == "---" else 0
-for ln in lines[start:]:
-    s = ln.strip()
-    if s == "---" or s.startswith("#"):
-        break
-    m = re.match(r"^issue\s*:\s*(.+?)\s*$", ln)
-    if m:
-        v = m.group(1).strip().strip('"').strip("'")
-        v = re.sub(r"\s+#(?!\d).*$", "", v)   # trailing ' #comment'
-        nums = re.findall(r"#?(\d+)", v)      # '10', '#10', '10, 11', '10, #11'
-        print(" ".join(str(int(n)) for n in nums)); break
-    if s and not re.match(r"^[A-Za-z_]+\s*:", ln):
-        break
+  fi_nums=$(CANON_DIR="$CANON_DIR" python3 -I - "$frag" <<'PY'
+import os, sys
+sys.path.insert(0, os.path.join(os.environ.get("CANON_DIR") or "", "bin"))
+from changes_parser import front_fields, issue_numbers
+body = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+print(" ".join(str(n) for n in issue_numbers(front_fields(body).get("issue"))))
 PY
 )
   for fi_n in $fi_nums; do

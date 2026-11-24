@@ -73,30 +73,15 @@ fi
 #    non-empty '## Spec impact' (adds/modifies/removes lines or the
 #    bare '-' none-marker). CANONICAL contract - runs even when a repo
 #    adapter owns anchor resolution.
-FIELD_BAD=$(TOP="$TOP" PENDING_FRAGS="$PENDING_FRAGS" ISSUE_LIST="$ISSUE_LIST $FRAG_LIST" python3 -I - <<'PY'
-import os, re
+FIELD_BAD=$(TOP="$TOP" PENDING_FRAGS="$PENDING_FRAGS" ISSUE_LIST="$ISSUE_LIST $FRAG_LIST" CANON_DIR="$CANON_DIR" python3 -I - <<'PY'
+import os, re, sys
 top = os.environ["TOP"]
 frags = [l.strip() for l in os.environ.get("PENDING_FRAGS","").splitlines() if l.strip()]
 issue_list = set(os.environ.get("ISSUE_LIST","").split())
 bad = []
 
-def front_fields(body):
-    # Leading YAML-ish zone only: an optional opening '---' fence, then
-    # key: value lines until a non-field line or the closing '---'.
-    fields = {}
-    lines = body.splitlines()
-    start = 1 if lines and lines[0].strip() == "---" else 0
-    for ln in lines[start:]:
-        s = ln.strip()
-        if not s:
-            continue
-        if s == "---":
-            break
-        m = re.match(r"^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$", s)
-        if not m:
-            break
-        fields[m.group(1).lower()] = m.group(2).strip().strip('"').strip("'")
-    return fields
+sys.path.insert(0, os.path.join(os.environ.get("CANON_DIR") or "", "bin"))
+from changes_parser import front_fields, issue_numbers
 
 for rel in frags:
     path = os.path.join(top, rel)
@@ -111,10 +96,12 @@ for rel in frags:
         bad.append(f"{name}: missing 'user_visible: true|false'")
     iss = flds.get("issue","")
     # Natural forms (harness.md): '10', '#10', '10, 11', '#10, #11',
-    # '"10"' (quotes already stripped by front_fields).
-    if not re.fullmatch(r"#?\d+(\s*,\s*#?\d+)*", iss or ""):
+    # '[10, 11]', '"10"', '10 # comment' - the canonical
+    # issue_numbers parser, identical to issue_merge's acceptance.
+    iss_nums = issue_numbers(iss)
+    if not iss_nums:
         bad.append(f"{name}: missing 'issue: <N>'")
-    elif issue_list and not set(re.findall(r"\d+", iss)) <= issue_list:
+    elif issue_list and not {str(n) for n in iss_nums} <= issue_list:
         bad.append(f"{name}: 'issue:' {iss} does not match the branch/linked issues")
     m = re.search(r"(?im)^#+\s*spec impact\s*$", body)
     if not m:
@@ -130,6 +117,20 @@ for rel in frags:
             r"(?im)^\s*-\s*(none|n/a)?\s*$", sec):
         bad.append(f"{name}: '## Spec impact' declares no "
                    f"adds/modifies/removes lines and no '-' none-marker")
+    # A directive whose every target is a placeholder word
+    # ('- adds: none', '- modifies: -') declares nothing and
+    # satisfies nothing: it slips past has_lines while carrying
+    # zero real anchors. The author must either name docs/specs
+    # targets or use the bare '-' none-marker.
+    for kind, targets in re.findall(
+            r"(?im)^\s*(?:-\s*)?(adds|modifies|removes)\s*:\s*(.+)$", sec):
+        toks = [t.strip().strip("`")
+                for t in re.split(r"[,\s]+", targets.strip())]
+        if not any(t and t.lower() not in ("none", "-", "n/a")
+                   for t in toks):
+            bad.append(f"{name}: '{kind}: {targets.strip()}' declares "
+                       f"only placeholder targets - name a docs/specs "
+                       f"target or use the bare '-' none-marker")
 for b in bad:
     print(b)
 PY
@@ -145,14 +146,21 @@ fi
 #    canonical fallback below.
 ADAPTER_OUT=""
 ADAPTER_RC=127
+# Repo adapters execute under gate credentials: scrub the
+# environment (no SSH_AUTH_SOCK / forge tokens / PYTHONPATH) and
+# keep CWD out of sys.path via PYTHONSAFEPATH (3.11+) so a module
+# inside the candidate tree cannot shadow stdlib imports.
+ADP_ENV() { env -i "PATH=${PATH:-/usr/bin:/bin}" "HOME=/tmp" "TMPDIR=/tmp" \
+           "LANG=${LANG:-C.UTF-8}" PYTHONDONTWRITEBYTECODE=1 \
+           PYTHONSAFEPATH=1 "PENDING_FRAGS=$PENDING_FRAGS" "$@"; }
 if [ -n "$BASE" ] && git cat-file -e "$BASE_REF:tools/check_spec_anchors.sh" 2>/dev/null; then
   ADP=$(mktemp)
   git show "$BASE_REF:tools/check_spec_anchors.sh" > "$ADP" 2>/dev/null
-  ADAPTER_OUT=$(cd "$TOP" && PENDING_FRAGS="$PENDING_FRAGS" bash "$ADP" 2>&1 | tail -n 5)
+  ADAPTER_OUT=$(cd "$TOP" && ADP_ENV bash "$ADP" 2>&1 | tail -n 5)
   ADAPTER_RC=$?
   rm -f "$ADP"
 elif [ -x "$CANON_DIR/tools/check_spec_anchors.sh" ]; then
-  ADAPTER_OUT=$(cd "$TOP" && PENDING_FRAGS="$PENDING_FRAGS" bash "$CANON_DIR/tools/check_spec_anchors.sh" 2>&1 | tail -n 5)
+  ADAPTER_OUT=$(cd "$TOP" && ADP_ENV bash "$CANON_DIR/tools/check_spec_anchors.sh" 2>&1 | tail -n 5)
   ADAPTER_RC=$?
 fi
 if [ $ADAPTER_RC -ne 127 ]; then
@@ -194,8 +202,19 @@ except Exception:
         heading = re.sub(r"\{#[^}]+\}", "", heading)
         return re.sub(r"[^\w\- ]", "", heading.strip().lower()).replace(" ", "-")
     def strip_fenced(body):
-        body = re.sub(r"```[\s\S]*?```", "", body)
-        return re.sub(r"~~~[\s\S]*?~~~", "", body)
+        out, fchar, flen = [], None, None
+        for l in body.splitlines():
+            s = l.strip()
+            if fchar is not None:
+                if s and set(s) <= {fchar} and len(s) >= flen:
+                    fchar = None
+                continue
+            fm = re.match(r"^\s*(`{3,}|~{3,})", l)
+            if fm:
+                fchar, flen = fm.group(1)[0], len(fm.group(1))
+                continue
+            out.append(l)
+        return "\n".join(out)
     def collect_anchors(body):
         anchors = set()
         seen = {}
@@ -252,7 +271,7 @@ def spec_impact_lines(body):
 # epic reaches main. `existed_at_base` alone would block that valid
 # sequence; a delta-introduced target counts as existing for
 # modifies/removes checks (net effect vs base: adds / nothing).
-introduced = []          # list of (norm_file, anchor_or_None)
+introduced = []          # list of (norm_file, anchor_or_None), lowercased
 for rel in frags:
     path = os.path.join(top, rel)
     if not os.path.isfile(path):
@@ -266,11 +285,15 @@ for rel in frags:
             if not t or t.lower() in ("none", "-", "n/a"):
                 continue
             fp, anch = norm_target(t)
-            introduced.append((fp, anch or None))
+            # Anchors compare case-insensitively (collect_anchors and
+            # anchor_resolves lowercase everything): 'adds: x.md#Req-1'
+            # in task 1 must satisfy 'modifies: x.md#req-1' in task 2.
+            introduced.append((fp, anch.lower() if anch else None))
 
 def introduced_in_delta(norm_fp, anchor):
+    al = anchor.lower() if anchor else anchor
     for fp, anch in introduced:
-        if fp == norm_fp and (anch is None or anch == anchor):
+        if fp == norm_fp and (anch is None or anch == al):
             return True
     return False
 
@@ -292,11 +315,12 @@ for rel in frags:
             if not t or t.lower() in ("none", "-", "n/a"):
                 continue
             fp, anch = norm_target(t)
-            removed.append((fp, anch or None))
+            removed.append((fp, anch.lower() if anch else None))
 
 def removed_in_delta(norm_fp, anchor):
+    al = anchor.lower() if anchor else anchor
     for fp, anch in removed:
-        if fp == norm_fp and (anch is None or anch == anchor):
+        if fp == norm_fp and (anch is None or anch == al):
             return True
     return False
 

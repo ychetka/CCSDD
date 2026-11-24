@@ -56,9 +56,8 @@ fi
 ln -s canon/RULES.md "$WS/.windsurfrules"
 
 # --- compile .devin/config.json from the neutral policy -----------
-PJ="$CANON/project.json"; [ -f "$PJ" ] || PJ=""
-POLICY="$POLICY" PJ="$PJ" python3 - <<'PY' > "$WS/.devin/config.json"
-import json, os, shlex
+POLICY="$POLICY" python3 - <<'PY' > "$WS/.devin/config.json"
+import json, os
 policy = json.load(open(os.environ["POLICY"], encoding="utf-8"))
 ex = policy.get("exec") or {}
 deny = [f"Exec({v})" for v in ex.get("deny", [])]
@@ -68,62 +67,14 @@ for v in ex.get("allow", []):
     allow += [f"Exec({v})", f"Exec(./{v})"]
     if v == "canon/bin/":
         allow += ["Exec(.devin/bin/)", "Exec(./.devin/bin/)"]
-# Project-declared gate checks (project.json gate_checks.*): the
-# code_writer/judge roles legitimately exec the project's own test
-# and lint binaries inside the worktree. Allow each declared command
-# head so whitelist-mode runtimes do not strangle gate_work.
-pj = os.environ.get("PJ") or ""
-if pj:
-    try:
-        gc = (json.load(open(pj, encoding="utf-8")).get("gate_checks") or {})
-    except Exception:
-        gc = {}
-    for name, val in gc.items():
-        # gate_checks.<name> is an argv array (["pytest","-x"]);
-        # <name>_optional is a bool flag - skip it. The allow entry
-        # is the full argv prefix, not the bare head: interpreter
-        # heads (python3, node) stay denied globally, so a bare-head
-        # allow would reopen the exec.deny bypass the policy exists
-        # to close. Exec(python3 -m pytest) permits the declared
-        # invocation while Exec(python3 exploit.py) stays denied.
-        if not isinstance(val, list) or not val:
-            continue
-        # Conservative token gate BEFORE shlex.join: an element
-        # carrying shell metachars (;&|`$>< space newline) would
-        # compile into an Exec() entry that a prefix-matching runtime
-        # may parse as a shell fragment - broadening, not pinning,
-        # execution. Anything not matching a strict argv-token shape
-        # is skipped (fail-closed: the runtime just denies it).
-        import re
-        _tok = re.compile(r"^[A-Za-z0-9_./:=+@%,~-]+$")
-        elems = [str(a) for a in val]
-        if not all(_tok.match(e) for e in elems):
-            continue
-        # Two head rules:
-        # - POSIX shells are never allowed with ANY argv: 'Exec(sh -c
-        #   x)' as a prefix also matches 'sh -c "x; rm -rf"' - the -c
-        #   payload is a prefix-extension channel. (An 'sh -c <script>'
-        #   check would not pass the token gate anyway.)
-        # - A BARE interpreter head (Exec(python3)) permits 'python3
-        #   anything', reopening exec.deny. With arguments the prefix
-        #   is pinned (Exec(python3 -m pytest) cannot exec 'python3
-        #   exploit.py'), so only the single-element case is rejected.
-        head = elems[0].rsplit("/", 1)[-1]
-        if head in {"sh", "bash", "zsh", "dash", "fish", "env"}:
-            continue
-        if len(elems) == 1 and head in {
-                "python", "python2", "python3", "node", "nodejs",
-                "deno", "bun", "perl", "ruby", "php", "npx"}:
-            continue
-        # shlex.join preserves argument boundaries: a plain " ".join
-        # drops quoting, so ["pytest","-k","not slow"] compiled as
-        # "pytest -k not slow" would never match the real argv and
-        # could accidentally allow a broader prefix than declared.
-        argv = shlex.join(elems)
-        if argv and "\x00" not in argv:
-            allow.append(f"Exec({argv})")
-# Dedup preserving order: a gate_checks command head that repeats a
-# policy allow entry would otherwise appear twice.
+# Project-declared gate checks (project.json gate_checks.*) are NOT
+# compiled into allow. An Exec() entry is a PREFIX, and a prefix is a
+# broadening primitive: Exec(python3 -m pytest) also admits 'python3
+# -m pytest -o plugin=<evil>' or '/tmp/exploit.py' where interpreter
+# flags smuggle code around exec.deny. The only legal path for
+# project commands is canon/bin/project_run.sh <check_name>, which
+# resolves the declared argv itself and runs it under env -i.
+# Dedup preserving order.
 out = {"permissions": {"deny": list(dict.fromkeys(deny)),
                        "allow": list(dict.fromkeys(allow))}}
 print(json.dumps(out, indent=2, ensure_ascii=False))

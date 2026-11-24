@@ -56,7 +56,19 @@
       "time ",
       "nohup ",
       "command ",
-      "source "
+      "source ",
+      "canon/bin/human_sign.sh init",
+      "canon/bin/human_sign.sh sign",
+      "./canon/bin/human_sign.sh init",
+      "./canon/bin/human_sign.sh sign",
+      ".devin/bin/human_sign.sh init",
+      ".devin/bin/human_sign.sh sign",
+      "./.devin/bin/human_sign.sh init",
+      "./.devin/bin/human_sign.sh sign",
+      "canon/bin/canon_pub.sh",
+      "./canon/bin/canon_pub.sh",
+      ".devin/bin/canon_pub.sh",
+      "./.devin/bin/canon_pub.sh"
     ],
     "allow": [
       "canon/bin/"
@@ -83,7 +95,7 @@
           "edit"
         ],
         "exec_extra": [
-          "<project lint/tests/typecheck per manifests>"
+          "canon/bin/project_run.sh <check> - project lint/tests/typecheck per project.json gate_checks"
         ]
       },
       "judge": {
@@ -94,7 +106,7 @@
           "exec"
         ],
         "exec_extra": [
-          "<project lint/tests/typecheck on the candidate worktree>"
+          "canon/bin/project_run.sh <check> - project lint/tests/typecheck on the candidate worktree"
         ]
       },
       "reviewer": {

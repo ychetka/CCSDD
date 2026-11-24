@@ -16,6 +16,9 @@ set -uo pipefail
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
 cd "$TOP"
+# macOS has shasum, not sha256sum - resolve once like gate_run.sh.
+SHA256_BIN=$(command -v sha256sum || true)
+[ -z "$SHA256_BIN" ] && SHA256_BIN="shasum -a 256"
 
 json_error() {
   python3 -I -c 'import json,sys;print(json.dumps({"status":"error","failure_class":sys.argv[1],"message":sys.argv[2]}))' "$1" "$2"
@@ -406,14 +409,23 @@ ENTRY=""
 if [ "$IS_RELEASE_PR" = "1" ]; then
   ENTRY='{"status":"pass","via":"release-pr"}'
 elif [ -n "$ADAPTER" ]; then
-  ADP_OUT=$(cd "$WT" && bash "$ADAPTER" --pr "$PR" 2>&1 | tail -n 1)
+  # The adapter is repo code running under merge credentials - scrub
+  # the environment: SSH_AUTH_SOCK / forge tokens / PYTHONPATH must
+  # not reach it, and PYTHONSAFEPATH keeps CWD out of sys.path on
+  # 3.11+ (a module named like a stdlib one inside $WT is a classic
+  # import-shadow RCE).
+  ADP_OUT=$(cd "$WT" && env -i \
+      "PATH=${PATH:-/usr/bin:/bin}" "HOME=/tmp" "TMPDIR=/tmp" \
+      "LANG=${LANG:-C.UTF-8}" \
+      PYTHONDONTWRITEBYTECODE=1 PYTHONSAFEPATH=1 \
+      bash "$ADAPTER" --pr "$PR" 2>&1 | tail -n 1)
   ENTRY="$ADP_OUT"
   printf '%s' "$ENTRY" | python3 -I -c 'import json,sys
 try: json.load(sys.stdin)
 except Exception: print("bad")' | grep -q bad && \
     ENTRY='{"status":"error","detail":"adapter returned non-JSON output"}'
 else
-  FRAG_SCAN=$(TOP="$TOP" REMOTE="$REMOTE" BASE="$BASE" EXPECTED="$EXPECTED" INFO_FILE="$INFO_FILE" HEAD_BRANCH="$HEAD_BRANCH" python3 -I - <<'PY'
+  FRAG_SCAN=$(TOP="$TOP" REMOTE="$REMOTE" BASE="$BASE" EXPECTED="$EXPECTED" INFO_FILE="$INFO_FILE" HEAD_BRANCH="$HEAD_BRANCH" CANON_DIR="$CANON_DIR" python3 -I - <<'PY'
 import json, os, re, subprocess
 top = os.environ["TOP"]
 base_ref = os.environ["REMOTE"] + "/" + os.environ["BASE"]
@@ -421,7 +433,7 @@ head = os.environ["EXPECTED"]
 d = json.load(open(os.environ["INFO_FILE"]))
 names = subprocess.run(
     ["git","-C",top,"-c","core.quotepath=false","diff","--name-only",
-     "--diff-filter=ACMR", base_ref + "..." + head],
+     "--diff-filter=d", base_ref + "..." + head],
     capture_output=True, text=True)
 if names.returncode != 0:
     print(json.dumps({"status":"fail","via":"diff-fallback",
@@ -435,23 +447,13 @@ has_changelog = "CHANGELOG.md" in files
 labels = {((l or {}).get("name") or "") for l in (d.get("labels") or [])}
 
 def front_fields(body):
-    # leading key:value zone only (optionally --- fenced); stops at
-    # the closing '---' or the first non-field line so body/code-block
-    # text can't inject contract fields.
-    fields = {}
-    lines = body.splitlines()
-    start = 1 if lines and lines[0].strip() == "---" else 0
-    for ln in lines[start:]:
-        s = ln.strip()
-        if not s:
-            continue
-        if s == "---":
-            break
-        m = re.match(r"^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$", s)
-        if not m:
-            break
-        fields[m.group(1).lower()] = m.group(2).strip().strip('"').strip("'")
-    return fields
+    # The canonical .changes front-zone parser (comments inside a
+    # fenced block are inert, '[10, 11]' issue lists parse) - do not
+    # fork it here.
+    import sys as _s
+    _s.path.insert(0, os.path.join(os.environ.get("CANON_DIR") or "", "bin"))
+    from changes_parser import front_fields as _ff
+    return _ff(body)
 
 SEV = {"patch":0,"minor":1,"major":2}
 bumps, bad, manual_gate, ci_bootstrap, risk_high = [], [], False, False, False
@@ -466,11 +468,10 @@ for f in frags:
     else:
         bad.append(f)
     iss = (flds.get("issue") or "").strip()
-    # Natural forms (harness.md): 'issue: 10', 'issue: #10',
-    # 'issue: 10, 11', 'issue: "10"' - extract every number
-    # independently; a trailing ' #comment' is not an issue ref.
-    nums = set(re.findall(r"#?(\d+)",
-                          re.sub(r"\s+#(?!\d).*$", "", iss)))
+    # Canonical issue: forms - '10', '#10', '10, 11', '"10"',
+    # '[10, 11]', '10 # comment' (shared parser, do not fork).
+    from changes_parser import issue_numbers as _in
+    nums = set(_in(iss))
     if not nums:
         iss_missing.append(f)
     else:
@@ -489,8 +490,8 @@ for f in frags:
 allowed = set()
 m = re.match(r"^(?:epic_)?issue_(\d+)(?:[-_]|$)", os.environ.get("HEAD_BRANCH") or "")
 if m:
-    allowed.add(m.group(1))
-allowed.update(re.findall(r"#(\d+)", d.get("body") or ""))
+    allowed.add(int(m.group(1)))
+allowed.update(int(n) for n in re.findall(r"#(\d+)", d.get("body") or ""))
 if allowed:
     # every issue number the fragment names must be in the allowed
     # set (a list like 'issue: 10, 11' is legal only when BOTH are
@@ -536,14 +537,14 @@ fi
 # when a repo adapter owns the entry verdict (an adapter returning
 # flags:{} must not bypass manual_gate).
 if [ "$IS_RELEASE_PR" != "1" ]; then
-  FLAGS_SCAN=$(TOP="$TOP" REMOTE="$REMOTE" BASE="$BASE" EXPECTED="$EXPECTED" python3 -I - <<'PY'
+  FLAGS_SCAN=$(TOP="$TOP" REMOTE="$REMOTE" BASE="$BASE" EXPECTED="$EXPECTED" CANON_DIR="$CANON_DIR" python3 -I - <<'PY'
 import json, os, re, subprocess
 top = os.environ["TOP"]
 base_ref = os.environ["REMOTE"] + "/" + os.environ["BASE"]
 head = os.environ["EXPECTED"]
 names = subprocess.run(
     ["git","-C",top,"-c","core.quotepath=false","diff","--name-only",
-     "--diff-filter=ACMR", base_ref + "..." + head],
+     "--diff-filter=d", base_ref + "..." + head],
     capture_output=True, text=True)
 frags = [f.strip() for f in names.stdout.splitlines()
          if f.strip().startswith(".changes/") and f.strip().endswith(".md")
@@ -551,20 +552,10 @@ frags = [f.strip() for f in names.stdout.splitlines()
 manual_gate = ci_bootstrap = risk_high = False
 bumps = []
 def _fields(body):
-    fields = {}
-    lines = body.splitlines()
-    start = 1 if lines and lines[0].strip() == "---" else 0
-    for ln in lines[start:]:
-        s = ln.strip()
-        if not s:
-            continue
-        if s == "---":
-            break
-        m = re.match(r"^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$", s)
-        if not m:
-            break
-        fields[m.group(1).lower()] = m.group(2).strip().strip('"').strip("'")
-    return fields
+    import sys as _s
+    _s.path.insert(0, os.path.join(os.environ.get("CANON_DIR") or "", "bin"))
+    from changes_parser import front_fields as _ff
+    return _ff(body)
 for f in frags:
     body = subprocess.run(["git","-C",top,"show",head+":"+f],
                           capture_output=True, text=True).stdout
@@ -704,6 +695,7 @@ GATE=$(INFO_FILE="$INFO_FILE" REVIEWS_FILE="$REVIEWS_FILE" REQUIRED="$REQUIRED" 
        PR_AUTHOR="$PR_AUTHOR" CI_BOOTSTRAP="$CI_BOOTSTRAP" MERGEABLE="$MERGEABLE" \
        RISK_HIGH="$RISK_HIGH" FAMILY_MAP="$FAMILY_MAP" \
        HIGH_RISK_REVIEWERS="$HIGH_RISK_REVIEWERS" \
+       IS_RELEASE_PR="$IS_RELEASE_PR" \
        python3 -I - "$EXPECTED" <<'PY'
 import json, sys, os
 expected = sys.argv[1]
@@ -781,6 +773,7 @@ for login, r in by_reviewer.items():
 missing_approvals = sorted(expected_reviewers - set(approved_on_head))
 # risk: high - approvals must come from >=2 distinct model families.
 risk_high = os.environ.get("RISK_HIGH") == "yes"
+is_release_pr = os.environ.get("IS_RELEASE_PR") == "1"
 family_map = {}
 for ln in (os.environ.get("FAMILY_MAP") or "").splitlines():
     if "\t" in ln:
@@ -788,7 +781,17 @@ for ln in (os.environ.get("FAMILY_MAP") or "").splitlines():
         family_map[k.strip()] = v.strip() or "default"
 approved_families = {family_map.get(l, "default") for l in approved_on_head}
 family_ok = (not risk_high) or len(approved_families) >= 2
-report["approved"] = (not missing_approvals) and not blocking_states and family_ok
+if is_release_pr:
+    # A release/v* PR's provenance is proven structurally (exactly
+    # one release-bot commit, confined diff) - requiring APPROVED
+    # from EVERY configured reviewer deadlocks the release on a
+    # single-approval branch protection. One valid reviewer approval
+    # satisfies both the gate and typical required_review_count=1.
+    release_ok = bool(set(approved_on_head) & expected_reviewers)
+    report["approved"] = release_ok and not blocking_states
+    report["release_pr_approval_rule"] = "one-expected-reviewer"
+else:
+    report["approved"] = (not missing_approvals) and not blocking_states and family_ok
 report["approved_by"] = approved_on_head
 report["missing_approvals"] = missing_approvals
 report["blocking_reviews"] = blocking_states
@@ -1041,7 +1044,7 @@ if [ -n "$CONTRACT_TOUCHED" ]; then
   while IFS= read -r cpath; do
     [ -n "$cpath" ] || continue
     if git cat-file -e "$EXPECTED:$cpath" 2>/dev/null; then
-      CART=$(git show "$EXPECTED:$cpath" | sha256sum | cut -d' ' -f1)
+      CART=$(git show "$EXPECTED:$cpath" | $SHA256_BIN | cut -d' ' -f1)
     else
       # Same binding as verify_constraints: delete|path|blob-at-
       # merge-base (fallback EXPECTED when the file never existed
@@ -1049,7 +1052,7 @@ if [ -n "$CONTRACT_TOUCHED" ]; then
       MB=$(git merge-base "${PRE_MERGE_SHA:-$REMOTE/$BASE}" "$EXPECTED" 2>/dev/null || true)
       DEL_BLOB=""
       [ -n "$MB" ] && DEL_BLOB=$(git rev-parse -q --verify "$MB:$cpath" 2>/dev/null || true)
-      CART=$(printf 'delete|%s|%s' "$cpath" "${DEL_BLOB:-$EXPECTED}" | sha256sum | cut -d' ' -f1)
+      CART=$(printf 'delete|%s|%s' "$cpath" "${DEL_BLOB:-$EXPECTED}" | $SHA256_BIN | cut -d' ' -f1)
     fi
     # Only the contract-named envelope is burned here - $BRANCH.json
     # is the manual_gate/risk:high PR sign-off (artifact = head sha),

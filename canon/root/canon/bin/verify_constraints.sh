@@ -6,6 +6,9 @@ set -uo pipefail
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 
 GH=$("$CANON_DIR/bin/gh_id.sh" merge)
+# macOS has shasum, not sha256sum - resolve once like gate_run.sh.
+SHA256_BIN=$(command -v sha256sum || true)
+[ -z "$SHA256_BIN" ] && SHA256_BIN="shasum -a 256"
 TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
 cd -P "$TOP" 2>/dev/null || { echo "FAIL: not a git repo"; exit 1; }
 
@@ -230,15 +233,18 @@ fi
 # committed secret or a protected-path edit. BASE (merge-base vs the
 # base branch) is already resolved above. Deleted files never count:
 # removing a file is not a secret leak.
-CHANGED=$( { git -c core.quotepath=false diff --name-only --no-renames --diff-filter=ACMR --cached;
-             git -c core.quotepath=false diff --name-only --no-renames --diff-filter=ACMR HEAD;
-             [ -n "$BASE" ] && git -c core.quotepath=false diff --name-only --no-renames --diff-filter=ACMR "$BASE"...HEAD; } 2>/dev/null | sort -u )
-# Protected-path hits need DELETED entries too: deleting a protected
-# file is as much an escalation as editing it. Secret scanning keeps
-# the ACMR set - removing a file is not a secret leak.
-PROT_CHANGED=$( { git -c core.quotepath=false diff --name-only --no-renames --diff-filter=ACMRD --cached;
-                  git -c core.quotepath=false diff --name-only --no-renames --diff-filter=ACMRD HEAD;
-                  [ -n "$BASE" ] && git -c core.quotepath=false diff --name-only --no-renames --diff-filter=ACMRD "$BASE"...HEAD; } 2>/dev/null | sort -u )
+CHANGED=$( { git -c core.quotepath=false diff --name-only --no-renames --diff-filter=d --cached;
+             git -c core.quotepath=false diff --name-only --no-renames --diff-filter=d HEAD;
+             [ -n "$BASE" ] && git -c core.quotepath=false diff --name-only --no-renames --diff-filter=d "$BASE"...HEAD; } 2>/dev/null | sort -u )
+# Protected-path hits need every remaining status - no diff-filter
+# at all: deleting a protected file is as much an escalation as
+# editing it, and a TYPE change (regular file -> symlink, status T)
+# or unmerged (U) entry must escalate too, not slip past ACMR[D].
+# Secret scanning keeps the 'd' set - removing a file is not a
+# secret leak.
+PROT_CHANGED=$( { git -c core.quotepath=false diff --name-only --no-renames --cached;
+                  git -c core.quotepath=false diff --name-only --no-renames HEAD;
+                  [ -n "$BASE" ] && git -c core.quotepath=false diff --name-only --no-renames "$BASE"...HEAD; } 2>/dev/null | sort -u )
 # Boundary-correct secret detection: 'token' as a bare substring
 # false-flags tokenizer.py - require it as a basename or separated
 # word, and cover the canonical secret filenames.
@@ -349,7 +355,7 @@ if [ -n "$CONTRACT_HITS" ]; then
       # at the merge-base) keeps the HEAD binding.
       DEL_BIND="${DEL_BLOB:-$HEAD_SHA_NOW}"
       ARTIFACT=$(printf 'delete|%s|%s' "$cfile" "$DEL_BIND" \
-        | sha256sum | cut -d' ' -f1)
+        | $SHA256_BIN | cut -d' ' -f1)
       SIGN_NOTE=" # deletion-bound sha256(delete|path|base-blob)"
     elif [ -f "$cfile" ]; then
       ARTIFACT="$cfile"
@@ -518,13 +524,15 @@ if [ -n "$BASE" ]; then
   # spacing, quoted values, zone ends at '---' or '#'). Scanning the
   # fragment BODY would let a prose 'issue: 999' line hijack the
   # risk_flags gate for an unrelated issue.
-  DIFF_ISSUES=$(BASE="$BASE" python3 -I - <<'PY'
-import os, re, subprocess
+  DIFF_ISSUES=$(BASE="$BASE" CANON_DIR="$CANON_DIR" python3 -I - <<'PY'
+import os, re, subprocess, sys
+sys.path.insert(0, os.path.join(os.environ.get("CANON_DIR") or "", "bin"))
+from changes_parser import front_fields, issue_numbers
 names = subprocess.run(
     ["git","-c","core.quotepath=false","diff","--name-only",
      "--no-renames", os.environ["BASE"]+"...HEAD"],
     capture_output=True, text=True).stdout.splitlines()
-out = []
+out = set()
 for f in names:
     f = f.strip()
     if not (re.fullmatch(r"\.changes/[^/]+\.md", f)
@@ -532,17 +540,8 @@ for f in names:
         continue
     body = subprocess.run(["git","show","HEAD:"+f],
                           capture_output=True, text=True).stdout
-    lines = body.splitlines()
-    start = 1 if lines and lines[0].strip() == "---" else 0
-    for ln in lines[start:]:
-        s = ln.strip()
-        if s == "---" or s.startswith("#"):
-            break
-        m = re.match(r"^issue\s*:\s*([#\d,\s'\"]+)", ln)
-        if m:
-            out += [x.strip().strip('"').strip("'").lstrip("#")
-                    for x in m.group(1).split(",")]
-print(" ".join(sorted({int(x) for x in out if x.isdigit()})))
+    out.update(issue_numbers(front_fields(body).get("issue")))
+print(" ".join(str(n) for n in sorted(out)))
 PY
 )
   for tok in $DIFF_ISSUES; do
@@ -594,7 +593,9 @@ SKIPCALL = re.compile(r"(pytest\.skip\(|unittest\.SkipTest|self\.skipTest|this\.
 # production files like src/attestation.py or docs/latest_notes.md.
 TEST_PATHS = [":(glob)**/test_*", ":(glob)**/*_test.*",
               ":(glob)**/*.test.*", ":(glob)**/*.spec.*",
-              ":(glob)tests/**",
+              ":(glob)**/*_spec.*",
+              ":(glob)tests/**", ":(glob)test/**",
+              ":(glob)**/__tests__/**",
               ":(exclude,glob)**/*.md", ":(exclude,glob)**/.changes/**"]
 missing = []
 for gid in os.environ["GWT_IDS"].split():
@@ -628,15 +629,26 @@ for gid in os.environ["GWT_IDS"].split():
             d -= 1
         if tdef < 0:
             continue
-        # Decorators contiguously above the def belong to it.
+        # Decorators contiguously above the def belong to it. A
+        # multi-line decorator ('@pytest.mark.skipif(\n  cond,\n
+        # reason=...)' ) keeps lines that do NOT start with '@' -
+        # track the paren balance bottom-up so ')'-terminated
+        # continuation lines don't end the walk before the '@' line.
         j = tdef - 1
         skipped = False
-        while j >= 0 and (body[j].lstrip().startswith("@") or not body[j].strip()):
-            if body[j].strip() and SKIPDEC.search(body[j]):
-                skipped = True; break
-            if body[j].strip() == "":
+        depth = 0
+        while j >= 0:
+            s = body[j].strip()
+            depth += s.count(")") - s.count("(")
+            if depth > 0:
+                j -= 1; continue   # inside a multi-line call
+            if not s:
                 break
-            j -= 1
+            if body[j].lstrip().startswith("@"):
+                if SKIPDEC.search(body[j]):
+                    skipped = True; break
+                j -= 1; continue
+            break
         # Explicit skip() calls in the first body lines.
         for k in range(tdef + 1, min(len(body), tdef + 6)):
             if SKIPCALL.search(body[k]):
@@ -666,49 +678,50 @@ fi
 #     risk: high fragment in this diff, or the flag is silently ignored.
 if [ -f "$CANON_DIR/roadmap.md" ] && [ -n "${GWT_ISSUES// }" ] \
     && [ -n "$BASE" ]; then
-  RISKY_ISSUES=$(GWT_ISSUES="$GWT_ISSUES" RM="$CANON_DIR/roadmap.md" python3 -I - <<'PY'
-import os, re
+  RISKY_ISSUES=$(GWT_ISSUES="$GWT_ISSUES" RM="$CANON_DIR/roadmap.md" CANON_DIR="$CANON_DIR" python3 -I - <<'PY'
+import os, re, sys
+sys.path.insert(0, os.path.join(os.environ.get("CANON_DIR") or "", "bin"))
+from changes_parser import item_zone
 issues = set(os.environ["GWT_ISSUES"].split())
-# Per-ITEM parsing: 'risk_flags' precedes 'issue:' in the template,
-# so block-level association (## Item: ... until the next heading)
-# is required - streaming 'last issue seen' misattributes flags.
-risky, cur_issue, cur_flags = [], None, False
-rf_indent = None
-def flush():
+body = open(os.environ["RM"], encoding="utf-8", errors="replace").read()
+# Per-ITEM parsing over the canonical header zone
+# (changes_parser.item_zone): 'risk_flags' precedes 'issue:' in the
+# template, so block-level association is required - and a
+# '- risk_flags:' bullet inside a fenced G/W/T example or in prose
+# below the first '###' heading is NOT a declaration.
+EMPTY = ("", "none", "n/a", "-", "[]", '""', "''")
+def _issue_num(v):
+    v = re.split(r"\s*#", (v or "").strip(), maxsplit=1)[0]
+    v = v.lstrip("#").strip()
+    return str(int(v)) if v.isdigit() else ""
+risky = []
+for part in re.split(r"(?m)(?=^##\s+Item\s*:)", body):
+    if not re.match(r"^##\s+Item\s*:", part):
+        continue
+    lines = part.split("\n")
+    zone = item_zone(lines)
+    fields = {k: v for _, kind, k, v in zone if kind == "field"}
+    cur_issue = _issue_num(fields.get("issue"))
+    val = (fields.get("risk_flags") or "").strip()
+    val = val.strip("[]").strip()
+    cur_flags = bool(val) and val.lower() not in EMPTY
+    if not cur_flags:
+        # Lenient: maybe the nested-list form follows ('- risk_flags:'
+        # with deeper-indented '- flag' bullets). Any non-empty
+        # bullet besides [], none, -, n/a means risky - a rigid
+        # check would fail OPEN on a template-legitimate format.
+        for i, (rel, kind, k, v) in enumerate(zone):
+            if kind != "field" or k != "risk_flags":
+                continue
+            for _, k2, _k3, v2 in zone[i + 1:]:
+                if k2 == "field":
+                    break
+                if v2.startswith("-") and v2.lstrip("- ").strip().lower() not in EMPTY:
+                    cur_flags = True
+                    break
+            break
     if cur_issue in issues and cur_flags:
         risky.append(cur_issue)
-for line in open(os.environ["RM"], encoding="utf-8", errors="replace"):
-    if re.match(r"^##\s", line):
-        flush(); cur_issue, cur_flags = None, False
-        rf_indent = None; continue
-    m = re.match(r"^\s*-\s*issue:\s*#?(\d+)\b", line)
-    if m:
-        cur_issue = str(int(m.group(1)))
-        rf_indent = None; continue
-    # Lenient: accept `[a, b]`, bare `a, b`, and the nested-list
-    # form (a deeper-indented `- flag` on the next line). Any
-    # non-empty value besides [], none, -, n/a means risky - a
-    # rigid regex would fail OPEN on a format the director picked
-    # from the research_questions template.
-    m = re.match(r"^(\s*)-\s*risk_flags:\s*(.*)$", line)
-    if m:
-        indent, val = len(m.group(1)), m.group(2).strip()
-        val = val.strip("[]").strip()
-        cur_flags = bool(val) and val.lower() not in (
-            "none", "n/a", "-", '""', "''")
-        if not cur_flags:
-            # Maybe a nested list follows.
-            rf_indent = indent
-            continue
-        continue
-    if rf_indent is not None and not cur_flags:
-        mn = re.match(r"^(\s*)-\s*(\S.*)$", line)
-        if mn and len(mn.group(1)) > rf_indent:
-            cur_flags = mn.group(2).strip().lower() not in (
-                "none", "n/a", "-", "[]")
-            continue
-        rf_indent = None
-flush()
 print(" ".join(sorted(set(risky), key=int)))
 PY
 )
@@ -716,8 +729,10 @@ PY
     # Front-zone 'risk: high' only (same contract as DIFF_ISSUES
     # above): a 'risk: high' inside the fragment body is prose, not
     # a declaration, and .changes/README.md is not a fragment.
-    RISK_FRAGS=$(BASE="$BASE" python3 -I - <<'PY'
-import os, re, subprocess
+    RISK_FRAGS=$(BASE="$BASE" CANON_DIR="$CANON_DIR" python3 -I - <<'PY'
+import os, re, subprocess, sys
+sys.path.insert(0, os.path.join(os.environ.get("CANON_DIR") or "", "bin"))
+from changes_parser import front_fields
 names = subprocess.run(
     ["git","-c","core.quotepath=false","diff","--name-only",
      "--no-renames", os.environ["BASE"]+"...HEAD"],
@@ -730,15 +745,8 @@ for f in names:
         continue
     body = subprocess.run(["git","show","HEAD:"+f],
                           capture_output=True, text=True).stdout
-    lines = body.splitlines()
-    start = 1 if lines and lines[0].strip() == "---" else 0
-    for ln in lines[start:]:
-        s = ln.strip()
-        if s == "---" or s.startswith("#"):
-            break
-        if re.match(r"^risk\s*:\s*high\b", s):
-            n += 1
-            break
+    if re.match(r"^high\b", front_fields(body).get("risk", "")):
+        n += 1
 print(n)
 PY
 )

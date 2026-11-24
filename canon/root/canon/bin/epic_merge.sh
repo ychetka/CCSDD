@@ -90,33 +90,26 @@ TMPD_RM="$CANON_DIR/roadmap.md"
 
 # Roadmap resolve: the `## Item` block declaring `issue: <EN>` must
 # be `type: epic` with a non-empty `tasks: [M,...]` list.
-TASKS=$(RM="$TMPD_RM" EN="$EN" python3 -I - <<'PY'
-import json, os, re
+TASKS=$(RM="$TMPD_RM" EN="$EN" CANON_DIR="$CANON_DIR" python3 -I - <<'PY'
+import json, os, re, sys
 en = os.environ["EN"]
+sys.path.insert(0, os.path.join(os.environ.get("CANON_DIR") or "", "bin"))
+from changes_parser import item_fields
 body = open(os.environ["RM"], encoding="utf-8", errors="replace").read()
 def _issue_num(v):
     # 'issue: #9' / 'issue: 9 # main epic' all denote issue 9.
-    v = re.split(r"\s*#", (v or "").strip(), 1)[0]
+    v = re.split(r"\s*#", (v or "").strip(), maxsplit=1)[0]
     v = v.lstrip("#").strip()
     return str(int(v)) if v.isdigit() else ""
-
-def _front_fields(b):
-    # Only the contiguous run of '- key: value' lines directly under
-    # the '## Item:' header counts as fields. A '- issue: #9' shaped
-    # bullet deeper in the item body is prose, not a declaration.
-    fields = {}
-    for ln in b.splitlines()[1:]:  # first line is the item title
-        m = re.match(r"^\s*-\s*([a-z_]+)\s*:\s*(.+?)\s*$", ln)
-        if m:
-            fields[m.group(1)] = m.group(2)
-        elif ln.strip():
-            break
-    return fields
 
 blocks = re.split(r"(?m)^##\s+Item\s*:", body)[1:]
 item = None
 for b in blocks:
-    fields = _front_fields(b)
+    # Canonical header-zone parser (changes_parser.item_fields):
+    # fields may be split by blank/comment/continuation lines and
+    # must end at the first '###' heading; a '- issue: #9' bullet in
+    # prose or a fenced example is not a declaration.
+    fields = item_fields(b)
     if _issue_num(fields.get("issue")) == en:
         item = fields; break
 if item is None:
@@ -147,8 +140,8 @@ fi
 
 # Objective evidence per task: fragment with `issue: M` in the
 # merge-base..head diff AND issue state CLOSED.
-PENDING=$(EXPECTED="$EXPECTED" BASE_REF="$REMOTE/$BASE" TASKS="$TASKS" python3 -I - <<'PY'
-import json, os, re, subprocess
+PENDING=$(EXPECTED="$EXPECTED" BASE_REF="$REMOTE/$BASE" TASKS="$TASKS" CANON_DIR="$CANON_DIR" python3 -I - <<'PY'
+import json, os, re, subprocess, sys
 expected = os.environ["EXPECTED"]; base = os.environ["BASE_REF"]
 tasks = json.loads(os.environ["TASKS"])["tasks"]
 mb = subprocess.run(["git","merge-base",base,expected],
@@ -158,6 +151,11 @@ names = subprocess.run(["git","diff","--name-only",mb,expected],
 frags = [n.strip() for n in names
          if n.strip().startswith(".changes/") and n.strip().endswith(".md")
          and not n.strip().endswith("/README.md")]
+# Canonical front-zone parser - 'issue: [#10, #11]' parses the
+# same way here as in issue_merge; a prose 'issue:' mention in
+# the body still does not count as a declaration.
+sys.path.insert(0, os.path.join(os.environ.get("CANON_DIR") or "", "bin"))
+from changes_parser import front_fields, issue_numbers
 have = set()
 for f in frags:
     try:
@@ -165,23 +163,7 @@ for f in frags:
                               capture_output=True,text=True).stdout
     except Exception:
         continue
-    # Leading key: value zone only (optional '---' fences) - the same
-    # front_fields contract as spec_anchor_check; an 'issue:' mention
-    # inside the prose body must not count as a declaration.
-    lines = body.splitlines()
-    start = 1 if lines and lines[0].strip() == "---" else 0
-    for ln in lines[start:]:
-        s = ln.strip()
-        if s == "---" or s.startswith("#"):
-            break
-        m = re.match(r"^issue\s*:\s*([#\d,\s'\"]+)", ln)
-        if m:
-            have.update(x.strip().strip('"').strip("'").lstrip("#")
-                        for x in m.group(1).split(",")
-                        if x.strip().strip('"').strip("'").lstrip("#"))
-            break
-        if s and not re.match(r"^[A-Za-z_]+\s*:", ln):
-            break
+    have.update(str(n) for n in issue_numbers(front_fields(body).get("issue")))
 pending = [t for t in tasks if t not in have]
 print(json.dumps({"pending": pending, "have": sorted(have, key=int)}))
 PY

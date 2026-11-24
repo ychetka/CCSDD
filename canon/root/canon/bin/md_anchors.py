@@ -31,11 +31,33 @@ def gh_anchor(heading):
     return PUNCT_RE.sub("", heading.lower()).strip().replace(" ", "-")
 
 
+_FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
+
+
 def strip_fenced(body):
-    """Remove fenced code blocks (``` and ~~~) - headings inside them
-    are not anchors and links inside them are not live links."""
-    body = re.sub(r"```[\s\S]*?```", "", body)
-    return re.sub(r"~~~[\s\S]*?~~~", "", body)
+    """Remove fenced code blocks - headings inside them are not
+    anchors and links inside them are not live links.
+
+    Line automaton (same contract as design_spec_check.sh /
+    fidelity_check.sh): a fence opens on a leading run of >=3 of the
+    SAME marker char and closes only on a run of that char with
+    length >= the opening run. The lazy-regex form matched the first
+    three backticks of a ```` ````markdown ```` fence against an
+    inner ``` fence, unmasking the rest of the block."""
+    out = []
+    fchar = flen = None
+    for ln in body.splitlines():
+        s = ln.strip()
+        if fchar is not None:
+            if s and set(s) <= {fchar} and len(s) >= flen:
+                fchar = None
+            continue
+        m = _FENCE_RE.match(ln)
+        if m:
+            fchar, flen = m.group(1)[0], len(m.group(1))
+            continue
+        out.append(ln)
+    return "\n".join(out)
 
 
 def strip_nonlink(body):

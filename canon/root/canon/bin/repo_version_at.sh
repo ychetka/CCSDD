@@ -54,8 +54,27 @@ except Exception:
 # value like `[` or `["dep", "x"]` on its own line is section content,
 # not a boundary.
 _HDR = r"^\[\[?[A-Za-z0-9_.-][A-Za-z0-9_.'\" \t-]*\]\]?[ \t]*(?:#.*)?$"
+try:
+    import tomllib
+except ImportError:
+    tomllib = None
+def toml_get(body, *keys):
+    # Structural read first (3.11+): a regex can match 'version =' inside
+    # a multiline string or inline table; tomllib never can.
+    if tomllib is None:
+        return None
+    try:
+        d = tomllib.loads(body)
+        for k in keys:
+            d = d[k]
+        return d if isinstance(d, str) else None
+    except Exception:
+        return None
 body = show("pyproject.toml")
 if body:
+    v = toml_get(body, "project", "version")
+    if v:
+        print(v); sys.exit(0)
     m = re.search(r"(?ms)^\[project\](?:(?!" + _HDR + r").)*?^\s*version\s*=\s*[\"']([^\"']+)", body)
     if m:
         print(m.group(1)); sys.exit(0)
@@ -69,6 +88,9 @@ if body:
         pass
 body = show("Cargo.toml")
 if body:
+    v = toml_get(body, "package", "version")
+    if v:
+        print(v); sys.exit(0)
     m = re.search(r"(?ms)^\[package\](?:(?!" + _HDR + r").)*?^\s*version\s*=\s*[\"']([^\"']+)", body)
     if m:
         print(m.group(1)); sys.exit(0)

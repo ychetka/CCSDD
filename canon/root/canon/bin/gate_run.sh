@@ -119,6 +119,18 @@ PY
 fi
 case "$MF_PIN" in
   ok)
+    # The pin is only as good as the manifest itself - and the
+    # manifest is workspace-writable. When the deploy left an
+    # external stamp, the local manifest must hash to it before its
+    # 'ok' verdict means anything.
+    if [ -x "$CANON_DIR/bin/stamp_verify.sh" ]; then
+      SRC=0; "$CANON_DIR/bin/stamp_verify.sh" || SRC=$?
+      case "$SRC" in
+        0|3) ;;  # match, or unmanaged workspace (no stamp)
+        *) echo "gate_run: canon_manifest.json fails the external stamp check - manifest pins are self-attested, refusing" >&2
+           exit 1 ;;
+      esac
+    fi
     RUNNER=canon; SCRIPT_SRC=deployed
     BASE_SHA=$($SHA256_BIN "$DEPLOYED" | cut -d' ' -f1) ;;
   mismatch|unlisted)
@@ -246,6 +258,15 @@ DIRTY=$(git status --porcelain 2>/dev/null | grep -v -E \
 [ -z "$DIRTY" ] || { echo "gate_run: dirty worktree - refuse to attest" >&2; printf '%s\n' "$DIRTY" >&2; exit 1; }
 
 OUT=$(mktemp); SCRIPT_TMP=""
+# The executed check runs whatever code the PR carries (project
+# runner) or canon scripts that shell out to project tooling (canon
+# runner). Neither may see the caller's credentials: an agent-run
+# pytest with access to SSH_AUTH_SOCK could mint human_sign.sh
+# envelopes itself, and a forged GH_TOKEN leaks to any child.
+CHECK_ENV=(env -u SSH_AUTH_SOCK -u SSH_AGENT_PID -u SSH_ASKPASS \
+           -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN \
+           -u GITHUB_ENTERPRISE_TOKEN -u GL_TOKEN -u GITLAB_TOKEN \
+           -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN)
 if [ "$RUNNER" = canon ]; then
   SCRIPT_TMP=$(mktemp)
   if [ "$SCRIPT_SRC" = "blob" ]; then
@@ -254,13 +275,13 @@ if [ "$RUNNER" = canon ]; then
     cat "$DEPLOYED" > "$SCRIPT_TMP"
   fi
   CANON_DIR="$CANON_DIR" BASE="$CHILD_BASE" BASE_REF="$BASE_REF" \
-    bash "$SCRIPT_TMP" ${EXTRA[@]+"${EXTRA[@]}"} > "$OUT" 2>&1
+    "${CHECK_ENV[@]}" bash "$SCRIPT_TMP" ${EXTRA[@]+"${EXTRA[@]}"} > "$OUT" 2>&1
   RC=$?
 elif [ "$OPTIONAL" = "yes" ]; then
   echo "SKIP: $CHECK optional and unconfigured" > "$OUT"; RC=0
 else
   IFS=$'\t' read -r -a PARGV <<< "$ARGV"
-  "${PARGV[@]}" ${EXTRA[@]+"${EXTRA[@]}"} > "$OUT" 2>&1
+  "${CHECK_ENV[@]}" "${PARGV[@]}" ${EXTRA[@]+"${EXTRA[@]}"} > "$OUT" 2>&1
   RC=$?
 fi
 OUT_SHA=$($SHA256_BIN "$OUT" | cut -d' ' -f1)

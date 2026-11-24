@@ -91,15 +91,35 @@ ver = os.environ["VER"]
 # starting with '[' - a multiline array value (`[`/`["dep", "x"]` on
 # its own line) inside the section is content, not a boundary.
 _HDR = r"^\[\[?[A-Za-z0-9_.-][A-Za-z0-9_.'\" \t-]*\]\]?[ \t]*(?:#.*)?$"
+try:
+    import tomllib
+except ImportError:
+    tomllib = None
+def toml_get(body, *keys):
+    # Structural read-back (3.11+): the regex may have replaced a
+    # 'version =' line inside a multiline string or inline table -
+    # tomllib sees the REAL table field.
+    if tomllib is None:
+        return None
+    try:
+        d = tomllib.loads(body)
+        for k in keys:
+            d = d[k]
+        return d if isinstance(d, str) else None
+    except Exception:
+        return None
 candidates = [
-    ("pyproject.toml", r'(?ms)(^\[project\](?:(?!' + _HDR + r').)*?^\s*version\s*=\s*["\'])([^"\']+)(["\'])'),
+    ("pyproject.toml", r'(?ms)(^\[project\](?:(?!' + _HDR + r').)*?^\s*version\s*=\s*["\'])([^"\']+)(["\'])',
+     ("project", "version")),
     # package.json: anchor the key at top-level indent so a nested
     # "version" (engines/plugin config) can never shadow the root
     # field - and verify the write with json.loads afterwards.
-    ("package.json",   r'(?m)^([ \t]{1,4}"version"\s*:\s*")([^"]+)(")'),
-    ("Cargo.toml",     r'(?ms)(^\[package\](?:(?!' + _HDR + r').)*?^\s*version\s*=\s*["\'])([^"\']+)(["\'])'),
+    ("package.json",   r'(?m)^([ \t]{1,4}"version"\s*:\s*")([^"]+)(")',
+     None),
+    ("Cargo.toml",     r'(?ms)(^\[package\](?:(?!' + _HDR + r').)*?^\s*version\s*=\s*["\'])([^"\']+)(["\'])',
+     ("package", "version")),
 ]
-for path, pat in candidates:
+for path, pat, toml_path in candidates:
     if not os.path.isfile(path):
         continue
     body = open(path, encoding="utf-8").read()
@@ -116,6 +136,21 @@ for path, pat in candidates:
                 continue
         except Exception:
             continue
+    elif toml_path and tomllib is not None:
+        # Structural post-check, same idea as package.json: when the
+        # ORIGINAL is valid TOML, the rewritten text must also parse
+        # and read `ver` back at the real table path - a regex hit
+        # inside a multiline string/inline table is a miss, not a
+        # silent write. An unparseable original has no structural
+        # field to corrupt, so the regex write stands (the file's
+        # 'version' is textual-only anyway).
+        try:
+            tomllib.loads(body)
+            orig_parses = True
+        except Exception:
+            orig_parses = False
+        if orig_parses and toml_get(new, *toml_path) != ver:
+            continue   # regex hit text, not the real table field
     open(path, "w", encoding="utf-8").write(new)
     print(path)
     sys.exit(0)

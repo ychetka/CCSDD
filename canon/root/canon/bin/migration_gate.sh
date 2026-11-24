@@ -235,24 +235,44 @@ for f in ${deleted[@]+"${deleted[@]}"}; do
 done
 [ $fail -ne 0 ] && exit 1
 
-# Optional native dry-run, only via the project-declared command in
-# canon/project.json ("migration_dry_run_cmd"). The environment is
-# caller-controllable, so a DRY_RUN_CMD env var is never honored.
-# Fail closed: an existing but unreadable/malformed project.json is
-# an error, not a silent skip - a corrupted manifest must not weaken
-# the gate. Absent file = no dry-run declared, skip as before.
-DRY_RUN=""
+# Optional native dry-run, only via the project-declared argv in
+# canon/project.json: "migration_dry_run_argv" (list[str], preferred)
+# or the legacy "migration_dry_run_cmd" string (shlex-split, never
+# interpreted by a shell - pipes/redirects/$(...) inside it are NOT
+# supported). The environment is caller-controllable, so a
+# DRY_RUN_CMD env var is never honored. Fail closed: an existing but
+# unreadable/malformed project.json is an error, not a silent skip.
+DRY_ARGV=""
 if [ -f "$CANON_DIR/project.json" ]; then
   if ! command -v python3 >/dev/null 2>&1; then
     echo "MIGRATION GATE FAIL: python3 required to read $CANON_DIR/project.json" >&2
     exit 1
   fi
-  if ! DRY_RUN=$(HYGIENE_PJ="$CANON_DIR/project.json" python3 -I -c "import json,os; v=json.load(open(os.environ['HYGIENE_PJ'])).get('migration_dry_run_cmd','') or ''; print(v if isinstance(v,str) else '')" 2>/dev/null); then
+  if ! DRY_ARGV=$(HYGIENE_PJ="$CANON_DIR/project.json" python3 -I -c "
+import json, os, shlex
+pj = json.load(open(os.environ['HYGIENE_PJ']))
+v = pj.get('migration_dry_run_argv')
+if isinstance(v, list) and v and all(isinstance(x, str) and x for x in v):
+    argv = [str(x) for x in v]
+else:
+    s = pj.get('migration_dry_run_cmd') or ''
+    argv = shlex.split(s) if isinstance(s, str) and s.strip() else []
+# Shell heads make the argv a disguised 'bash -c' - the whole point
+# of the argv form is that no shell interprets the candidate string.
+head = argv[0].rsplit('/', 1)[-1] if argv else ''
+if head in {'sh','bash','zsh','dash','fish','env','eval','source'}:
+    print('ERR:shell-head'); raise SystemExit(0)
+print('\t'.join(argv))" 2>/dev/null); then
     echo "MIGRATION GATE FAIL: $CANON_DIR/project.json exists but is not valid JSON" >&2
     exit 1
   fi
 fi
-if [ -n "$DRY_RUN" ]; then
+if [ "$DRY_ARGV" = "ERR:shell-head" ]; then
+  echo "MIGRATION GATE FAIL: migration_dry_run_argv must exec a binary directly, not a shell (sh/bash/env/...)" >&2
+  exit 1
+fi
+if [ -n "$DRY_ARGV" ]; then
+  IFS=$'\t' read -r -a DARGV <<< "$DRY_ARGV"
   # The dry-run reads the WORKTREE while coverage checks read the
   # INDEX. Require parity on every migration-pattern path - a benign
   # unstaged shadow of a destructive staged blob would make the
@@ -271,8 +291,22 @@ if [ -n "$DRY_RUN" ]; then
     echo "nor 'gtimeout' is available on PATH - cannot bound it" >&2
     exit 1
   fi
-  echo "running project dry-run: $DRY_RUN"
-  "$TIMEOUT_BIN" 120 env DRY_RUN=1 bash -c "$DRY_RUN" || {
+  echo "running project dry-run: ${DARGV[*]}"
+  # The argv comes from a WRITABLE workspace file (project.json is
+  # RUNTIME_OK, not manifest-pinned): run it under env -i with a
+  # minimal whitelist so SSH_AUTH_SOCK / forge tokens / caller env
+  # never reach project-declared code executing under commit creds.
+  DRY_ENV=(
+    env -i
+    "PATH=${PATH:-/usr/bin:/bin}"
+    "HOME=${HOME:-/tmp}"
+    "TMPDIR=${TMPDIR:-/tmp}"
+    "LANG=${LANG:-C.UTF-8}"
+    "LC_ALL=${LC_ALL:-$LANG}"
+    "USER=${USER:-agent}"
+    "DRY_RUN=1"
+  )
+  "$TIMEOUT_BIN" 120 "${DRY_ENV[@]}" "${DARGV[@]}" || {
     echo "MIGRATION GATE FAIL: dry-run exited non-zero" >&2; exit 1; }
 fi
 

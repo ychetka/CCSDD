@@ -50,7 +50,12 @@ done
 # any verify path must fail, never exec a configured binary. And
 # core.sshCommand is pinned so ls-remote/fetch-adjacent ops cannot
 # run a repo-configured ssh wrapper.
-G="env GIT_PAGER=cat git --no-pager -c core.pager=cat -c diff.external= -c core.fsmonitor=false -c gpg.program=/bin/false -c gpg.openpgp.program=/bin/false -c gpg.ssh.program=/bin/false -c core.sshCommand=/bin/false"
+# GIT_ATTR_NOSYSTEM drops the system-wide gitattributes; repo-local
+# .gitattributes diff/filter drivers cannot exec anyway because
+# --no-ext-diff/--no-textconv are pinned on every diff-family call
+# and cat-file's filter flags are whitelisted out. --no-optional-
+# locks keeps read paths from writing index/lock state.
+G="env GIT_PAGER=cat GIT_ATTR_NOSYSTEM=1 git --no-pager --no-optional-locks -c core.pager=cat -c diff.external= -c core.fsmonitor=false -c gpg.program=/bin/false -c gpg.openpgp.program=/bin/false -c gpg.ssh.program=/bin/false -c core.sshCommand=/bin/false"
 
 case "$op" in
   diff)
@@ -61,6 +66,37 @@ case "$op" in
   ls-files|ls-remote|blame|cat-file|for-each-ref)
     case "$op" in
       log|show|blame) exec $G "$op" --no-ext-diff --no-textconv "$@";;
+      cat-file)
+        # Whitelist, not blacklist: --textconv/--filters run repo-
+        # configured drivers (clean/smudge/textconv exec) and
+        # --batch* reads an attacker-shaped stdin stream. Read-only
+        # introspection needs only the fixed-arity forms.
+        for a in "$@"; do
+          case "$a" in
+            -e|-t|-s|-p|-size|--batch-all-objects|\
+            blob|tree|commit|tag) :;;
+            --*)  die "git_ro: cat-file flag not allowed: $a";;
+            *)    :;;   # object spec / path
+          esac
+        done
+        exec $G cat-file "$@";;
+      for-each-ref)
+        # --shell/--perl/--python/--tcl quote values INTO a script
+        # fragment; the canonical consumers only need --format
+        # placeholders. Whitelist the flags.
+        for a in "$@"; do
+          case "$a" in
+            --format|--format=*|--sort|--sort=*|--count|--count=*|\
+            --merged|--merged=*|--no-merged|--no-merged=*|\
+            --points-at|--points-at=*|--contains|--contains=*|\
+            --no-contains|--no-contains=*|\
+            --omit-empty|--ignore-case|--stdin|\
+            refs/*) :;;
+            -*)   die "git_ro: for-each-ref flag not allowed: $a";;
+            *)    :;;   # pattern
+          esac
+        done
+        exec $G for-each-ref "$@";;
       ls-remote)
         # A URL arg selects the transport: 'ext::<cmd>' runs an
         # arbitrary helper and 'ssh://'|'host:path' would honor a

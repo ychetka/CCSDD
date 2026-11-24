@@ -203,7 +203,7 @@ for i, (line, path) in enumerate(items(), 1):
             # Value after : or = - placeholders are documentation,
             # not leaked credentials. Secret-class rules use the
             # canonical scanner's placeholder set.
-            val = re.split(r"[:=]", m.group(0), 1)[-1].strip().strip("'\"")
+            val = re.split(r"[:=]", m.group(0), maxsplit=1)[-1].strip().strip("'\"")
             _ph = SECRET_PLACEHOLDER if cls == "secret" else PLACEHOLDER_RE
             if _ph.match(val):
                 continue

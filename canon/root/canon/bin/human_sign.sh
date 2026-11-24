@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # human_sign.sh - human approval envelopes via an SSH signature
 # (ssh-agent resident key - the private key never enters the
-# workspace filesystem, so a workspace agent under the same UID
-# cannot mint a signoff).
+# workspace filesystem; and init/sign additionally require an
+# interactive TTY or CCSDD_HUMAN_TTY=1 plus policy.exec.deny, so a
+# workspace agent sharing the UID and the agent socket still cannot
+# mint a signoff).
 #
 #   human_sign.sh init  [--key <pubkey-file>]
 #   human_sign.sh sign  --verdict <v> --artifact <sha256|sha1|file>
@@ -32,7 +34,10 @@
 # artifact/verdict equality and a 7-day freshness window; consume()
 # additionally records the nonce into a store (default
 # canon/human_signoffs/.used_nonces) under flock so a captured
-# envelope cannot be replayed onto a later merge.
+# envelope cannot be replayed onto a later merge; a consumed nonce
+# is dead for ALL artifacts (no same-hash exemption - a rollback to
+# the signed file state must need a fresh signature), and the
+# envelope file itself is renamed to <name>.consumed.
 # init REFUSES to overwrite an existing allowed_signers: key
 # rotation is a deliberate out-of-band act (delete the file by hand
 # first). A workspace agent under the same UID could otherwise swap
@@ -58,6 +63,21 @@ while [ $# -gt 0 ]; do
 done
 
 die() { echo "human_sign: $1" >&2; exit 2; }
+
+# init/sign mint or rotate the trust root - they are HUMAN verbs.
+# SSH_AUTH_SOCK is reachable by every process under the same UID, so
+# policy.exec.deny alone is not enough (an agent can invoke the
+# script via a shell the deny list does not model). Require a real
+# terminal on stdin+stdout, or CCSDD_HUMAN_TTY=1 set out-of-band by
+# the human (remote-laptop paste flows set it explicitly in their
+# own shell). Agents run without a TTY and without that variable.
+case "$MODE" in
+init|sign)
+  if [ "${CCSDD_HUMAN_TTY:-}" != "1" ] && { [ ! -t 0 ] || [ ! -t 1 ]; }; then
+    die "'$MODE' requires an interactive terminal (or CCSDD_HUMAN_TTY=1) - humans only"
+  fi
+  ;;
+esac
 
 artifact_sha() {  # file path | 40-hex sha1 | 64-hex sha256 -> hex digest
   local a="$1"
@@ -227,11 +247,13 @@ if not (-300 <= age <= float(os.environ["WINDOW"])):
 store = os.environ["NONCE_STORE"]
 consume = os.environ.get("CONSUME") == "1"
 # Store format: '<nonce>|<artifact_hash>' per line (legacy bare
-# '<nonce>' lines still replay-block). Binding the artifact makes
-# consume idempotent: the same envelope re-presented for the SAME
-# artifact after a post-consume pipeline failure is a retry, not a
-# replay; the same nonce on a DIFFERENT artifact is a replay.
-used = {}
+# '<nonce>' lines still replay-block). A consumed nonce is DEAD for
+# every later verify - no same-artifact exemption: the contract
+# envelope binds the FILE hash, so a nonce burned for contract.py@H1
+# would otherwise re-authorize any future PR that rolls the file
+# back to H1. Post-merge retries re-run repo_release.sh only; the
+# merge path never needs a second verify of a consumed envelope.
+used = set()
 if os.path.isfile(store):
     # shared flock on the read path: a concurrent consume's check+
     # append must not race a verify that reads a half-written file.
@@ -241,15 +263,9 @@ if os.path.isfile(store):
             ln = ln.strip()
             if not ln:
                 continue
-            n, _, art = ln.partition("|")
-            used[n] = art or None
+            used.add(ln.partition("|")[0])
 if e["nonce"] in used:
-    if used[e["nonce"]] == sha:
-        ALREADY = True
-    else:
-        sys.exit("human_sign: envelope nonce already consumed (replay)")
-else:
-    ALREADY = False
+    sys.exit("human_sign: envelope nonce already consumed (replay)")
 sig_raw = base64.b64decode(e["signature_b64"])
 tmp = tempfile.mkdtemp(prefix="ccsdd-verify.")
 try:
@@ -267,31 +283,26 @@ try:
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
 if consume:
-    if ALREADY:
-        # Idempotent re-consume: a merge that consumed the nonce and
-        # then failed downstream (release step) can be retried
-        # without forcing the human to re-sign the same artifact.
-        print(f"human_sign: envelope OK - '{e['verdict']}' for artifact {sha[:16]}.. (nonce already consumed for this artifact)")
-        raise SystemExit(0)
     os.makedirs(os.path.dirname(store), exist_ok=True)
     # flock around check+append: concurrent merges must not both
     # pass the replay check before either records the nonce.
     with open(store, "a+") as fh:
         fcntl.flock(fh, fcntl.LOCK_EX)
         fh.seek(0)
-        again = False
         for ln in fh:
-            ln = ln.strip()
-            if not ln:
-                continue
-            n, _, art = ln.partition("|")
-            if n == e["nonce"]:
-                if art == sha:
-                    again = True
-                    break
+            if ln.strip() and ln.strip().partition("|")[0] == e["nonce"]:
                 sys.exit("human_sign: envelope nonce already consumed (replay)")
-        if not again:
-            fh.write(e["nonce"] + "|" + sha + "\n")
+        fh.write(e["nonce"] + "|" + sha + "\n")
+    # The envelope file itself is spent too: leaving a consumed
+    # signoff on disk would let a later PR re-present it (the nonce
+    # check would still catch a verify, but the file lying around is
+    # a replay artifact, not evidence). Rename, don't delete - the
+    # .consumed name keeps an audit trail.
+    if os.path.isfile(env):
+        try:
+            os.replace(env, env + ".consumed")
+        except OSError:
+            pass
 print(f"human_sign: envelope OK - '{e['verdict']}' for artifact {sha[:16]}..")
 PY
   ) || exit 2

@@ -12,9 +12,10 @@
 # packages exceed the kernel's single-argument limit.
 #
 # Deterministic behaviour before the answer returns:
-#   1. classifies the call from the addressee (architect-partner and
-#      code-reviewer are ALWAYS Audit; other partners default
-#      Consult). --class may only raise Consult->Audit.
+#   1. classifies the call from the addressee (partners.json roles
+#      with profile "Audit" - ex-architect-partner - are ALWAYS
+#      Audit; other partners default Consult). --class may only
+#      raise Consult->Audit.
 #   2. enforces limits from canon/config/policy.json (gateway.*):
 #      Audit - audit_max_per_key calls per --audit-key (terminal
 #      refusal); Consult - consult_daily_max_per_partner per partner
@@ -299,8 +300,15 @@ def _refund():
     # error) must not consume irreplaceable budget - return the
     # increments in one short transaction. A refund failure must
     # never mask the original error.
+    # INDEPENDENT connection: this also runs inside a signal handler
+    # (_sigkill_refund) where 'con' may sit mid-transaction - a
+    # second BEGIN on it would raise OperationalError and lose the
+    # refund.
+    rcon = None
     try:
-        gw_store.counters_refund(con, spent_keys)
+        rcon = gw_store.connect(db_path)
+        gw_store.counters_refund(rcon, spent_keys)
+        gw_store.inflight_clear(rcon, CALL_ID)
     except Exception as re_:
         # A refund failure must never mask the original error, but it
         # must not be silent either - log it for postmortem.
@@ -308,7 +316,8 @@ def _refund():
               file=sys.stderr)
     finally:
         try:
-            gw_store.inflight_clear(con, CALL_ID)
+            if rcon is not None:
+                rcon.close()
         except Exception:
             pass
 

@@ -144,9 +144,16 @@ publish_tag_release() {
     else
       "$GH" release create "$tag" --generate-notes >/dev/null 2>&1
     fi || {
-      GH_NAME=$(basename "$GH" 2>/dev/null || printf 'gh')
-      printf '{"status":"error","failure_class":"upstream_error","message":"tag pushed but %s release create failed - create release for %s manually"}' "$GH_NAME" "$tag"
-      return 14; }
+      # Race with a repo release workflow (release.yml on
+      # pull_request:closed) or a parallel repo_release.sh: the loser
+      # gets HTTP 422 already_exists on create - but a now-visible
+      # release IS the outcome we wanted, not a failure.
+      if ! "$GH" release view "$tag" >/dev/null 2>&1; then
+        GH_NAME=$(basename "$GH" 2>/dev/null || printf 'gh')
+        printf '{"status":"error","failure_class":"upstream_error","message":"tag pushed but %s release create failed - create release for %s manually"}' "$GH_NAME" "$tag"
+        return 14
+      fi
+    }
   fi
   record_release_history "$tag" "$sha"
   TAG="$tag" SHA_V="$sha" NOTE_V="${note:-}" python3 -I -c 'import json,os
@@ -283,24 +290,11 @@ PY
 # the leading key:value zone only - body text/code blocks cannot
 # inject contract fields. user_visible: false fragments are consumed
 # by the release but never folded into CHANGELOG. ---
-FRAG_META=$(FRAGS="$FRAGS" SHA="$SHA" TOP="$TOP" python3 -I - <<'PY'
-import json, os, re, subprocess
+FRAG_META=$(FRAGS="$FRAGS" SHA="$SHA" TOP="$TOP" CANON_DIR="$CANON_DIR" python3 -I - <<'PY'
+import json, os, re, subprocess, sys
 top, sha = os.environ["TOP"], os.environ["SHA"]
-def front_fields(body):
-    fields = {}
-    lines = body.splitlines()
-    start = 1 if lines and lines[0].strip() == "---" else 0
-    for ln in lines[start:]:
-        s = ln.strip()
-        if not s:
-            continue
-        if s == "---":
-            break
-        m = re.match(r"^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$", s)
-        if not m:
-            break
-        fields[m.group(1).lower()] = m.group(2).strip().strip('"').strip("'")
-    return fields
+sys.path.insert(0, os.path.join(os.environ.get("CANON_DIR") or "", "bin"))
+from changes_parser import front_fields
 meta = {}
 # FRAGS is newline-joined; whitespace-splitting would corrupt
 # fragment paths containing spaces.

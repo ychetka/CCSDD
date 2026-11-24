@@ -63,6 +63,7 @@ cp "$CANON_DIR/bin/ship_commit.sh" "$CANON_DIR/bin/migration_gate.sh" \
    "$CANON_DIR/bin/migration_pattern.sh" "$CANON_DIR/bin/hygiene_check.sh" \
    "$CANON_DIR/bin/cycle_log.sh" "$CANON_DIR/bin/reader_digest.sh" \
    "$CANON_DIR/bin/secret_scan.py" "$CANON_DIR/bin/md_anchors.py" \
+   "$CANON_DIR/bin/changes_parser.py" \
    "$SCRATCH/canon/bin/"
 echo '{"text_language":"en"}' > "$SCRATCH/canon/project.json"
 
@@ -201,6 +202,7 @@ REPO2="$SCRATCH/repo2"; mkdir -p "$REPO2/canon/bin" "$REPO2/src" "$REPO2/db/migr
 cp "$CANON_DIR/bin/ship_commit.sh" "$CANON_DIR/bin/migration_gate.sh" \
    "$CANON_DIR/bin/migration_pattern.sh" "$CANON_DIR/bin/hygiene_check.sh" \
    "$CANON_DIR/bin/secret_scan.py" "$CANON_DIR/bin/md_anchors.py" \
+   "$CANON_DIR/bin/changes_parser.py" \
    "$REPO2/canon/bin/"
 echo '{"text_language":"en"}' > "$REPO2/canon/project.json"
 printf 'docs/\n' > "$REPO2/canon/scope_whitelist.txt"
@@ -625,6 +627,7 @@ for f in gate_run panel_verdict panel_gate spec_anchor_check docs_check \
   cp "$CANON_DIR/bin/$f.sh" "$PANEL_DIR/canon/bin/"
 done
 cp "$CANON_DIR/bin/secret_scan.py" "$CANON_DIR/bin/md_anchors.py" \
+   "$CANON_DIR/bin/changes_parser.py" \
    "$CANON_DIR/bin/gw_store.py" "$PANEL_DIR/canon/bin/"
 cp "$CANON_DIR/forge/test.sh" "$CANON_DIR/forge/github.sh" \
    "$CANON_DIR/forge/gitlab.sh" "$PANEL_DIR/canon/forge/"
@@ -1171,6 +1174,7 @@ T76D="$SCRATCH/t76"; mkdir -p "$T76D/canon/bin"
 cp "$CANON_DIR/bin/verify_constraints.sh" "$CANON_DIR/bin/roadmap_hash.sh" \
    "$CANON_DIR/bin/spec_anchor_check.sh" "$CANON_DIR/bin/human_sign.sh" \
    "$CANON_DIR/bin/secret_scan.py" "$CANON_DIR/bin/md_anchors.py" \
+   "$CANON_DIR/bin/changes_parser.py" \
    "$T76D/canon/bin/"
 (cd "$T76D" && git init -q -b main . && git config user.email t@t \
   && git config user.name t && git commit -q --allow-empty -m init \
@@ -1204,6 +1208,7 @@ T77D="$SCRATCH/t77"; mkdir -p "$T77D/canon/bin"
 cp "$CANON_DIR/bin/verify_constraints.sh" "$CANON_DIR/bin/roadmap_hash.sh" \
    "$CANON_DIR/bin/spec_anchor_check.sh" "$CANON_DIR/bin/human_sign.sh" \
    "$CANON_DIR/bin/secret_scan.py" "$CANON_DIR/bin/md_anchors.py" \
+   "$CANON_DIR/bin/changes_parser.py" \
    "$T77D/canon/bin/"
 (cd "$T77D" && git init -q -b main . && git config user.email t@t \
   && git config user.name t && git commit -q --allow-empty -m init \

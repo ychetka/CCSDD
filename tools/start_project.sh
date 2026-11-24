@@ -226,6 +226,31 @@ with open(stamp, "w", encoding="utf-8") as fh:
 print(f"canon: canary {token} stamped into manifest + rules tail")
 PY
 
+# External root-of-trust stamp: the in-workspace canon_manifest.json
+# is writable by the agent, so sha256 pins inside it only raise
+# tampering from a one-file edit to a two-file edit. Record the
+# manifest hash OUTSIDE the workspace - check_setup.sh and the gate
+# scripts (stamp_verify.sh) compare against it.
+python3 - "$WORKSPACE" <<'PY'
+import datetime, hashlib, json, os, sys
+ws = sys.argv[1]
+home = os.environ.get("HOME") or "/tmp"
+key = hashlib.sha256(os.path.realpath(ws).encode()).hexdigest()
+d = os.path.join(home, ".config", "ccsdd", "workspaces")
+os.makedirs(d, mode=0o700, exist_ok=True)
+os.chmod(d, 0o700)
+local = os.path.join(ws, "canon", "canon_manifest.json")
+rec = {"workspace": os.path.realpath(ws),
+       "manifest_sha256": hashlib.sha256(open(local, "rb").read()).hexdigest(),
+       "stamped_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
+dst = os.path.join(d, key + ".json")
+with open(dst, "w", encoding="utf-8") as fh:
+    json.dump(rec, fh, indent=2)
+    fh.write("\n")
+os.chmod(dst, 0o600)
+print(f"canon: external stamp -> {dst}")
+PY
+
 # gitignore block: canon files are deployed, not tracked.
 python3 - "$MANIFEST" "$WORKSPACE/.gitignore" <<'PY'
 import json, sys
@@ -319,7 +344,10 @@ if gi_stage:
 c = subprocess.run(
     ["git", "-C", top, "-c", "user.name=canon-onboard",
      "-c", "user.email=canon-onboard@local",
-     "commit", "-q", "-m",
+     # --no-verify: a repo's own pre-commit/commit-msg hooks (e.g.
+     # ticket-number policies) must not veto this infra commit and
+     # leave a half-staged .gitignore behind.
+     "commit", "-q", "--no-verify", "-m",
      "chore(canon): untrack canon-deployed paths"],
     capture_output=True, text=True)
 if c.returncode == 0:

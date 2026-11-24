@@ -23,7 +23,7 @@ PR="${1:?usage: repo_status_check.sh <pr_number>}"
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 GH_BIN="$("$CANON_DIR/bin/gh_id.sh" merge)"
 
-GH_OUT=$("$GH_BIN" pr view "$PR" --json statusCheckRollup,mergeable,headRefOid,author,reviewRequests,files 2>/dev/null) || {
+GH_OUT=$("$GH_BIN" pr view "$PR" --json statusCheckRollup,mergeable,headRefOid,author,reviewRequests 2>/dev/null) || {
   echo '{"status":"error","failure_class":"upstream_error","message":"gh pr view failed"}'
   exit 1
 }
@@ -33,10 +33,20 @@ GH_OUT=$("$GH_BIN" pr view "$PR" --json statusCheckRollup,mergeable,headRefOid,a
 # invisible. Numeric id ordering resolves submittedAt
 # second-resolution ties deterministically.
 REVIEWS_JSONL=$(mktemp "${TMPDIR:-/tmp}/ccsdd-reviews.XXXXXX")
-trap 'rm -f "$REVIEWS_JSONL"' EXIT
+PR_FILES=$(mktemp "${TMPDIR:-/tmp}/ccsdd-prfiles.XXXXXX")
+trap 'rm -f "$REVIEWS_JSONL" "$PR_FILES"' EXIT
 "$GH_BIN" api "repos/{owner}/{repo}/pulls/${PR}/reviews?per_page=100" \
   --paginate --jq '.[] | @json' > "$REVIEWS_JSONL" 2>/dev/null || {
   echo '{"status":"error","failure_class":"upstream_error","message":"reviews fetch failed"}'
+  exit 1
+}
+# The file list paginates too: `--json files` is a GraphQL array and
+# truncates at 100 nodes, so a .changes/ fragment landing as file
+# 101 of a large PR would report risk_high:false on a risk:high
+# delta. REST /pulls/<n>/files paginates fully.
+"$GH_BIN" api "repos/{owner}/{repo}/pulls/${PR}/files?per_page=100" \
+  --paginate --jq '.[].filename' > "$PR_FILES" 2>/dev/null || {
+  echo '{"status":"error","failure_class":"upstream_error","message":"PR files fetch failed"}'
   exit 1
 }
 CFG=$(CANON_DIR="$CANON_DIR" python3 -I -c 'import json,os
@@ -65,17 +75,17 @@ except Exception:
 # key:value only, same parser contract as issue_merge's FRAG_SCAN.
 # Fragment bodies come from the PR head via the contents API so the
 # report does not depend on the local checkout having the branch.
-RISK_HIGH=$(GH_OUT="$GH_OUT" GH_BIN="$GH_BIN" python3 -I -c '
+RISK_HIGH=$(GH_OUT="$GH_OUT" GH_BIN="$GH_BIN" PR_FILES="$PR_FILES" python3 -I -c '
 import json, os, re, subprocess, base64
 try:
     d = json.loads(os.environ["GH_OUT"])
 except Exception:
     print("no"); raise SystemExit(0)
 head = d.get("headRefOid") or ""
-frags = [f.get("path") for f in (d.get("files") or [])
-         if (f.get("path") or "").startswith(".changes/")
-         and f.get("path").endswith(".md")
-         and not f.get("path").endswith("/README.md")]
+frags = [l.strip() for l in open(os.environ["PR_FILES"], encoding="utf-8")
+         if l.strip().startswith(".changes/")
+         and l.strip().endswith(".md")
+         and not l.strip().endswith("/README.md")]
 risk = False
 for p in frags:
     # Local object first: the PR head is usually fetched already, and

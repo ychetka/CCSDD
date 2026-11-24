@@ -34,8 +34,11 @@ done
 [ "$MODE" = "--compute" ] && [ -z "$ITEM" ] && { echo "roadmap_hash: --compute needs --item" >&2; exit 2; }
 [ -f "$RM" ] || { echo "roadmap_hash: $RM missing" >&2; exit 1; }
 
-MODE="${MODE#--}" RM="$RM" ITEM="$ITEM" python3 -I - <<'PY'
+MODE="${MODE#--}" RM="$RM" ITEM="$ITEM" CANON_DIR="$CANON_DIR" python3 -I - <<'PY'
 import hashlib, os, re, sys
+
+sys.path.insert(0, os.path.join(os.environ["CANON_DIR"], "bin"))
+from changes_parser import item_field_lines
 
 rm_path, mode, want = os.environ["RM"], os.environ["MODE"], os.environ["ITEM"]
 # additional_acceptance_notes is mutable state the Architecture
@@ -81,21 +84,29 @@ def canon_hash(block_lines):
         kept.pop()
     return hashlib.sha256("\n".join(kept).encode()).hexdigest()
 
+def item_meta(start, end):
+    # Header-zone fields only (changes_parser.item_field_lines): a
+    # '- status:' / '- frozen_hash:' bullet inside a G/W/T fenced
+    # code example or in prose below the first '###' heading is not
+    # a declaration - it must not decide legality or satisfy verify.
+    return item_field_lines(lines[start:end])
+
 def block_status(start, end):
-    # `status:` inside the item block decides whether a missing
+    # `status:` inside the item header decides whether a missing
     # frozen_hash is legal: a draft item is pre-freeze by contract
     # (harness.md §4 'do not freeze criteria until its verdict'), so
     # verify skips it. Any non-draft status (or a draft that already
     # carries a recorded hash) is verified fail-closed.
-    m = re.search(r"(?m)^\s*-\s*status\s*:\s*(\S+)",
-                  "\n".join(lines[start:end]))
-    return (m.group(1) if m else "").strip().lower()
+    for _, key, val in item_meta(start, end):
+        if key == "status":
+            m = re.match(r"(\S+)", val or "")
+            return (m.group(1) if m else "").strip().lower()
+    return ""
 
 def cur_hash(start, end):
-    for l in lines[start:end]:
-        m = FH.match(l)
-        if m:
-            v = (m.group(2) or "").strip()
+    for _, key, val in item_meta(start, end):
+        if key == "frozen_hash":
+            v = (val or "").strip()
             if not PLACEHOLDER.match(v):
                 return v
     return None
@@ -128,7 +139,10 @@ for start, end, slug in blocks:
         if recorded is not None:
             continue
         done = False
-        for j in range(start, end):
+        for rel, key, _ in item_meta(start, end):
+            if key != "frozen_hash":
+                continue
+            j = start + rel
             m = FH.match(lines[j])
             if m:
                 lines[j] = f"{m.group(1)}{computed}"
