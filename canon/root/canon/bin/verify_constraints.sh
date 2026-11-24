@@ -23,20 +23,25 @@ VERIFY_PR="${VERIFY_PR:-}"
 if [ -n "$VERIFY_PR" ]; then
   case "$VERIFY_PR" in
     *[!0-9]*)
-      # URL form must name THIS repository's pull request - an
+      # URL form must name THIS repository's pull/merge request - an
       # unanchored glob would let a foreign repo's open PR satisfy
       # the link/label gates, and any whitespace/flag tails inject
-      # into the gh argv below. The slug comes from the github
-      # remote, never from the supplied URL itself.
-      REPO_SLUG=$(git remote -v 2>/dev/null \
-        | awk '$2 ~ /^https:\/\/github\.com[:/]|^git@github\.com:/ {print $2; exit}' \
-        | sed -E 's#^git@github\.com:##; s#^https://github\.com/##; s#\.git$##')
-      [ -n "$REPO_SLUG" ] || { echo "FAIL: VERIFY_PR is a URL but no github remote is configured"; exit 1; }
+      # into the gh argv below. Host+slug come from the configured
+      # remote (any forge), never from the supplied URL itself.
+      REMOTE_URL=$(git remote -v 2>/dev/null | awk '{print $2; exit}')
+      HOST_SLUG=$(RURL="$REMOTE_URL" python3 -I -c 'import os,re
+u = os.environ.get("RURL","")
+m = re.match(r"^(?:https?|git|ssh)://(?:[^@/]+@)?([^/:]+)[:/](.+?)(?:\.git)?/?$", u) \
+    or re.match(r"^[^@/]+@([^:]+):(.+?)(?:\.git)?/?$", u)
+print(m.group(1) + "/" + m.group(2) if m else "")')
+      [ -n "$HOST_SLUG" ] || { echo "FAIL: VERIFY_PR is a URL but no forge remote is configured"; exit 1; }
       case "$VERIFY_PR" in
-        "https://github.com/$REPO_SLUG/pull/"[0-9]*)
+        "https://$HOST_SLUG/pull/"[0-9]*|\
+        "https://$HOST_SLUG/-/merge_requests/"[0-9]*|\
+        "https://$HOST_SLUG/merge_requests/"[0-9]*)
           VERIFY_PR="${VERIFY_PR##*/}"
           case "$VERIFY_PR" in *[!0-9]*|'') echo "FAIL: VERIFY_PR URL has no numeric PR id"; exit 1 ;; esac ;;
-        *) echo "FAIL: VERIFY_PR must be a PR number or an https PR URL of $REPO_SLUG"; exit 1 ;;
+        *) echo "FAIL: VERIFY_PR must be a PR number or an https PR/MR URL of $HOST_SLUG"; exit 1 ;;
       esac ;;
     '') echo "FAIL: VERIFY_PR is empty"; exit 1 ;;
   esac
@@ -346,13 +351,14 @@ if [ -n "$CONTRACT_HITS" ]; then
         "restore the contract or stage its deletion so the sign-off gate can bind the change"
     fi
     ENVOK=0
-    for cand in "$CANON_DIR"/human_signoffs/contract_*.json \
-                "$CANON_DIR/human_signoffs/$BRANCH.json"; do
-      [ -f "$cand" ] || continue
-      [ -f "$HS" ] \
-        && bash "$HS" verify --envelope "$cand" --artifact "$ARTIFACT" \
-             --verdict approve >/dev/null 2>&1 && { ENVOK=1; break; }
-    done
+    # Only the envelope named for THIS contract path counts - the
+    # $BRANCH.json envelope is the manual_gate/risk:high sign-off for
+    # the whole PR (artifact = head sha), never a contract sign-off;
+    # letting it double here would conflate two different envelopes.
+    cand="$CANON_DIR/human_signoffs/contract_$(printf '%s' "$cfile" | tr '/' '_').json"
+    [ -f "$cand" ] && [ -f "$HS" ] \
+      && bash "$HS" verify --envelope "$cand" --artifact "$ARTIFACT" \
+           --verdict approve >/dev/null 2>&1 && ENVOK=1
     # Envelope filename must encode the full contract path - every
     # module's contract is literally named contract.py|ts, so
     # basename-derived names collide across modules.

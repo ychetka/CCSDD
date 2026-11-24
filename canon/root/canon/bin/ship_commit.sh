@@ -233,6 +233,18 @@ if [ -f "$WL" ]; then
     exit 2
   fi
 fi
+# Fail-closed on task branches: an item branch exists only to ship
+# scoped work, so 'no whitelist anywhere' is not "gate off" there -
+# it is evidence the whitelist was deleted (a live whitelist in the
+# worktree/index/HEAD, or the shared canon one, is mandatory). On
+# non-task branches the gate stays optional as before.
+CUR_BR=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+if [[ "$CUR_BR" =~ ^(epic_)?issue_[0-9]+- ]] \
+    && [ ! -f "$WL" ] && [ "$wl_in_index" -eq 0 ] && [ "$wl_in_head" -eq 0 ]; then
+  echo "SCOPE_GATE: task branch '$CUR_BR' has no active scope whitelist" >&2
+  echo "($WL and $CANON_DIR/scope_whitelist.txt both absent - a deleted whitelist does not disarm the gate)" >&2
+  exit 2
+fi
 if [ -f "$WL" ] || [ "$wl_in_index" -eq 1 ] || [ "$wl_in_head" -eq 1 ]; then
   # When the staged set touches the whitelist path itself (edit,
   # rename, delete - --name-only shows the old path too), every OTHER

@@ -1027,12 +1027,14 @@ if [ -n "$CONTRACT_TOUCHED" ]; then
     else
       CART=$(printf 'delete|%s|%s' "$cpath" "$EXPECTED" | sha256sum | cut -d' ' -f1)
     fi
-    for CENV in "$CANON_DIR/human_signoffs/contract_$(printf '%s' "$cpath" | tr '/' '_').json" \
-                "$CANON_DIR/human_signoffs/${HEAD_BRANCH:-}.json"; do
-      [ -f "$CENV" ] \
-        && "$CANON_DIR/bin/human_sign.sh" consume --envelope "$CENV" \
-             --artifact "$CART" --verdict approve >/dev/null 2>&1 || true
-    done
+    # Only the contract-named envelope is burned here - $BRANCH.json
+    # is the manual_gate/risk:high PR sign-off (artifact = head sha),
+    # already consumed by the manual_gate step above; it is never a
+    # contract envelope.
+    CENV="$CANON_DIR/human_signoffs/contract_$(printf '%s' "$cpath" | tr '/' '_').json"
+    [ -f "$CENV" ] \
+      && "$CANON_DIR/bin/human_sign.sh" consume --envelope "$CENV" \
+           --artifact "$CART" --verdict approve >/dev/null 2>&1 || true
   done <<< "$CONTRACT_TOUCHED"
 fi
 

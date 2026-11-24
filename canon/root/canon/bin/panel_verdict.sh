@@ -232,10 +232,20 @@ fi
 BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/panel-verdict.XXXXXX.md")
 trap 'rm -f "$BODY_FILE"' EXIT INT TERM
 printf '%s' "$BODY" > "$BODY_FILE"
-CURL_OUT=$(bash "$ADAPTER" finding_post --pr "$PR" --body-file "$BODY_FILE" 2>/dev/null)
+CURL_OUT=$(bash "$ADAPTER" finding_post --pr "$PR" --body-file "$BODY_FILE" 2>/dev/null) || {
+  json_err upstream_error "finding_post failed - refusing to publish a signal without its findings comment"
+  exit 1
+}
 CURL=$(printf '%s' "$CURL_OUT" | python3 -I -c 'import json,sys
 try: print(json.loads(sys.stdin.read() or "{}").get("url") or "")
 except Exception: print("")' 2>/dev/null)
+# A signal without its findings comment is an unresolvable verdict:
+# the aggregator must cite blockers from the comment body, and a
+# failed post must never leave a bare success|failure signal.
+[ -n "$CURL" ] || {
+  json_err upstream_error "finding_post returned no comment url"
+  exit 1
+}
 
 DESCR=$(printf '%s' "$DERIVED" | python3 -I -c 'import json,sys
 d=json.loads(sys.stdin.read()); n=len(d["findings"])

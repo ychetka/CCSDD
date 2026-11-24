@@ -31,9 +31,13 @@ op="$1"; shift
 # object file; --paginate can invoke the configured pager.
 for a in "$@"; do
   case "$a" in
-    --output*|--work-tree*|--git-dir*|--exec*|--upload-pack*|--no-index*|\
-    --ext-diff*|--textconv*|--filters*|--paginate*|-O*|--find-object*) \
+    --output*|-o|--work-tree*|--git-dir*|--exec*|--upload-pack*|--no-index*|\
+    --ext-diff*|--textconv*|--filters*|--paginate*|-O*|--find-object*|\
+    --config-env*|--verify-signatures*|--show-signature*) \
       die "forbidden flag in read-only op: $a";;
+    # %(contents:signature) & friends spawn gpg.program on every
+    # formatted object - formatter strings never reach this wrapper.
+    *%*signature*|*%G?*|*%GG*|*%GS*) die "signature formatters forbidden in git_ro";;
   esac
 done
 
@@ -41,8 +45,12 @@ done
 # attacker-controlled repo config (core.pager, diff.external,
 # diff.<driver>.command, textconv drivers) cannot execute code.
 # core.fsmonitor is blanked too - git status/diff would otherwise
-# spawn the monitor hook binary recorded in the repo config.
-G="env GIT_PAGER=cat git --no-pager -c core.pager=cat -c diff.external= -c core.fsmonitor=false"
+# spawn the monitor hook binary recorded in the repo config. The gpg
+# programs are /bin/false: %(contents:signature)/%G* formatters and
+# any verify path must fail, never exec a configured binary. And
+# core.sshCommand is pinned so ls-remote/fetch-adjacent ops cannot
+# run a repo-configured ssh wrapper.
+G="env GIT_PAGER=cat git --no-pager -c core.pager=cat -c diff.external= -c core.fsmonitor=false -c gpg.program=/bin/false -c gpg.openpgp.program=/bin/false -c gpg.ssh.program=/bin/false -c core.sshCommand=/bin/false"
 
 case "$op" in
   diff)
@@ -53,6 +61,16 @@ case "$op" in
   ls-files|ls-remote|blame|cat-file|for-each-ref)
     case "$op" in
       log|show|blame) exec $G "$op" --no-ext-diff --no-textconv "$@";;
+      ls-remote)
+        # A URL arg selects the transport: 'ext::<cmd>' runs an
+        # arbitrary helper and 'ssh://'|'host:path' would honor a
+        # repo-configured ssh wrapper - remote NAMES only.
+        for a in "$@"; do
+          case "$a" in
+            *::*|*://*|*@*:*|*://*|*@*) die "git_ro: ls-remote takes remote names, not URLs";;
+          esac
+        done
+        exec $G ls-remote "$@";;
       *)              exec $G "$op" "$@";;
     esac;;
   branch)

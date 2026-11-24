@@ -78,11 +78,22 @@ if not bb:
 print(bb)
 PY
 )
-# Remote like issue_merge: the forge remote is not always 'origin'.
-REMOTE=$(git remote -v | awk '$2 ~ /github\.com|gitlab\./ {print $1; exit}')
+# Remote like issue_merge: detect by the repo slug (forge-agnostic),
+# fall back to a github/gitlab URL heuristic, then 'origin'.
+REPO_SLUG=$(PJ="$PJ" python3 -I -c 'import json,os,re
+try:
+  u = json.load(open(os.environ["PJ"])).get("repo","")
+  m = re.search(r"[:/]([^/:]+/[^/:]+?)(?:\.git)?$", u)
+  print(m.group(1) if m else "")
+except Exception: print("")' 2>/dev/null)
+REMOTE=""
+if [ -n "$REPO_SLUG" ]; then
+  REMOTE=$(git remote -v | awk -v s="$REPO_SLUG" 'index($2, s) {print $1; exit}')
+fi
+[ -z "$REMOTE" ] && REMOTE=$(git remote -v | awk '$2 ~ /github\.com|gitlab\./ {print $1; exit}')
 [ -z "$REMOTE" ] && REMOTE=$(git remote get-url origin >/dev/null 2>&1 && echo origin)
 BREF=""
-for r in ${REMOTE:+"$REMOTE/$BB"} "origin/$BB" "$BB"; do
+for r in ${REMOTE:+"$REMOTE/$BB"} $(git remote | sed "s#\$#/$BB#") "$BB"; do
   git rev-parse --verify --quiet "$r" >/dev/null 2>&1 && { BREF=$r; break; }
 done
 FLOOR_FAIL=""; FLOOR_NOTES="{}"

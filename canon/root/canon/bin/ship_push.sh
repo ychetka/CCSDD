@@ -2,6 +2,7 @@
 # ship_push.sh - push wrapper. Verifies branch convention and clean
 # state, pushes current branch with upstream tracking.
 set -uo pipefail
+CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
 cd "$TOP"
 

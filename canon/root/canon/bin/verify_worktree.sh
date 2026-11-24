@@ -177,18 +177,30 @@ if [ -n "$BASELINE_CMD" ]; then
       TIMEOUT_BIN=$(command -v timeout || command -v gtimeout || true)
       # The baseline executes project code (the test command and the
       # deps it loads) in whatever context invoked us - possibly the
-      # merge/review credential. Scrub forge tokens from its env so
-      # baseline code cannot read them; the check only needs a test
-      # verdict, not API access.
-      CREDS_OFF="env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GL_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u DEVIN_API_KEY -u OPENAI_API_KEY -u ANTHROPIC_API_KEY"
+      # merge/review credential. A NAMED denylist cannot cover
+      # deployment-specific credentials (GITLAB_PRIVATE_TOKEN,
+      # AWS_SECRET_ACCESS_KEY, custom review.gh_bin vars) or
+      # SSH_AUTH_SOCK - the agent socket would let baseline code sign
+      # artifacts as the human. env -i with a minimal whitelist is
+      # the only sound boundary; the check needs a test verdict,
+      # not API access.
+      SAFE_ENV=(
+        env -i
+        "PATH=$WT/.venv/bin:$WT/node_modules/.bin:$PATH"
+        "HOME=${HOME:-/tmp}"
+        "TMPDIR=${TMPDIR:-/tmp}"
+        "LANG=${LANG:-C.UTF-8}"
+        "LC_ALL=${LC_ALL:-$LANG}"
+        "USER=${USER:-agent}"
+        ${PYTHONPATH:+"PYTHONPATH=$PYTHONPATH"}
+        ${NODE_PATH:+"NODE_PATH=$NODE_PATH"}
+      )
       if [ -n "$TIMEOUT_BIN" ]; then
-        (cd "$WT" && PATH="$WT/.venv/bin:$WT/node_modules/.bin:$PATH" \
-          $CREDS_OFF "$TIMEOUT_BIN" 600 bash -c "$BASELINE_CMD") >"$OUT" 2>&1
+        (cd "$WT" && "${SAFE_ENV[@]}" "$TIMEOUT_BIN" 600 bash -c "$BASELINE_CMD") >"$OUT" 2>&1
       else
         # No timeout binary (BSD/macOS without coreutils): run
         # unbounded rather than fail the baseline outright.
-        (cd "$WT" && PATH="$WT/.venv/bin:$WT/node_modules/.bin:$PATH" \
-          $CREDS_OFF bash -c "$BASELINE_CMD") >"$OUT" 2>&1
+        (cd "$WT" && "${SAFE_ENV[@]}" bash -c "$BASELINE_CMD") >"$OUT" 2>&1
       fi
       BRC=$?
       BTAIL=$(tail -n 20 "$OUT" 2>/dev/null | python3 -I -c 'import json,sys;print(json.dumps(sys.stdin.buffer.read().decode("utf-8","replace")))')

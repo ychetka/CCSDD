@@ -61,10 +61,12 @@ die() { echo "human_sign: $1" >&2; exit 2; }
 
 artifact_sha() {  # file path | 40-hex sha1 | 64-hex sha256 -> hex digest
   local a="$1"
-  if [ -f "$a" ]; then
-    python3 -I -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$a"
-  elif [[ "$a" =~ ^[0-9a-fA-F]{40}$ ]] || [[ "$a" =~ ^[0-9a-fA-F]{64}$ ]]; then
+  # Hex format is checked BEFORE the file test: a file whose name
+  # collides with a 40/64-hex digest must not shadow the digest.
+  if [[ "$a" =~ ^[0-9a-fA-F]{40}$ ]] || [[ "$a" =~ ^[0-9a-fA-F]{64}$ ]]; then
     printf '%s' "${a,,}"
+  elif [ -f "$a" ]; then
+    python3 -I -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$a"
   else
     die "--artifact must be a file, sha256 or git sha, got: ${a:0:40}"
   fi
@@ -91,7 +93,10 @@ init)
   # init - a deliberate act performed by the human, not the agent.
   [ -f "$SIGNERS" ] && die "allowed_signers already exists at $SIGNERS - remove it manually to rotate (init never overwrites)"
   mkdir -p "$CONF_DIR"; chmod 700 "$CONF_DIR"
-  printf 'human %s\n' "$(cat "$KEYFILE")" > "$SIGNERS"
+  # noclobber closes the check-then-create window: a file appearing
+  # between the test and the write is a race, not an overwrite.
+  ( set -C; printf 'human %s\n' "$(cat "$KEYFILE")" > "$SIGNERS" ) \
+    || die "allowed_signers appeared during init - refusing to overwrite"
   chmod 600 "$SIGNERS"
   echo "human_sign: allowed_signers written: $SIGNERS"
   echo "human_sign: keep the private key in ssh-agent only - it must"

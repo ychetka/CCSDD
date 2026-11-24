@@ -19,7 +19,8 @@ if [ -z "$BASE" ]; then
   BB=$(PJ="$PJ" python3 -I -c 'import json,os
 try: print(json.load(open(os.environ["PJ"])).get("base_branch") or "main")
 except Exception: print("main")' 2>/dev/null)
-  for r in "origin/$BB" "$BB"; do
+  # Probe every configured remote, not just 'origin'.
+  for r in $(git remote 2>/dev/null | sed "s#\$#/$BB#") "$BB"; do
     git rev-parse --verify --quiet "$r" >/dev/null 2>&1 && { BASE=$r; break; }
   done
 fi

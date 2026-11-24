@@ -25,10 +25,15 @@ if [ -z "$BASE" ]; then
   BB=$(PJ="$PJ" python3 -I -c 'import json,os
 try: print(json.load(open(os.environ["PJ"])).get("base_branch") or "main")
 except Exception: print("main")' 2>/dev/null)
-  for r in "origin/$BB" "$BB"; do
+  # Probe every configured remote, not just 'origin'.
+  for r in $(git remote 2>/dev/null | sed "s#\$#/$BB#") "$BB"; do
     git rev-parse --verify --quiet "$r" >/dev/null 2>&1 && { BASE=$r; break; }
   done
 fi
+# An unresolved base must NOT auto-pass as 'AXES: none' - an empty
+# delta and an uncomputable delta are different outcomes; only the
+# first may pass.
+[ -n "$BASE" ] || { echo "FAIL: cannot resolve base ref for fidelity delta check" >&2; exit 1; }
 
 DELTA_FILES=""
 if [ -n "$BASE" ]; then

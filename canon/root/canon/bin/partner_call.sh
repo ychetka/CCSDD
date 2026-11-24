@@ -298,6 +298,18 @@ def _timeout(_sig, _frm):
     raise TimeoutError(f"partner call exceeded {call_timeout}s")
 signal.signal(signal.SIGALRM, _timeout)
 signal.alarm(call_timeout)
+# SIGTERM/SIGHUP while blocked in call_tool leaves the spent quota
+# stranded until the NEXT caller's pid-reaper notices the orphan -
+# which may be never. Refund in the handler before dying; if the
+# handler itself fails mid-refund, the inflight row still lets the
+# reaper finish the job.
+def _sigkill_refund(_sig, _frm):
+    try:
+        _refund()
+    finally:
+        os._exit(4)
+for _s in (signal.SIGTERM, signal.SIGHUP):
+    signal.signal(_s, _sigkill_refund)
 try:
     result = PartnerMCPServer(partner_id=partner).call_tool(tool, call_args)
     try:

@@ -24,10 +24,16 @@ if [ -z "$BASE" ]; then
   BB=$(PJ="$PJ" python3 -I -c 'import json,os
 try: print(json.load(open(os.environ["PJ"])).get("base_branch") or "main")
 except Exception: print("main")' 2>/dev/null)
-  for r in "origin/$BB" "$BB"; do
+  # Probe every configured remote, not just 'origin' - a mirror or
+  # fork-named remote is as valid a base as the default.
+  for r in $(git remote 2>/dev/null | sed "s#\$#/$BB#") "$BB"; do
     git rev-parse --verify --quiet "$r" >/dev/null 2>&1 && { BASE=$r; break; }
   done
 fi
+# An unresolved base must not degrade the metrics floor to a SKIP:
+# 'no changed files' and 'cannot compute the delta' are different
+# outcomes, and only the first may pass.
+[ -n "$BASE" ] || { echo "FAIL: cannot resolve base ref for quality delta check" >&2; exit 1; }
 CHANGED=""
 [ -n "$BASE" ] && CHANGED=$(git diff --name-only --diff-filter=ACMR "$BASE"...HEAD 2>/dev/null \
   | grep -E '\.(py|js|ts|jsx|tsx|go|java|rb|php|cs|c|cc|cpp|rs)$' | grep -v -E '(^|/)(test_|.*_test\.|.*\.test\.|tests?/)' || true)

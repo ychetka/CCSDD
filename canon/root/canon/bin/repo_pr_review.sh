@@ -232,6 +232,20 @@ case "$EVENT" in
   request-changes) GHEVENT=REQUEST_CHANGES ;;
   comment) GHEVENT=COMMENT ;;
 esac
+# The --json-file path enforces the severity invariant; the CLI form
+# must too - an APPROVE carrying [CRITICAL]/[BLOCKER]/[UNCERTAIN] or
+# a contradicting REQUEST_CHANGES verdict is invalid, same rule.
+if [ "$GHEVENT" = "APPROVE" ] && [ -n "$BODY" ]; then
+  BODY="$BODY" python3 -I - <<'PY' || exit 2
+import json, os, re, sys
+b = os.environ["BODY"]
+if re.search(r"\**\[(?:CRITICAL|BLOCKER|UNCERTAIN)\]\**", b, re.I) or \
+   re.search(r"(?im)^\s*(?:\*\*verdict:?\*\*\s*:?|verdict:)\s*REQUEST_CHANGES", b):
+    print(json.dumps({"status":"error","failure_class":"malformed_input",
+                      "message":"APPROVE cannot carry [CRITICAL]/[BLOCKER]/[UNCERTAIN] or a REQUEST_CHANGES verdict - submit request-changes or comment"}))
+    sys.exit(2)
+PY
+fi
 HEAD_SHA=$("$GH_BIN" pr view "$PR" --json headRefOid --jq .headRefOid 2>/dev/null)
 [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {
   echo '{"status":"error","failure_class":"upstream_error","message":"cannot resolve PR head sha"}'; exit 1; }

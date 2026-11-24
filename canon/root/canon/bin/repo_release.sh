@@ -474,11 +474,23 @@ for f in os.environ["FRAGS"].splitlines():
     # lists and fenced code stay valid markdown.
     if txt:
         first, _, rest = txt.partition("\n")
-        entry = "- " + first.strip()
-        if rest.strip():
-            entry += "\n" + "\n".join(
+        f_strip = first.strip()
+        if f_strip.startswith(("```", "~~~")):
+            # A fragment opening on a fenced block is folded as an
+            # indented body under a bare bullet - '- ```' would break
+            # the changelog's markdown structure.
+            entry = "-\n" + "\n".join(
                 ("  " + ln if ln.strip() else ln)
-                for ln in rest.splitlines())
+                for ln in txt.splitlines())
+        else:
+            # Strip a leading list marker: '- - item' is not an
+            # entry, it is a markdown defect.
+            f_clean = re.sub(r"^[-*]\s+", "", f_strip)
+            entry = "- " + f_clean
+            if rest.strip():
+                entry += "\n" + "\n".join(
+                    ("  " + ln if ln.strip() else ln)
+                    for ln in rest.splitlines())
         entries.append(entry)
 cl = os.path.join(wt, "CHANGELOG.md")
 old = open(cl, encoding="utf-8").read() if os.path.isfile(cl) else "# Changelog\n"

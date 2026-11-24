@@ -35,14 +35,26 @@ except Exception:
         h = re.sub(r"\{#[^}]+\}", "", h)
         return re.sub(r"[^\w\- ]", "", h.strip().lower()).replace(" ", "-")
 bad = []
+# Enumerate via git, not os.walk: a symlinked dir inside the repo
+# would let os.walk escape the top (docs in a worktree's .worktrees
+# or an attacker's symlink farm get linted too), and untracked junk
+# should not gate a PR anyway. ls-files covers tracked + staged.
+import subprocess
+top_real = os.path.realpath(top)
 md_files = []
-for root, dirs, files in os.walk(top):
-    rel_root = os.path.relpath(root, top)
-    skip = {".git", "node_modules", "vendor", "dist", ".worktrees", ".venv", "__pycache__"}
-    dirs[:] = [d for d in dirs if d not in skip]
-    for f in files:
-        if f.endswith(".md"):
-            md_files.append(os.path.join(root, f))
+try:
+    out = subprocess.run(
+        ["git", "ls-files", "--", "*.md"],
+        cwd=top, capture_output=True, text=True, check=True).stdout
+except Exception:
+    out = ""
+for rel in out.splitlines():
+    p = os.path.realpath(os.path.join(top, rel))
+    # containment: a symlinked path must still resolve inside top
+    if os.path.commonpath([p, top_real]) != top_real:
+        continue
+    if p.endswith(".md"):
+        md_files.append(p)
 
 def anchors_of(path):
     # Shared anchor collection from md_anchors.collect_anchors - the

@@ -61,11 +61,14 @@ done
 # project.json base_branch. Guessing 'main' on an epic-bound PR would
 # attest the whole epic diff, not the task diff.
 BASE_BRANCH=$(CANON_DIR="$CANON_DIR" python3 -I -c 'import json,os
-try: print(json.load(open(os.environ["CANON_DIR"],"project.json"))).get("base_branch") or "main")
+try: print(json.load(open(os.path.join(os.environ["CANON_DIR"],"project.json"))).get("base_branch") or "main")
 except Exception: print("main")' 2>/dev/null)
 BASE_REF="${BASE_REF:-}"
 if [ -z "$BASE_REF" ]; then
-  for cand_ref in "origin/$BASE_BRANCH" "$BASE_BRANCH"; do
+  # Probe every configured remote, not just 'origin': a mirror or a
+  # fork-named remote would leave BASE_REF empty and attest the
+  # whole branch history instead of the delta.
+  for cand_ref in $(git remote 2>/dev/null | sed "s#\$#/$BASE_BRANCH#") "$BASE_BRANCH"; do
     git rev-parse --verify --quiet "$cand_ref" >/dev/null 2>&1 && { BASE_REF=$cand_ref; break; }
   done
 fi

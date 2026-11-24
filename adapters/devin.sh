@@ -88,11 +88,38 @@ if pj:
         # invocation while Exec(python3 exploit.py) stays denied.
         if not isinstance(val, list) or not val:
             continue
+        # Conservative token gate BEFORE shlex.join: an element
+        # carrying shell metachars (;&|`$>< space newline) would
+        # compile into an Exec() entry that a prefix-matching runtime
+        # may parse as a shell fragment - broadening, not pinning,
+        # execution. Anything not matching a strict argv-token shape
+        # is skipped (fail-closed: the runtime just denies it).
+        import re
+        _tok = re.compile(r"^[A-Za-z0-9_./:=+@%,~-]+$")
+        elems = [str(a) for a in val]
+        if not all(_tok.match(e) for e in elems):
+            continue
+        # Two head rules:
+        # - POSIX shells are never allowed with ANY argv: 'Exec(sh -c
+        #   x)' as a prefix also matches 'sh -c "x; rm -rf"' - the -c
+        #   payload is a prefix-extension channel. (An 'sh -c <script>'
+        #   check would not pass the token gate anyway.)
+        # - A BARE interpreter head (Exec(python3)) permits 'python3
+        #   anything', reopening exec.deny. With arguments the prefix
+        #   is pinned (Exec(python3 -m pytest) cannot exec 'python3
+        #   exploit.py'), so only the single-element case is rejected.
+        head = elems[0].rsplit("/", 1)[-1]
+        if head in {"sh", "bash", "zsh", "dash", "fish", "env"}:
+            continue
+        if len(elems) == 1 and head in {
+                "python", "python2", "python3", "node", "nodejs",
+                "deno", "bun", "perl", "ruby", "php", "npx"}:
+            continue
         # shlex.join preserves argument boundaries: a plain " ".join
         # drops quoting, so ["pytest","-k","not slow"] compiled as
         # "pytest -k not slow" would never match the real argv and
         # could accidentally allow a broader prefix than declared.
-        argv = shlex.join(str(a) for a in val)
+        argv = shlex.join(elems)
         if argv and "\x00" not in argv:
             allow.append(f"Exec({argv})")
 # Dedup preserving order: a gate_checks command head that repeats a

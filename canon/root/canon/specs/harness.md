@@ -258,8 +258,8 @@ here). Mandatory `## Spec impact` section with `adds:` /
 there is no behavioral impact). Anchor semantics:
 
 - `adds:` — the requirement appears in the spec with this PR; the
-  anchor does NOT have to resolve before merge (it will appear as
-  the delta body in the target file).
+  anchor MUST resolve in the target file on the PR branch (it need
+  not exist on the base branch).
 - `modifies:` — the requirement exists on the base branch and
   changes; the anchor MUST resolve before merge.
 - `removes:` — the requirement is deleted; the anchor MUST resolve
@@ -920,9 +920,11 @@ model families + developer confirmation before PR assembly.
   `canon/roadmap.md` exists, from the item's roadmap block as an
   authoritative fallback — a scenario dropped from the fragment
   cannot downgrade the gate to a SKIP. A bare mention is not
-  coverage: the id must sit inside a test definition (`def test_`,
-  `it(`, `test(`, `describe(`) without a skip/TODO marker in its
-  context — a comment or a skipped test does not count.
+  coverage: the id must sit inside an executable test definition
+  (`def test_`, `it(`, `test(`, including parameterized
+  `.each`/`.concurrent` forms) without a skip/TODO marker in its
+  context — a suite container (`describe(`, `context(`), a comment
+  outside a test body, or a skipped test does not count.
 - One test = one G/W/T scenario.
 - Mocks — at the contract boundary (HTTP clients, DB repositories
   via the module interface); a mock implements a type from
