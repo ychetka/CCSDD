@@ -241,6 +241,7 @@ manifest = {
         "signed_by": "human",
         "ts": env.get("ts"),
     },
+    "file_count": len(tree_entries),
     "files": [r for r, _ in tree_entries],
     "sha256": {r: s for r, s in tree_entries},
 }
@@ -273,7 +274,10 @@ if orch_env:
     manifest["orchestrator_dir"] = orch_env
     manifest["orchestrator_sha256"] = osh
 tmp = manifest_p.with_suffix(".tmp")
-tmp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+# sort_keys=True keeps the published manifest byte-comparable with
+# tools/regen_manifest.py output - two writers, one format.
+tmp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2,
+                          sort_keys=True) + "\n")
 os.replace(tmp, manifest_p)
 
 row = {

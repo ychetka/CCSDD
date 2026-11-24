@@ -514,10 +514,10 @@ git add "$VFILE" CHANGELOG.md 2>/dev/null || \
 # folded into the release yet stays pending for the next one.
 if [ -n "$FRAGS" ]; then
   while IFS= read -r frag; do
-    [ -n "$frag" ] && git rm -q -- "$frag" 2>/dev/null || {
-      echo "$frag"; }
-  done <<< "$FRAGS" | grep . && \
-    json_error upstream_error "git rm of consumed fragments failed - release commit aborted"
+    [ -z "$frag" ] && continue
+    git rm -q -- "$frag" 2>/dev/null \
+      || json_error upstream_error "git rm of consumed fragment '$frag' failed - release commit aborted"
+  done <<< "$FRAGS"
 fi
 git add -A .changes 2>/dev/null || true
 git -c user.name="release-bot" -c user.email="release-bot@local" commit -q -m "release: $TAG" || \

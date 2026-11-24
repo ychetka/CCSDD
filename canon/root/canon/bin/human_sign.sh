@@ -81,7 +81,13 @@ init)
       KEYFILE=$(mktemp -t ccsdd-pubkey.XXXXXX)
       trap 'rm -f "$KEYFILE"' EXIT
       printf '%s\n' "$PUBKEY" > "$KEYFILE"
-      echo "human_sign: using first ssh-agent identity: $(cut -c1-32 "$KEYFILE")..."
+      # Show exactly WHICH identity is being registered: the agent may
+      # hold several keys and head -1 picks only the first. Type +
+      # fingerprint + comment are unambiguous; a truncated blob is not.
+      echo "human_sign: using first ssh-agent identity:"
+      echo "  type/comment: $(awk '{print $1, $NF}' "$KEYFILE")"
+      ssh-keygen -lf "$KEYFILE" 2>/dev/null | sed 's/^/  fingerprint: /' \
+        || echo "  fingerprint: (ssh-keygen could not parse the key)"
     else
       die "no --key given and ssh-agent has no identities (ssh-add first)"
     fi
@@ -117,7 +123,7 @@ sign)
   # (namespaces=..., cert-authority, ...): $2/$3 are not reliably the
   # key fields - take the first field matching an OpenSSH key type and
   # the blob after it.
-  PUBKEY=$(awk '$1=="human"{for(i=2;i<NF;i++) if($i~/^(ssh-|ecdsa-|sk-)/){print $i" "$(i+1);exit}}' "$SIGNERS")
+  PUBKEY=$(awk '$1=="human"{for(i=2;i<NF;i++) if($i~/^(ssh-|ecdsa-|sk-)/||$i~/cert-v01@openssh\.com$/){print $i" "$(i+1);exit}}' "$SIGNERS")
   [ -n "$PUBKEY" ] || die "no 'human' principal in $SIGNERS"
   printf '%s\n' "$PUBKEY" > "$TMPD/key.pub"
   ssh-keygen -Y sign -f "$TMPD/key.pub" -n "$NS" "$TMPD/msg" 2>/dev/null \

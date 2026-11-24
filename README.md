@@ -44,11 +44,14 @@ self-contained (docs + diagrams).
   that point / Пунктирные стрелки в `👨‍💻` = в этом месте решение
   принимает человек.
 - Mermaid `.mmd` sources are authoritative; `.svg` are generated.
-  Render: `mmdc -i <mmd> -o <svg>` then `python3 <repo>/svg_legend.py <svg>`
-  (injects the table legend below the diagram; idempotent).
-  `svg_legend.py` is an external toolchain script — it lives outside
-  the product package at the repository root and is NOT part of the
-  deployable canon.
+  Render: `mmdc -i <mmd> -o <svg>` then optionally
+  `python3 svg_legend.py <svg>` (injects the table legend below the
+  diagram; idempotent). `svg_legend.py` is an optional author/CI-side
+  helper that lives at the *development* repository root
+  (`ai_controller_2/svg_legend.py`) — it is not tracked inside this
+  package; skip the step when it is absent (the SVG is valid either
+  way).
   / Исходники `.mmd` первичны; `.svg` генерируются: `mmdc` +
-  `svg_legend.py` (табличная легенда под диаграммой; внешний
-  тулчейн-скрипт в корне репозитория, не входит в деплой-пакет).
+  опционально `svg_legend.py` (табличная легенда под диаграммой;
+  скрипт лежит в корне dev-репозитория `ai_controller_2`, в пакет
+  не входит — при его отсутствии шаг пропускается).

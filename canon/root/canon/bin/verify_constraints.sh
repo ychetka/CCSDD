@@ -513,11 +513,38 @@ done
 # it), so merged task issues never reach the gate. Derive the extra
 # numbers from the .changes fragments this diff actually ships.
 if [ -n "$BASE" ]; then
-  DIFF_ISSUES=$(git -c core.quotepath=false diff --name-only --no-renames \
-      "$BASE"...HEAD 2>/dev/null \
-    | grep -E '^\.changes/[^/]+\.md$' \
-    | while read -r f; do git show "HEAD:$f" 2>/dev/null; done \
-    | grep -oE '^\s*issue:\s*[#0-9, "]+' | grep -oE '[0-9]+' || true)
+  # Front-zone `issue:` keys only - the same contract as
+  # spec_anchor_check/issue_merge (optional '---' fence, 'key :'
+  # spacing, quoted values, zone ends at '---' or '#'). Scanning the
+  # fragment BODY would let a prose 'issue: 999' line hijack the
+  # risk_flags gate for an unrelated issue.
+  DIFF_ISSUES=$(BASE="$BASE" python3 -I - <<'PY'
+import os, re, subprocess
+names = subprocess.run(
+    ["git","-c","core.quotepath=false","diff","--name-only",
+     "--no-renames", os.environ["BASE"]+"...HEAD"],
+    capture_output=True, text=True).stdout.splitlines()
+out = []
+for f in names:
+    f = f.strip()
+    if not (re.fullmatch(r"\.changes/[^/]+\.md", f)
+            and not f.endswith("/README.md")):
+        continue
+    body = subprocess.run(["git","show","HEAD:"+f],
+                          capture_output=True, text=True).stdout
+    lines = body.splitlines()
+    start = 1 if lines and lines[0].strip() == "---" else 0
+    for ln in lines[start:]:
+        s = ln.strip()
+        if s == "---" or s.startswith("#"):
+            break
+        m = re.match(r"^issue\s*:\s*([#\d,\s'\"]+)", ln)
+        if m:
+            out += [x.strip().strip('"').strip("'").lstrip("#")
+                    for x in m.group(1).split(",")]
+print(" ".join(sorted({int(x) for x in out if x.isdigit()})))
+PY
+)
   for tok in $DIFF_ISSUES; do
     GWT_ISSUES="$GWT_ISSUES $((10#$tok))"
   done
@@ -686,11 +713,35 @@ print(" ".join(sorted(set(risky), key=int)))
 PY
 )
   if [ -n "$RISKY_ISSUES" ]; then
-    RISK_FRAGS=$(git -c core.quotepath=false diff --name-only --no-renames \
-        "$BASE"...HEAD 2>/dev/null \
-      | grep -E '^\.changes/[^/]+\.md$' \
-      | while read -r f; do git show "HEAD:$f" 2>/dev/null; done \
-      | grep -cE '^\s*risk:\s*high\b' || true)
+    # Front-zone 'risk: high' only (same contract as DIFF_ISSUES
+    # above): a 'risk: high' inside the fragment body is prose, not
+    # a declaration, and .changes/README.md is not a fragment.
+    RISK_FRAGS=$(BASE="$BASE" python3 -I - <<'PY'
+import os, re, subprocess
+names = subprocess.run(
+    ["git","-c","core.quotepath=false","diff","--name-only",
+     "--no-renames", os.environ["BASE"]+"...HEAD"],
+    capture_output=True, text=True).stdout.splitlines()
+n = 0
+for f in names:
+    f = f.strip()
+    if not (re.fullmatch(r"\.changes/[^/]+\.md", f)
+            and not f.endswith("/README.md")):
+        continue
+    body = subprocess.run(["git","show","HEAD:"+f],
+                          capture_output=True, text=True).stdout
+    lines = body.splitlines()
+    start = 1 if lines and lines[0].strip() == "---" else 0
+    for ln in lines[start:]:
+        s = ln.strip()
+        if s == "---" or s.startswith("#"):
+            break
+        if re.match(r"^risk\s*:\s*high\b", s):
+            n += 1
+            break
+print(n)
+PY
+)
     [ "${RISK_FRAGS:-0}" -gt 0 ] \
       && pass "roadmap risk_flags items carry a risk: high fragment" \
       || escalate "roadmap risk_flags set on issue(s) $RISKY_ISSUES but no .changes fragment declares 'risk: high'" \
