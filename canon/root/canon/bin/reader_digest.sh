@@ -40,7 +40,7 @@ fi
 [ -f "$FILE" ] || { echo '{"status":"error","failure_class":"not_found","message":"file missing"}'; exit 2; }
 
 if [ "$MODE" = emit ]; then
-  FILE="$FILE" python3 - <<'PY'
+  FILE="$FILE" python3 -I - <<'PY'
 import hashlib, json, os
 p = os.environ["FILE"]
 raw = open(p, "rb").read()
@@ -63,7 +63,7 @@ PY
 fi
 
 # verify mode
-FILE="$FILE" ATTEST="$ATTEST" python3 - <<'PY'
+FILE="$FILE" ATTEST="$ATTEST" python3 -I - <<'PY'
 import hashlib, json, os, sys
 p = os.environ["FILE"]
 src = os.environ["ATTEST"]

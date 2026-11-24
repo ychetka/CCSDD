@@ -34,7 +34,7 @@ fi
 
 # 2. project.json-declared file+regex
 PJ="$CANON_DIR/project.json"
-PJ_V=$(PJ="$PJ" python3 - 2>/dev/null <<'PY' || true
+PJ_V=$(PJ="$PJ" python3 -I - 2>/dev/null <<'PY' || true
 import json, os, sys
 try:
     v = (json.load(open(os.environ["PJ"], encoding="utf-8")).get("version") or {})
@@ -53,12 +53,12 @@ if [ -n "$PJ_V" ]; then
   # The declared file must be a normalized relative path inside the
   # repo - a project.json pointing at '../x' or '/etc/y' would make
   # the release commit write outside the worktree.
-  VFILE="$VFILE" python3 -c 'import os,sys
+  VFILE="$VFILE" python3 -I -c 'import os,sys
 vf = os.environ["VFILE"]
 n = os.path.normpath(vf)
 if os.path.isabs(vf) or n.startswith("..") or n in ("", "."):
     sys.exit(2)' || { echo "repo_version_set: unsafe version.file in project.json" >&2; exit 2; }
-  VER="$VER" VFILE="$VFILE" VREGEX="$VREGEX" python3 - <<'PY'
+  VER="$VER" VFILE="$VFILE" VREGEX="$VREGEX" python3 -I - <<'PY'
 import os, re, sys
 vf, vr, ver = os.environ["VFILE"], os.environ["VREGEX"], os.environ["VER"]
 try:
@@ -84,7 +84,7 @@ fi
 # anchors as repo_version_at.sh (pyproject [project], package.json,
 # Cargo [package], VERSION, setup.cfg [metadata]); divergent order or
 # an unanchored pattern writes the version the reader will not find.
-VER="$VER" python3 - <<'PY'
+VER="$VER" python3 -I - <<'PY'
 import json, os, re, sys
 ver = os.environ["VER"]
 candidates = [

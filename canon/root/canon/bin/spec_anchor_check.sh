@@ -24,7 +24,7 @@ ISSUE_LIST="${ISSUE_LIST:-}"; FRAG_LIST="${FRAG_LIST:-}"
 # it: without BASE_REF the base-existence checks below are blind.
 PJ="$CANON_DIR/project.json"
 if [ -z "$BASE_REF" ]; then
-  BB=$(PJ="$PJ" python3 -c 'import json,os
+  BB=$(PJ="$PJ" python3 -I -c 'import json,os
 try: print(json.load(open(os.environ["PJ"])).get("base_branch") or "main")
 except Exception: print("main")' 2>/dev/null)
   for r in "origin/$BB" "$BB"; do
@@ -70,7 +70,7 @@ fi
 #    non-empty '## Spec impact' (adds/modifies/removes lines or the
 #    bare '-' none-marker). CANONICAL contract - runs even when a repo
 #    adapter owns anchor resolution.
-FIELD_BAD=$(TOP="$TOP" PENDING_FRAGS="$PENDING_FRAGS" ISSUE_LIST="$ISSUE_LIST $FRAG_LIST" python3 - <<'PY'
+FIELD_BAD=$(TOP="$TOP" PENDING_FRAGS="$PENDING_FRAGS" ISSUE_LIST="$ISSUE_LIST $FRAG_LIST" python3 -I - <<'PY'
 import os, re
 top = os.environ["TOP"]
 frags = [l.strip() for l in os.environ.get("PENDING_FRAGS","").splitlines() if l.strip()]
@@ -168,7 +168,7 @@ fi
 # must exist under docs/specs/ in the working tree after the
 # change; removes targets must be gone (file or anchor) and must
 # have existed at the base.
-TOP="$TOP" PENDING_FRAGS="$PENDING_FRAGS" BASE="$BASE" BASE_REF="$BASE_REF" CANON_DIR="$CANON_DIR" python3 - <<'PY'
+TOP="$TOP" PENDING_FRAGS="$PENDING_FRAGS" BASE="$BASE" BASE_REF="$BASE_REF" CANON_DIR="$CANON_DIR" python3 -I - <<'PY'
 import os, re, subprocess, sys
 top = os.environ["TOP"]
 base_ref = os.environ.get("BASE_REF") or ""

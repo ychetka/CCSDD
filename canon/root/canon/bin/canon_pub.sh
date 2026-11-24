@@ -62,7 +62,7 @@ CAND="$CAND" ENV="$ENV" VER="$VER" MAXL="$MAXL" \
 CANON_ROOT="$CANON_ROOT" MANIFEST="$MANIFEST" HISTORY="$HISTORY" \
 ORCH_DIR="$ORCH_DIR" HS="$CANON_DIR/bin/human_sign.sh" \
 SCAN="$CANON_DIR/bin/secret_scan.py" \
-python3 - <<'PY'
+python3 -I - <<'PY'
 import datetime, hashlib, json, os, re, subprocess, sys, pathlib
 
 cand = pathlib.Path(os.environ["CAND"])

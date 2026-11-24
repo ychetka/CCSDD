@@ -56,7 +56,7 @@ done
 [[ "$CAND" =~ ^[0-9a-f]{40}$ ]] || { echo "gate_run: --candidate must be a 40-hex sha" >&2; exit 2; }
 
 # Base ref: the trusted source of canon gate scripts.
-BASE_BRANCH=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os
+BASE_BRANCH=$(CANON_DIR="$CANON_DIR" python3 -I -c 'import json,os
 try: print(json.load(open(os.path.join(os.environ["CANON_DIR"],"project.json"))).get("base_branch") or "main")
 except Exception: print("main")' 2>/dev/null)
 BASE_REF=""
@@ -79,7 +79,7 @@ elif [ -f "$DEPLOYED" ]; then
   RUNNER=canon
   BASE_SHA=$($SHA256_BIN "$DEPLOYED" | cut -d' ' -f1)
 else
-  ARGV=$(PJ="$PJ" CHECK="$CHECK" python3 -c 'import json,os
+  ARGV=$(PJ="$PJ" CHECK="$CHECK" python3 -I -c 'import json,os
 try:
     pj = json.load(open(os.environ["PJ"]))
     v = (pj.get("gate_checks") or {}).get(os.environ["CHECK"])
@@ -92,7 +92,7 @@ fi
 # (exit 0, note="optional"). Default is fail-closed.
 OPTIONAL=""
 if [ -z "$RUNNER" ]; then
-  OPTIONAL=$(PJ="$PJ" CHECK="$CHECK" python3 -c 'import json,os
+  OPTIONAL=$(PJ="$PJ" CHECK="$CHECK" python3 -I -c 'import json,os
 try:
     pj = json.load(open(os.environ["PJ"]))
     v = (pj.get("gate_checks") or {}).get(os.environ["CHECK"] + "_optional")
@@ -101,7 +101,7 @@ except Exception: print("")' 2>/dev/null)
 fi
 
 latest_record() {
-  JOURNAL="$JOURNAL" CHECK="$CHECK" CAND="$CAND" python3 - <<'PY'
+  JOURNAL="$JOURNAL" CHECK="$CHECK" CAND="$CAND" python3 -I - <<'PY'
 import json, os
 check, cand = os.environ["CHECK"], os.environ["CAND"]
 j = os.environ["JOURNAL"]
@@ -135,7 +135,7 @@ if [ "$CMD" = "verify" ]; then
     exit 0
   fi
   [ -n "$REC" ] || { echo "gate_run verify: no record for $CHECK @ ${CAND:0:8}" >&2; exit 4; }
-  echo "$REC" | REC_SHA="$BASE_SHA" ARGV="${ARGV:-}" python3 -c 'import json,os,sys
+  echo "$REC" | REC_SHA="$BASE_SHA" ARGV="${ARGV:-}" python3 -I -c 'import json,os,sys
 r = json.loads(sys.stdin.read() or "null") or {}
 if r.get("exit_code") != 0:
     print("gate_run verify: %s recorded exit_code=%s" % (r.get("check"), r.get("exit_code")), file=sys.stderr); sys.exit(1)
@@ -190,7 +190,7 @@ if [ "$RUNNER" = canon ]; then
     # gate script would otherwise attest itself.
     if [ -f "$CANON_DIR/canon_manifest.json" ]; then
       DEPLOYED="$DEPLOYED" CANON_PATH="$CANON_PATH" CANON_DIR="$CANON_DIR" \
-      python3 - <<'PY' || { echo "gate_run: $CANON_PATH failed manifest pin - refuse to execute tampered gate" >&2; exit 1; }
+      python3 -I - <<'PY' || { echo "gate_run: $CANON_PATH failed manifest pin - refuse to execute tampered gate" >&2; exit 1; }
 import hashlib, json, os, sys
 try:
     mf = json.load(open(os.path.join(os.environ["CANON_DIR"], "canon_manifest.json")))
@@ -223,7 +223,7 @@ exec 9>"$JOURNAL.lock"
 flock 9 || { echo "gate_run: cannot acquire lock" >&2; rm -f "$OUT" "$SCRIPT_TMP"; exit 1; }
 CANON_DIR="$CANON_DIR" OUT_SHA="$OUT_SHA" RC="$RC" CHECK="$CHECK" CAND="$CAND" \
   RUNNER="$RUNNER" BASE_SHA="$BASE_SHA" BASE_REF="$BASE_REF" ARGV="${ARGV:-}" \
-  NOTE="${NOTE:-}" python3 - <<'PY' >> "$JOURNAL"
+  NOTE="${NOTE:-}" python3 -I - <<'PY' >> "$JOURNAL"
 import datetime, hashlib, json, os, sys
 rec = {"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
        "check": os.environ["CHECK"],

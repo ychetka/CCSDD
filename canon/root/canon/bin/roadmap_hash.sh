@@ -34,7 +34,7 @@ done
 [ "$MODE" = "--compute" ] && [ -z "$ITEM" ] && { echo "roadmap_hash: --compute needs --item" >&2; exit 2; }
 [ -f "$RM" ] || { echo "roadmap_hash: $RM missing" >&2; exit 1; }
 
-MODE="${MODE#--}" RM="$RM" ITEM="$ITEM" python3 - <<'PY'
+MODE="${MODE#--}" RM="$RM" ITEM="$ITEM" python3 -I - <<'PY'
 import hashlib, os, re, sys
 
 rm_path, mode, want = os.environ["RM"], os.environ["MODE"], os.environ["ITEM"]

@@ -15,7 +15,7 @@ TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-
 cd "$TOP"
 
 json_error() {
-  python3 -c 'import json,sys;print(json.dumps({"status":"error","failure_class":sys.argv[1],"message":sys.argv[2]}))' "$1" "$2"
+  python3 -I -c 'import json,sys;print(json.dumps({"status":"error","failure_class":sys.argv[1],"message":sys.argv[2]}))' "$1" "$2"
   exit 1
 }
 
@@ -37,7 +37,7 @@ INFO=$("$GH" pr view "$PR" --json headRefName 2>"$INFO_ERR") || {
   json_error upstream_error "$(cat "$INFO_ERR" 2>/dev/null | head -c 300)"
 }
 rm -f "$INFO_ERR"
-HEAD_BRANCH=$(INFO="$INFO" python3 -c 'import json,os,sys;print((json.loads(os.environ["INFO"]) or {}).get("headRefName") or "")' 2>/dev/null)
+HEAD_BRANCH=$(INFO="$INFO" python3 -I -c 'import json,os,sys;print((json.loads(os.environ["INFO"]) or {}).get("headRefName") or "")' 2>/dev/null)
 
 case "$HEAD_BRANCH" in
   epic_issue_*) exec "$CANON_DIR/bin/epic_merge.sh" "$@" ;;

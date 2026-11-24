@@ -18,7 +18,7 @@ CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
 cd -P "$TOP"
 GH_BIN="${GH_BIN:-gh}"
-ALLOWED_GH=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os,re
+ALLOWED_GH=$(CANON_DIR="$CANON_DIR" python3 -I -c 'import json,os,re
 try:
     pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
     rev = pj.get("review") or {}
@@ -63,7 +63,7 @@ done
 if [ -n "$JFILE" ]; then
   [ -f "$JFILE" ] || { echo '{"status":"error","failure_class":"not_found","message":"--json-file missing"}'; exit 2; }
   # realpath -m is GNU-only - python3 is the portable canonicalizer.
-  JFILE=$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$JFILE")
+  JFILE=$(python3 -I -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$JFILE")
   SANIT=$(mktemp "${TMPDIR:-/tmp}/review-payload.XXXXXX.json")
   trap 'rm -f "$SANIT"' EXIT INT TERM
   # Resolve the CURRENT head before validation: the submitted review
@@ -77,7 +77,7 @@ if [ -n "$JFILE" ]; then
   # and submission): validate its shape, hygiene-gate every text
   # field, and write a sanitized copy that is what actually gets
   # submitted - the caller's file is never re-read by gh.
-  JFILE="$JFILE" SANIT="$SANIT" CANON_DIR="$CANON_DIR" HEAD_SHA="$HEAD_SHA" python3 - <<'PY' || {
+  JFILE="$JFILE" SANIT="$SANIT" CANON_DIR="$CANON_DIR" HEAD_SHA="$HEAD_SHA" python3 -I - <<'PY' || {
 import json, os, subprocess, sys, tempfile
 jfile = os.environ["JFILE"]
 try:
@@ -192,10 +192,10 @@ PY
   ERR=$("$GH_BIN" api -X POST "repos/{owner}/{repo}/pulls/$PR/reviews" --input "$SANIT" 2>&1)
   rc=$?
   if [ $rc -eq 0 ]; then
-    python3 -c 'import json,sys;print(json.dumps({"pr_number":int(sys.argv[1]),"event":"review","status":"ok"}))' "$PR"
+    python3 -I -c 'import json,sys;print(json.dumps({"pr_number":int(sys.argv[1]),"event":"review","status":"ok"}))' "$PR"
     exit 0
   fi
-  python3 -c 'import json,sys;print(json.dumps({"status":"error","failure_class":"upstream_error","message":sys.argv[1]}))' "$ERR"
+  python3 -I -c 'import json,sys;print(json.dumps({"status":"error","failure_class":"upstream_error","message":sys.argv[1]}))' "$ERR"
   exit 1
 fi
 
@@ -214,7 +214,7 @@ fi
 if [ -n "$BODY" ]; then
   HYGIENE_OUT=$(printf '%s\n' "$BODY" | "$CANON_DIR/bin/hygiene_check.sh")
   if [ $? -ne 0 ]; then
-    HYGIENE_OUT="$HYGIENE_OUT" python3 -c 'import json,os
+    HYGIENE_OUT="$HYGIENE_OUT" python3 -I -c 'import json,os
 try: v=json.loads(os.environ["HYGIENE_OUT"])
 except Exception: v={"raw": os.environ["HYGIENE_OUT"]}
 print(json.dumps({"status":"error","failure_class":"gate_blocked","violations":v.get("violations",v)}))'
@@ -235,15 +235,15 @@ esac
 HEAD_SHA=$("$GH_BIN" pr view "$PR" --json headRefOid --jq .headRefOid 2>/dev/null)
 [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {
   echo '{"status":"error","failure_class":"upstream_error","message":"cannot resolve PR head sha"}'; exit 1; }
-PAYLOAD=$(EVENT="$GHEVENT" BODY="$BODY" HEAD_SHA="$HEAD_SHA" python3 -c 'import json,os
+PAYLOAD=$(EVENT="$GHEVENT" BODY="$BODY" HEAD_SHA="$HEAD_SHA" python3 -I -c 'import json,os
 p = {"event": os.environ["EVENT"], "commit_id": os.environ["HEAD_SHA"]}
 if os.environ.get("BODY"): p["body"] = os.environ["BODY"]
 print(json.dumps(p))')
 ERR=$(printf '%s' "$PAYLOAD" | "$GH_BIN" api -X POST "repos/{owner}/{repo}/pulls/$PR/reviews" --input - 2>&1)
 rc=$?
 if [ $rc -eq 0 ]; then
-  python3 -c 'import json,sys;print(json.dumps({"pr_number":int(sys.argv[1]),"event":sys.argv[2],"status":"ok"}))' "$PR" "$EVENT"
+  python3 -I -c 'import json,sys;print(json.dumps({"pr_number":int(sys.argv[1]),"event":sys.argv[2],"status":"ok"}))' "$PR" "$EVENT"
 else
-  python3 -c 'import json,sys;print(json.dumps({"status":"error","failure_class":"upstream_error","message":sys.argv[1]}))' "$ERR"
+  python3 -I -c 'import json,sys;print(json.dumps({"status":"error","failure_class":"upstream_error","message":sys.argv[1]}))' "$ERR"
   exit 1
 fi

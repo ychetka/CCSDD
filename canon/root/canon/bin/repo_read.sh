@@ -24,7 +24,7 @@ run() {
   # callers parse one shape regardless of the gh subcommand.
   local out rc
   out=$("$@" 2>&1) && rc=0 || rc=$?
-  OUT="$out" RC="$rc" python3 -c 'import json,os
+  OUT="$out" RC="$rc" python3 -I -c 'import json,os
 out, rc = os.environ["OUT"], int(os.environ["RC"])
 if rc != 0:
     print(json.dumps({"status":"error","failure_class":"upstream_error","message":out}))

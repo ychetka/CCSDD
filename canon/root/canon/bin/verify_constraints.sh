@@ -140,9 +140,9 @@ if [ -n "$ISSUE_LIST" ] || [ -n "$VERIFY_PR" ]; then
   PR_RC=$?
   PR_BODY="" PR_STATE="" PR_HEAD=""
   if [ $PR_RC -eq 0 ]; then
-    PR_BODY=$(PR_JSON="$PR_JSON" python3 -c 'import json,os;print(json.loads(os.environ["PR_JSON"]).get("body") or "")' 2>/dev/null)
-    PR_STATE=$(PR_JSON="$PR_JSON" python3 -c 'import json,os;print(json.loads(os.environ["PR_JSON"]).get("state") or "")' 2>/dev/null)
-    PR_HEAD=$(PR_JSON="$PR_JSON" python3 -c 'import json,os;print(json.loads(os.environ["PR_JSON"]).get("headRefName") or "")' 2>/dev/null)
+    PR_BODY=$(PR_JSON="$PR_JSON" python3 -I -c 'import json,os;print(json.loads(os.environ["PR_JSON"]).get("body") or "")' 2>/dev/null)
+    PR_STATE=$(PR_JSON="$PR_JSON" python3 -I -c 'import json,os;print(json.loads(os.environ["PR_JSON"]).get("state") or "")' 2>/dev/null)
+    PR_HEAD=$(PR_JSON="$PR_JSON" python3 -I -c 'import json,os;print(json.loads(os.environ["PR_JSON"]).get("headRefName") or "")' 2>/dev/null)
   fi
   if [ -n "$VERIFY_PR" ] && [ -n "$VERIFY_BRANCH" ] && [ -n "$PR_HEAD" ] && [ "$PR_HEAD" != "$VERIFY_BRANCH" ]; then
     fail "VERIFY_BRANCH=$VERIFY_BRANCH does not match PR #$VERIFY_PR head ($PR_HEAD)" \
@@ -259,7 +259,7 @@ if [ -f "$PJ" ]; then
   # Malformed project.json protected_paths must escalate, not parse
   # to an empty allowlist - a broken config is itself the escalation.
   PJ_PROT_ERR=$(mktemp)
-  PROT_HITS=$(PROT_CHANGED="$PROT_CHANGED" PJ="$PJ" python3 - "$PJ_PROT_ERR" <<'PY'
+  PROT_HITS=$(PROT_CHANGED="$PROT_CHANGED" PJ="$PJ" python3 -I - "$PJ_PROT_ERR" <<'PY'
 import json, os, sys
 changed = [l for l in os.environ["PROT_CHANGED"].splitlines() if l.strip()]
 try:
@@ -331,13 +331,19 @@ if [ -n "$CONTRACT_HITS" ]; then
   while IFS= read -r cfile; do
     [ -n "$cfile" ] || continue
     if printf '%s\n' "$CONTRACT_DELETED" | grep -qxF "$cfile"; then
-      ARTIFACT="$HEAD_SHA_NOW"
-      SIGN_NOTE=" # deletion is HEAD-bound"
+      # Deletion is bound to a composite hash of (path, HEAD) - NOT to
+      # the bare HEAD sha. One branch-bound envelope must not silently
+      # authorize deleting several contracts in a single PR; each
+      # deletion owes its own signature.
+      ARTIFACT=$(printf 'delete|%s|%s' "$cfile" "$HEAD_SHA_NOW" \
+        | sha256sum | cut -d' ' -f1)
+      SIGN_NOTE=" # deletion-bound sha256(delete|path|HEAD)"
     elif [ -f "$cfile" ]; then
       ARTIFACT="$cfile"
       SIGN_NOTE=""
     else
-      continue   # renamed/moved away path without a live file - nothing to bind
+      escalate "contract path $cfile changed in branch diff but is absent on disk and not marked deleted" \
+        "restore the contract or stage its deletion so the sign-off gate can bind the change"
     fi
     ENVOK=0
     for cand in "$CANON_DIR"/human_signoffs/contract_*.json \
@@ -373,7 +379,7 @@ fi
 #    true local-only canon state is covered by .gitignore, so a new
 #    untracked canon canon file still surfaces here)
 UNTRACKED=$(git status --porcelain | sed -n 's/^?? //p' \
-            | grep -vE '(^|/)\.?scope_whitelist\.txt$|(^|/)migration_rollforward\.md$|(^|/)canon/[^/]*\.(lock|tmp)$|(^|/)canon/.*\.pyc$|(^|/)canon/.*/__pycache__/' || true)
+            | grep -vE '(^|/)(\.canon_|\.)?scope_whitelist\.txt$|(^|/)migration_rollforward\.md$|(^|/)canon/[^/]*\.(lock|tmp)$|(^|/)canon/.*\.pyc$|(^|/)canon/.*/__pycache__/' || true)
 [ -z "$UNTRACKED" ] \
   && pass "tree clean (no untracked)" \
   || fail "untracked files present" "commit intended ones, remove leftovers"
@@ -389,7 +395,7 @@ UNTRACKED=$(git status --porcelain | sed -n 's/^?? //p' \
 #    event (closed_by field) may clear any actor's open failure.
 if [ -f "$CANON_DIR/cycle_log.jsonl" ]; then
   CYC_ERRF=$(mktemp)
-  CYC_OUT=$(LOG="$CANON_DIR/cycle_log.jsonl" python3 - <<'PY' 2>"$CYC_ERRF"
+  CYC_OUT=$(LOG="$CANON_DIR/cycle_log.jsonl" python3 -I - <<'PY' 2>"$CYC_ERRF"
 import json, os, sys
 open_fails = {}
 corrupt = 0
@@ -522,7 +528,7 @@ if [ -n "${GWT_ISSUES// }" ] && [ -n "$BASE" ]; then
             printf '%s' "$ROADMAP_IDS"; } \
             | grep -oE 'ITEM-[0-9]+\.GWT-[0-9]+' | sort -u || true)
   if [ -n "$GWT_IDS" ]; then
-    MISSING=$(GWT_IDS="$GWT_IDS" TOP="$TOP" python3 - <<'PY'
+    MISSING=$(GWT_IDS="$GWT_IDS" TOP="$TOP" python3 -I - <<'PY'
 import os, re, subprocess
 top = os.environ["TOP"]
 # A test definition is a def test_*/it(/test( line; the id
@@ -608,7 +614,7 @@ fi
 #     risk: high fragment in this diff, or the flag is silently ignored.
 if [ -f "$CANON_DIR/roadmap.md" ] && [ -n "${GWT_ISSUES// }" ] \
     && [ -n "$BASE" ]; then
-  RISKY_ISSUES=$(GWT_ISSUES="$GWT_ISSUES" RM="$CANON_DIR/roadmap.md" python3 - <<'PY'
+  RISKY_ISSUES=$(GWT_ISSUES="$GWT_ISSUES" RM="$CANON_DIR/roadmap.md" python3 -I - <<'PY'
 import os, re
 issues = set(os.environ["GWT_ISSUES"].split())
 # Per-ITEM parsing: 'risk_flags' precedes 'issue:' in the template,

@@ -76,7 +76,7 @@ for frag in .changes/*.md; do
   # 'issue:' may be a comma list or carry '#' marks/quotes/comments:
   # every number is extracted in Python - concatenating digits via
   # tr would weld '10, 11' into a phantom '#1011'.
-  fi_nums=$(python3 - "$frag" <<'PY'
+  fi_nums=$(python3 -I - "$frag" <<'PY'
 import re, sys
 lines = open(sys.argv[1], encoding="utf-8", errors="replace").read().splitlines()
 start = 1 if lines and lines[0].strip() == "---" else 0
@@ -104,7 +104,7 @@ done
 
 HYGIENE_OUT=$(printf '%s\n%s\n' "$TITLE" "$BODY" | "$CANON_DIR/bin/hygiene_check.sh")
 if [ $? -ne 0 ]; then
-  HYGIENE_OUT="$HYGIENE_OUT" python3 -c 'import json,os
+  HYGIENE_OUT="$HYGIENE_OUT" python3 -I -c 'import json,os
 try: v=json.loads(os.environ["HYGIENE_OUT"])
 except Exception: v={"raw": os.environ["HYGIENE_OUT"]}
 print(json.dumps({"status":"error","failure_class":"gate_blocked","violations":v.get("violations",v)}))'
@@ -112,12 +112,12 @@ print(json.dumps({"status":"error","failure_class":"gate_blocked","violations":v
 fi
 
 URL=$("$GH" pr create --head "$BRANCH" --base "$BASE" --title "$TITLE" --body "$BODY" 2>&1) || {
-  python3 -c 'import json,sys;print(json.dumps({"status":"error","failure_class":"upstream_error","message":sys.argv[1]}))' "$URL"
+  python3 -I -c 'import json,sys;print(json.dumps({"status":"error","failure_class":"upstream_error","message":sys.argv[1]}))' "$URL"
   exit 1
 }
 NUM=$(basename "$URL")
 [[ "$NUM" =~ ^[0-9]+$ ]] || {
-  python3 -c 'import json,sys;print(json.dumps({"status":"error","failure_class":"upstream_error","message":"unparseable gh pr create output"}))'
+  python3 -I -c 'import json,sys;print(json.dumps({"status":"error","failure_class":"upstream_error","message":"unparseable gh pr create output"}))'
   exit 1
 }
-python3 -c 'import json,sys;print(json.dumps({"pr_url":sys.argv[2],"pr_number":int(sys.argv[1]),"status":"ok"}))' "$NUM" "$URL"
+python3 -I -c 'import json,sys;print(json.dumps({"pr_url":sys.argv[2],"pr_number":int(sys.argv[1]),"status":"ok"}))' "$NUM" "$URL"

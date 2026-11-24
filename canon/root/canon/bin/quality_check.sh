@@ -21,7 +21,7 @@ fails=0
 # --- 2. complexity metrics on changed source files ---
 BASE="${BASE:-}"
 if [ -z "$BASE" ]; then
-  BB=$(PJ="$PJ" python3 -c 'import json,os
+  BB=$(PJ="$PJ" python3 -I -c 'import json,os
 try: print(json.load(open(os.environ["PJ"])).get("base_branch") or "main")
 except Exception: print("main")' 2>/dev/null)
   for r in "origin/$BB" "$BB"; do
@@ -43,9 +43,19 @@ elif command -v radon >/dev/null 2>&1; then
     # No -I{} interpolation: xargs substitutes the filename into the
     # sh -c template as raw text, so a filename with a quote or $()
     # becomes shell code. Positional args keep the name opaque.
+    # Isolation: this script may run inside merge context while CWD is
+    # the candidate's tree. `python3 -I -m py_compile` imports stdlib
+    # modules (tokenize & co) and -m puts CWD on sys.path, so a PR
+    # shipping `tokenize.py` would execute PR code under gate creds.
+    # -I (isolated) drops CWD/site-packages/PYTHONPATH. radon/lizard
+    # likewise run from an empty scratch dir with absolute paths - a
+    # PR's setup.cfg/.radon.cfg/flake8 plugins must never load here.
+    QCDIR=$(mktemp -d "${TMPDIR:-/tmp}/ccsdd-qc.XXXXXX")
     BADSYNTAX=$(printf '%s\n' "$PYFILES" | tr '\n' '\0' \
-      | xargs -0 -n1 sh -c 'python3 -m py_compile "$1" 2>/dev/null || printf "%s\n" "$1"' _ || true)
-    RADON_OUT=$(printf '%s\n' "$PYFILES" | tr '\n' '\0' | xargs -0 radon cc -s -n C 2>/dev/null || true)
+      | xargs -0 -n1 sh -c 'python3 -I -m py_compile "$1" 2>/dev/null || printf "%s\n" "$1"' _ || true)
+    RADON_OUT=$(cd "$QCDIR" && printf '%s\n' "$PYFILES" | sed "s|^|$TOP/|" \
+      | tr '\n' '\0' | xargs -0 radon cc -s -n C 2>/dev/null || true)
+    rm -rf "$QCDIR"
     RADON_ERR=$(printf '%s\n' "$RADON_OUT" | grep -E '^ERROR:' || true)
     HOT=$(printf '%s\n' "$RADON_OUT" | grep -E ' - [DEF]\(' || true)
     if [ -n "$BADSYNTAX" ]; then
@@ -67,7 +77,11 @@ elif command -v radon >/dev/null 2>&1; then
     echo "SKIP: no changed .py files for radon"
   fi
 elif command -v lizard >/dev/null 2>&1; then
-  HOT=$(printf '%s\n' "$CHANGED" | tr '\n' '\0' | xargs -0 lizard -C 15 -L 100 2>/dev/null | grep -E '^\s+[0-9]+' || true)
+  # Same isolation as radon: run from an empty dir on absolute paths.
+  QCDIR=$(mktemp -d "${TMPDIR:-/tmp}/ccsdd-qc.XXXXXX")
+  HOT=$(cd "$QCDIR" && printf '%s\n' "$CHANGED" | sed "s|^|$TOP/|" \
+    | tr '\n' '\0' | xargs -0 lizard -C 15 -L 100 2>/dev/null | grep -E '^\s+[0-9]+' || true)
+  rm -rf "$QCDIR"
   if [ -n "$HOT" ]; then
     printf '%s\n' "$HOT" | head -20 | sed 's/^/  complexity: /'
     echo "FAIL: lizard CCN>=15 or length>100 in changed files"; fails=$((fails+1))
@@ -78,7 +92,7 @@ else
   # No metrics tool: a bare SKIP reads as a pass. On a repo that HAS
   # changed source files, require the project to declare the floor
   # optional explicitly - silence is not consent.
-  OPT=$(PJ="$PJ" python3 -c 'import json,os
+  OPT=$(PJ="$PJ" python3 -I -c 'import json,os
 try: print("yes" if (json.load(open(os.environ["PJ"])).get("gate_checks") or {}).get("complexity_optional") is True else "no")
 except Exception: print("no")' 2>/dev/null)
   if [ -n "$CHANGED" ] && [ "$OPT" != "yes" ]; then

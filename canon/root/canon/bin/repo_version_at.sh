@@ -23,7 +23,7 @@ if [ -x "$CANON_DIR/version_source.sh" ]; then
   exit 0
 fi
 
-REF="$REF" TOP="$TOP" CANON_DIR="$CANON_DIR" python3 - <<'PY'
+REF="$REF" TOP="$TOP" CANON_DIR="$CANON_DIR" python3 -I - <<'PY'
 import json, os, re, subprocess, sys
 ref, top, canon_dir = os.environ["REF"], os.environ["TOP"], os.environ["CANON_DIR"]
 

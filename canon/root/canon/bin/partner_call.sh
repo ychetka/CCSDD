@@ -63,7 +63,7 @@ GATEWAY_DB="$GATEWAY_DB" POLICY="$POLICY" \
   ARGS_JSON="$ARGS_JSON" ARGS_FILE="$ARGS_FILE" \
   AUDIT_KEY="$AUDIT_KEY" REQ_CLASS="$REQ_CLASS" ROUND="$ROUND" \
   REQ_ITEM="$REQ_ITEM" \
-  python3 - <<'PY'
+  python3 -I - <<'PY'
 import datetime, hashlib, json, os, re, signal, subprocess, sys
 
 sys.path.insert(0, os.path.join(os.environ["CANON_DIR"], "bin"))

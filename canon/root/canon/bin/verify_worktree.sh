@@ -119,8 +119,14 @@ if [ -n "$BASELINE_CMD" ]; then
         # git, so it cannot exist there. Dependencies come from the
         # prepared main workspace ($TOP/node_modules); a baseline_env.sh
         # adapter may instead create $WT/node_modules itself.
+        # Trust bound: the $TOP fallback applies only when $TOP is the
+        # main workspace. In an item worktree ($TOP/canon is a symlink)
+        # $TOP is the agent's own tree - a planted
+        # node_modules/.bin/pytest would run here under gate creds.
         NM_DIR="$WT/node_modules"
-        [ -d "$NM_DIR" ] || NM_DIR="$TOP/node_modules"
+        if [ ! -d "$NM_DIR" ] && [ ! -L "$TOP/canon" ]; then
+          NM_DIR="$TOP/node_modules"
+        fi
         if [ -d "$NM_DIR" ]; then
           export NODE_PATH="$NM_DIR${NODE_PATH:+:$NODE_PATH}"
           export PATH="$NM_DIR/.bin:$PATH"
@@ -140,7 +146,7 @@ if [ -n "$BASELINE_CMD" ]; then
       # adapter above, or the operator opts in explicitly via
       # VW_ALLOW_INSTALL=1 (local/debug use only - never in gates).
       if [ "${VW_ALLOW_INSTALL:-0}" = "1" ]; then
-        python3 -m venv "$WT/.venv" >/dev/null 2>&1 || ENV_RC=$?
+        python3 -I -m venv "$WT/.venv" >/dev/null 2>&1 || ENV_RC=$?
         if [ "$ENV_RC" = "0" ]; then
           for REQ in "$WT"/requirements*.txt; do
             [ -f "$REQ" ] || continue
@@ -169,17 +175,23 @@ if [ -n "$BASELINE_CMD" ]; then
       BASELINE_JSON="{\"error\":\"env_setup_failed\",\"exit\":$ENV_RC,\"baseline_sha\":\"$BASE_SHA\"}"
     else
       TIMEOUT_BIN=$(command -v timeout || command -v gtimeout || true)
+      # The baseline executes project code (the test command and the
+      # deps it loads) in whatever context invoked us - possibly the
+      # merge/review credential. Scrub forge tokens from its env so
+      # baseline code cannot read them; the check only needs a test
+      # verdict, not API access.
+      CREDS_OFF="env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GL_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u DEVIN_API_KEY -u OPENAI_API_KEY -u ANTHROPIC_API_KEY"
       if [ -n "$TIMEOUT_BIN" ]; then
         (cd "$WT" && PATH="$WT/.venv/bin:$WT/node_modules/.bin:$PATH" \
-          "$TIMEOUT_BIN" 600 bash -c "$BASELINE_CMD") >"$OUT" 2>&1
+          $CREDS_OFF "$TIMEOUT_BIN" 600 bash -c "$BASELINE_CMD") >"$OUT" 2>&1
       else
         # No timeout binary (BSD/macOS without coreutils): run
         # unbounded rather than fail the baseline outright.
         (cd "$WT" && PATH="$WT/.venv/bin:$WT/node_modules/.bin:$PATH" \
-          bash -c "$BASELINE_CMD") >"$OUT" 2>&1
+          $CREDS_OFF bash -c "$BASELINE_CMD") >"$OUT" 2>&1
       fi
       BRC=$?
-      BTAIL=$(tail -n 20 "$OUT" 2>/dev/null | python3 -c 'import json,sys;print(json.dumps(sys.stdin.buffer.read().decode("utf-8","replace")))')
+      BTAIL=$(tail -n 20 "$OUT" 2>/dev/null | python3 -I -c 'import json,sys;print(json.dumps(sys.stdin.buffer.read().decode("utf-8","replace")))')
       BASELINE_JSON="{\"exit\":$BRC,\"baseline_sha\":\"$BASE_SHA\",\"tail\":$BTAIL}"
     fi
   else
@@ -190,7 +202,7 @@ if [ -n "$BASELINE_CMD" ]; then
 fi
 
 HEAD_SHA="$HEAD_SHA" BRANCH="$BRANCH" DIRTY="$DIRTY" STAT="$STAT" \
-  BASELINE_JSON="$BASELINE_JSON" TOP="$TOP" python3 - <<'PY'
+  BASELINE_JSON="$BASELINE_JSON" TOP="$TOP" python3 -I - <<'PY'
 import hashlib, json, os, time
 dirty = [ln for ln in os.environ["DIRTY"].splitlines() if ln.strip()]
 payload = {
@@ -220,7 +232,7 @@ PY_RC=$?
 # Top-level fields only: the "tail" blob is test-runner output that
 # legitimately contains the substring "error" - a glob match over the
 # whole JSON would fail a green baseline.
-BASELINE_JSON="$BASELINE_JSON" python3 -c 'import json,os,sys
+BASELINE_JSON="$BASELINE_JSON" python3 -I -c 'import json,os,sys
 try:
     b = json.loads(os.environ["BASELINE_JSON"])
 except Exception:

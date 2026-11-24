@@ -123,7 +123,7 @@ note_covers() {
     [ -n "$loc" ] || continue
     git cat-file -e "HEAD:$loc" 2>/dev/null || continue
     git show "HEAD:$loc" 2>/dev/null \
-      | TARGET="$1" python3 -c 'import os,sys; t=os.environ["TARGET"]; sys.exit(0 if any(l.rstrip("\r") == t for l in sys.stdin.read().splitlines()) else 1)' \
+      | TARGET="$1" python3 -I -c 'import os,sys; t=os.environ["TARGET"]; sys.exit(0 if any(l.rstrip("\r") == t for l in sys.stdin.read().splitlines()) else 1)' \
       && return 0
   done
   return 1
@@ -247,7 +247,7 @@ if [ -f "$CANON_DIR/project.json" ]; then
     echo "MIGRATION GATE FAIL: python3 required to read $CANON_DIR/project.json" >&2
     exit 1
   fi
-  if ! DRY_RUN=$(HYGIENE_PJ="$CANON_DIR/project.json" python3 -c "import json,os; v=json.load(open(os.environ['HYGIENE_PJ'])).get('migration_dry_run_cmd','') or ''; print(v if isinstance(v,str) else '')" 2>/dev/null); then
+  if ! DRY_RUN=$(HYGIENE_PJ="$CANON_DIR/project.json" python3 -I -c "import json,os; v=json.load(open(os.environ['HYGIENE_PJ'])).get('migration_dry_run_cmd','') or ''; print(v if isinstance(v,str) else '')" 2>/dev/null); then
     echo "MIGRATION GATE FAIL: $CANON_DIR/project.json exists but is not valid JSON" >&2
     exit 1
   fi

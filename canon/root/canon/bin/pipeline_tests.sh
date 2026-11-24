@@ -84,7 +84,7 @@ expect D1b-check-setup 0 $? "SETUP OK"
 
 # The file-backed test forge makes panel signals storable locally -
 # panel verdicts can be seeded without a real forge backend.
-python3 - "$WS/canon/project.json" <<'PY'
+python3 -I - "$WS/canon/project.json" <<'PY'
 import json, sys
 p = sys.argv[1]; d = json.load(open(p))
 d["forge"] = "test"
@@ -96,11 +96,14 @@ PY
 # panel_seed <sha> - attest every registry floor for <sha> in a throwaway
 # worktree (clean tree, HEAD bound), then post green domain signals via
 # the test forge. Mirrors what a real panel produces before merge.
+declare -A SEED_TOK   # actors.json persists across panel_seed calls;
+                      # re-registering an existing actor requires its
+                      # own token, so cache the issued tokens.
 panel_seed() {
-  local sha=$1 chk d
+  local sha=$1 chk d TOK
   # The panel identity must be an accepted review login at gate time
   # (earlier tests rewrite review.reviewer_logins to their fixtures).
-  python3 - "$WS/canon/project.json" <<'PY'
+  python3 -I - "$WS/canon/project.json" <<'PY'
 import json, sys
 p = sys.argv[1]; d = json.load(open(p))
 d["forge"] = "test"
@@ -118,13 +121,23 @@ PY
   for d in docs security quality design tester fidelity product; do
     printf '{"domain":"%s","head":"%s","summary":"seed","receipt":["canon/project.json"],"findings":[]}' \
       "$d" "$sha" > "$SCRATCH/vd.json"
+    # Domain signals need a registered actor whose role is exactly
+    # reviewer_<domain> (panel_verdict verifies actor+token+role
+    # against canon/actors.json - fail closed without it).
+    if [ -z "${SEED_TOK[$d]:-}" ]; then
+      TOK=$(cd "$WS" && bash canon/bin/cycle_log.sh register \
+            --actor "rev_test_$d" --role "reviewer_$d" 2>/dev/null \
+            | python3 -I -c 'import json,sys;print(json.loads(sys.stdin.read()).get("token") or "")' 2>/dev/null)
+      SEED_TOK[$d]="$TOK"
+    fi
     (cd "$WS" && bash canon/bin/panel_verdict.sh set --pr 1 \
-       --sha "$sha" --record "$SCRATCH/vd.json") >/dev/null 2>&1
+       --sha "$sha" --record "$SCRATCH/vd.json" \
+       --actor "rev_test_$d" --token "${SEED_TOK[$d]}") >/dev/null 2>&1
   done
   (cd "$WS" && git worktree remove --force "$SCRATCH/pwt" 2>/dev/null)
   # The panel identity is also the aggregator's approval account: the
   # merge review-gate requires its APPROVED review on this head.
-  python3 - "$GHSTATE/reviews.json" "$sha" <<'PY'
+  python3 -I - "$GHSTATE/reviews.json" "$sha" <<'PY'
 import json, sys
 p = sys.argv[1]
 try: rs = json.load(open(p))
@@ -198,7 +211,7 @@ PY
 
 PC="$WS/canon/bin/partner_call.sh"
 GDB="$WS/canon/gateway.db"
-gwdb() { python3 - "$GDB" "$1" <<'PYEOF'
+gwdb() { python3 -I - "$GDB" "$1" <<'PYEOF'
 import sqlite3, sys
 con = sqlite3.connect(sys.argv[1], timeout=10)
 con.execute("PRAGMA journal_mode=WAL")
@@ -256,7 +269,7 @@ N=$(gwdb "SELECT value FROM counters WHERE key='audit:conc'")
   || { echo "FAIL G5-flock-counted: counter=$N, expected 10"; fail=$((fail+1)); }
 
 # Timeout: policy call_timeout_seconds=1, partner sleeps 5s -> refused.
-python3 - "$WS/canon/config/policy.json" <<'PY'
+python3 -I - "$WS/canon/config/policy.json" <<'PY'
 import json, sys
 p = sys.argv[1]
 d = json.load(open(p))
@@ -266,7 +279,7 @@ PY
 PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool sleep \
   --args '{"seconds":5}' >"$SCRATCH/out" 2>&1
 expect G6-timeout 4 $? "upstream_timeout"
-python3 - "$WS/canon/config/policy.json" <<'PY'
+python3 -I - "$WS/canon/config/policy.json" <<'PY'
 import json, sys
 p = sys.argv[1]
 d = json.load(open(p))
@@ -318,7 +331,7 @@ case "$1" in
     case "$url" in
       *protection/required_status_checks*)
         if [ -f "$S/protection_contexts" ]; then
-          RAW=$(python3 -c 'import json,sys
+          RAW=$(python3 -I -c 'import json,sys
 print(json.dumps({"contexts": json.load(open(sys.argv[1]))}))' "$S/protection_contexts")
         else
           echo "HTTP 404: Branch not protected" >&2; exit 1
@@ -350,7 +363,7 @@ print(json.dumps({"contexts": json.load(open(sys.argv[1]))}))' "$S/protection_co
         fi
         # Apply the merge: land the PR head on the base ref on the
         # remote so the post-merge release sees the merged fragments.
-        python3 - "$S/pr_view.json" "$FAKEGH_REPO" <<'PY' || {
+        python3 -I - "$S/pr_view.json" "$FAKEGH_REPO" <<'PY' || {
 import json, subprocess, sys
 d = json.load(open(sys.argv[1]))
 subprocess.run(["git", "-C", sys.argv[2], "push", "-q", "origin",
@@ -372,7 +385,7 @@ PY
       view)
         # per-number state map: $S/issues.json {"<num>":{"state":"..."}};
         # unknown numbers default to OPEN (existence never fails).
-        RAW=$(python3 -c 'import json,os,sys
+        RAW=$(python3 -I -c 'import json,os,sys
 n = sys.argv[2]
 st = {}
 p = os.path.join(sys.argv[1], "issues.json")
@@ -385,7 +398,7 @@ print(json.dumps({"number": int(n), "state": d.get("state", "open")}))' "$S" "${
   *) echo "fakegh: unhandled $*" >&2; exit 1 ;;
 esac
 if [ -n "$JQ" ]; then
-  printf '%s' "$RAW" | JQ="$JQ" python3 -c '
+  printf '%s' "$RAW" | JQ="$JQ" python3 -I -c '
 import json, os, sys
 d = json.loads(sys.stdin.read() or "null")
 jq = os.environ["JQ"]
@@ -427,7 +440,7 @@ mkdir -p "$GHREMOTE" && git -C "$GHREMOTE" init -q --bare
 git -C "$WS" push -q origin main 2>/dev/null
 
 # project.json gets review.gh_bin=fakegh but NO reviewer_logins -> M1.
-python3 - "$WS/canon/project.json" <<'PY'
+python3 -I - "$WS/canon/project.json" <<'PY'
 import json, sys
 p = sys.argv[1]
 d = json.load(open(p))
@@ -457,7 +470,7 @@ echo '["ci"]' > "$GHSTATE/protection_contexts"
 
 # Configure reviewers in project.json -> binding check passes; gate
 # must now fail LATER at the APPROVAL gate, naming alice as missing.
-python3 - "$WS/canon/project.json" <<'PY'
+python3 -I - "$WS/canon/project.json" <<'PY'
 import json, sys
 p = sys.argv[1]
 d = json.load(open(p))
@@ -472,7 +485,7 @@ grep -q '"alice"' "$SCRATCH/out" \
   || { echo "FAIL M3b-names-reviewer"; fail=$((fail+1)); }
 
 # Stale-head approval must NOT count: alice APPROVED a different sha.
-python3 - "$GHSTATE/reviews.json" <<'PY'
+python3 -I - "$GHSTATE/reviews.json" <<'PY'
 import json, sys
 json.dump([{"user": {"login": "alice"}, "id": 7, "state": "APPROVED",
             "commit_id": "0" * 40, "submitted_at": "2026-01-01T00:00:00Z"}],
@@ -485,7 +498,7 @@ expect M4-stale-approval 1 $? "gate_blocked"
 # Approved ON the head + a green required check -> must get PAST the
 # review/check gates into the later stages (version drift, blood-sign,
 # or the merge itself). Proves the verdict path is reachable.
-python3 - "$GHSTATE/reviews.json" "$FIXSHA" <<'PY'
+python3 -I - "$GHSTATE/reviews.json" "$FIXSHA" <<'PY'
 import json, sys
 json.dump([{"user": {"login": "alice"}, "id": 7, "state": "APPROVED",
             "commit_id": sys.argv[2], "submitted_at": "2026-01-01T00:00:00Z"}],
@@ -502,7 +515,7 @@ else
 fi
 
 # A pending review request on alice strips her standing approval.
-python3 - "$GHSTATE/pr_view.json" <<'PY'
+python3 -I - "$GHSTATE/pr_view.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 d["reviewRequests"] = [{"login": "alice"}]
@@ -511,7 +524,7 @@ PY
 (cd "$WS" && env FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
        canon/bin/repo_merge.sh 42 "$FIXSHA" squash) >"$SCRATCH/out" 2>&1
 expect M6-pending-review 1 $? "gate_blocked"
-python3 - "$GHSTATE/pr_view.json" <<'PY'
+python3 -I - "$GHSTATE/pr_view.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 d["reviewRequests"] = []
@@ -520,7 +533,7 @@ PY
 
 # Required check present in protection but absent from the rollup ->
 # missing_required_checks, not a silent pass.
-python3 - "$GHSTATE/pr_view.json" <<'PY'
+python3 -I - "$GHSTATE/pr_view.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 d["statusCheckRollup"] = []
@@ -529,7 +542,7 @@ PY
 (cd "$WS" && env FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
        canon/bin/repo_merge.sh 42 "$FIXSHA" squash) >"$SCRATCH/out" 2>&1
 expect M7-missing-required 1 $? 'missing_required_checks.*ci'
-python3 - "$GHSTATE/pr_view.json" <<'PY'
+python3 -I - "$GHSTATE/pr_view.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 d["statusCheckRollup"] = [{"name": "ci", "conclusion": "SUCCESS"}]
@@ -545,7 +558,7 @@ PY
   && git push -q origin issue_7-ver)
 VERSHA=$(cd "$WS" && git rev-parse issue_7-ver)
 printf '{"headRefOid":"%s","headRefName":"issue_7-ver","baseRefName":"main","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"closes #7","reviewRequests":[]}' "$VERSHA" > "$GHSTATE/pr_view.json"
-python3 - "$GHSTATE/reviews.json" "$VERSHA" <<'PY'
+python3 -I - "$GHSTATE/reviews.json" "$VERSHA" <<'PY'
 import json, sys
 json.dump([{"user": {"login": "alice"}, "id": 7, "state": "APPROVED",
             "commit_id": sys.argv[2], "submitted_at": "2026-01-01T00:00:00Z"}],
@@ -605,7 +618,7 @@ cat > "$GHSTATE/ruleset_1.json" <<'JSON'
  "rules":[{"type":"required_status_checks",
            "parameters":{"required_status_checks":[{"context":"sec"}]}}]}
 JSON
-python3 - "$GHSTATE/pr_view.json" "$REL_SHA" <<'PY'
+python3 -I - "$GHSTATE/pr_view.json" "$REL_SHA" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 d["headRefOid"] = sys.argv[2]
@@ -632,7 +645,7 @@ echo '["ci"]' > "$GHSTATE/protection_contexts"
   && git push -q origin issue_43-full)
 FULLSHA=$(cd "$WS" && git rev-parse issue_43-full)
 printf '{"headRefOid":"%s","headRefName":"issue_43-full","baseRefName":"main","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"closes #43","reviewRequests":[]}' "$FULLSHA" > "$GHSTATE/pr_view.json"
-python3 - "$GHSTATE/reviews.json" "$FULLSHA" <<'PY'
+python3 -I - "$GHSTATE/reviews.json" "$FULLSHA" <<'PY'
 import json, sys
 json.dump([{"user": {"login": "alice"}, "id": 9, "state": "APPROVED",
             "commit_id": sys.argv[2], "submitted_at": "2026-01-01T00:00:00Z"}],
@@ -693,7 +706,7 @@ printf '## Item: feature\n- id: feature\n- type: epic\n- issue: 9\n- tasks: [10]
   && git push -q origin issue_10-auth)
 TASKSHA=$(cd "$WS" && git rev-parse issue_10-auth)
 printf '{"headRefOid":"%s","headRefName":"issue_10-auth","baseRefName":"epic_issue_9-feature","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"closes #10","reviewRequests":[]}' "$TASKSHA" > "$GHSTATE/pr_view.json"
-python3 - "$GHSTATE/reviews.json" "$TASKSHA" <<'PY'
+python3 -I - "$GHSTATE/reviews.json" "$TASKSHA" <<'PY'
 import json, sys
 json.dump([{"user": {"login": "alice"}, "id": 11, "state": "APPROVED",
             "commit_id": sys.argv[2], "submitted_at": "2026-01-01T00:00:00Z"}],
@@ -730,7 +743,7 @@ EPICSHA=$(cd "$WS" && git rev-parse epic_issue_9-feature)
 # requires CLOSED state for every declared task.
 printf '{"10":{"state":"CLOSED"}}' > "$GHSTATE/issues.json"
 printf '{"headRefOid":"%s","headRefName":"epic_issue_9-feature","baseRefName":"main","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"closes #9\\nincludes #10","reviewRequests":[]}' "$EPICSHA" > "$GHSTATE/pr_view.json"
-python3 - "$GHSTATE/reviews.json" "$EPICSHA" <<'PY'
+python3 -I - "$GHSTATE/reviews.json" "$EPICSHA" <<'PY'
 import json, sys
 json.dump([{"user": {"login": "alice"}, "id": 12, "state": "APPROVED",
             "commit_id": sys.argv[2], "submitted_at": "2026-01-01T00:00:00Z"}],
@@ -753,7 +766,7 @@ expect M11d-epic-releases 0 $rc '"status": "merged"'
   && git push -q origin issue_46-mention)
 MENTSHA=$(cd "$WS" && git rev-parse issue_46-mention)
 printf '{"headRefOid":"%s","headRefName":"issue_46-mention","baseRefName":"main","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"closes #46\\nsee also discussion in #20","reviewRequests":[]}' "$MENTSHA" > "$GHSTATE/pr_view.json"
-python3 - "$GHSTATE/reviews.json" "$MENTSHA" <<'PY'
+python3 -I - "$GHSTATE/reviews.json" "$MENTSHA" <<'PY'
 import json, sys
 json.dump([{"user": {"login": "alice"}, "id": 13, "state": "APPROVED",
             "commit_id": sys.argv[2], "submitted_at": "2026-01-01T00:00:00Z"}],
@@ -796,7 +809,7 @@ expect M11g-epic-open-task 1 $? "not CLOSED"
 # (fama) + panel-test (fama) approve -> family_deficit; adding bob's
 # (famb, high_risk_only) approval + a human sign-off envelope ->
 # merged.
-python3 - "$WS/canon/project.json" <<'PY'
+python3 -I - "$WS/canon/project.json" <<'PY'
 import json, sys
 p = sys.argv[1]; d = json.load(open(p))
 d["review"]["reviewer_logins"] = ["alice", "panel-test"]
@@ -815,7 +828,7 @@ PY
   && git push -q origin issue_47-risk)
 RSHA=$(cd "$WS" && git rev-parse issue_47-risk)
 printf '{"headRefOid":"%s","headRefName":"issue_47-risk","baseRefName":"main","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"closes #47","reviewRequests":[]}' "$RSHA" > "$GHSTATE/pr_view.json"
-python3 - "$GHSTATE/reviews.json" "$RSHA" <<'PY'
+python3 -I - "$GHSTATE/reviews.json" "$RSHA" <<'PY'
 import json, sys
 json.dump([{"user": {"login": "alice"}, "id": 20, "state": "APPROVED",
             "commit_id": sys.argv[2], "submitted_at": "2026-01-01T00:00:00Z"}],
@@ -829,7 +842,7 @@ mkdir -p "$WS/canon/human_signoffs"
 ssh-keygen -t ed25519 -N '' -q -f "$SCRATCH/m12key"
 printf 'human %s\n' "$(cat "$SCRATCH/m12key.pub")" \
   > "$SCRATCH/m12_allowed_signers"
-python3 - "$RSHA" "$SCRATCH/m12msg" <<'PY'
+python3 -I - "$RSHA" "$SCRATCH/m12msg" <<'PY'
 import datetime, secrets, sys
 ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 nonce = secrets.token_hex(16)
@@ -839,7 +852,7 @@ open(sys.argv[2] + ".meta", "w").write(f"{ts}\n{nonce}")
 PY
 ssh-keygen -Y sign -f "$SCRATCH/m12key" -n ccsdd-signoff \
   "$SCRATCH/m12msg" >/dev/null 2>&1
-python3 - "$RSHA" "$SCRATCH/m12msg" \
+python3 -I - "$RSHA" "$SCRATCH/m12msg" \
         "$WS/canon/human_signoffs/issue_47-risk.json" <<'PY'
 import base64, json, sys
 msg = open(sys.argv[2]).read()
@@ -861,7 +874,7 @@ PY
 expect M12a-one-family-blocks 1 $? "family_deficit"
 # A high_risk_only approval on the same head supplies the second
 # family - before the fix it was filtered out before counting.
-python3 - "$GHSTATE/reviews.json" "$RSHA" <<'PY'
+python3 -I - "$GHSTATE/reviews.json" "$RSHA" <<'PY'
 import json, sys
 p = sys.argv[1]
 rs = json.load(open(p))
@@ -890,7 +903,7 @@ PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool t \
   --class audit --args '{"a":1}' >/dev/null 2>&1
 PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool t \
   --class audit --args '{"b":2}' >/dev/null 2>&1
-python3 - "$GDB" <<'PY'
+python3 -I - "$GDB" <<'PY'
 import sqlite3, sys
 c = dict(sqlite3.connect(sys.argv[1]).execute("SELECT key, value FROM counters"))
 auto = {k: v for k, v in c.items() if k.startswith("audit:auto:")}
@@ -905,7 +918,7 @@ PY
 
 # Global daily cap: seed the day counter at the policy ceiling ->
 # refused even with a fresh audit key.
-python3 - "$GDB" <<'PY'
+python3 -I - "$GDB" <<'PY'
 import datetime, sqlite3, sys
 con = sqlite3.connect(sys.argv[1])
 con.execute("INSERT INTO counters VALUES(?,100) "
@@ -922,7 +935,7 @@ rm -f "$GDB" "$GDB-wal" "$GDB-shm"
 # A stranded inflight row (caller SIGKILLed after quota spend) must
 # be reaped AND its counters refunded in one transaction; a live
 # pid must keep its row and its quota (review_9 #7).
-python3 - "$GDB" "$WS/canon/bin" <<'PY'
+python3 -I - "$GDB" "$WS/canon/bin" <<'PY'
 import os, sqlite3, sys
 sys.path.insert(0, sys.argv[2])
 import gw_store
@@ -973,7 +986,7 @@ mkdir -p "$CCSDD_CONF_DIR"
 ssh-keygen -t ed25519 -N '' -q -f "$SCRATCH/human_key"
 printf 'human %s\n' "$(cat "$SCRATCH/human_key.pub")" \
   > "$CCSDD_CONF_DIR/allowed_signers"
-python3 - "$CAND" "$SCRATCH/msg" <<'PY'
+python3 -I - "$CAND" "$SCRATCH/msg" <<'PY'
 import datetime, hashlib, pathlib, secrets, sys
 cand = pathlib.Path(sys.argv[1])
 entries = []
@@ -995,7 +1008,7 @@ open(sys.argv[2] + ".meta", "w").write(
 PY
 ssh-keygen -Y sign -f "$SCRATCH/human_key" -n ccsdd-signoff \
   "$SCRATCH/msg"
-python3 - "$SCRATCH/msg" "$ENVF" <<'PY'
+python3 -I - "$SCRATCH/msg" "$ENVF" <<'PY'
 import base64, json, sys
 msg = open(sys.argv[1]).read()
 pub_sha, ts, nonce = open(sys.argv[1] + ".meta").read().splitlines()
@@ -1026,7 +1039,7 @@ PUBROOT="$SCRATCH/pubroot"
   --manifest "$SCRATCH/pub_manifest.json" \
   --history "$SCRATCH/pub_history.jsonl" >"$SCRATCH/out" 2>&1
 expect CP2a-publish-ok 0 $?
-python3 - "$SCRATCH/pub_manifest.json" <<'PY' \
+python3 -I - "$SCRATCH/pub_manifest.json" <<'PY' \
   && { echo "PASS CP2b-manifest-schema"; pass=$((pass+1)); } \
   || { echo "FAIL CP2b-manifest-schema"; fail=$((fail+1)); }
 import json, sys
@@ -1043,7 +1056,7 @@ unset CCSDD_CONF_DIR CCSDD_NONCE_STORE
 # ---------- PR: repo_pr_review commit_id binding -------------------
 # JSON-file reviews must bind to the CURRENT head: a stale commit_id
 # is refused; a matching/absent one submits bound to the head.
-python3 - "$GHSTATE/pr_view.json" "$FIXSHA" <<'PY'
+python3 -I - "$GHSTATE/pr_view.json" "$FIXSHA" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 d["headRefOid"] = sys.argv[2]

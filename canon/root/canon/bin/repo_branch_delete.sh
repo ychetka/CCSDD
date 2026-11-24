@@ -60,12 +60,12 @@ if [ "$SCOPE" != "remote" ] && git show-ref --verify --quiet "refs/heads/$BRANCH
 fi
 
 if [ -n "$REMOTE_ERR" ]; then
-  python3 -c 'import json,sys;print(json.dumps({"branch":sys.argv[1],"status":"error","failure_class":"upstream_error","message":sys.argv[2],"deleted":sys.argv[3].split(",") if sys.argv[3] else []}))' \
+  python3 -I -c 'import json,sys;print(json.dumps({"branch":sys.argv[1],"status":"error","failure_class":"upstream_error","message":sys.argv[2],"deleted":sys.argv[3].split(",") if sys.argv[3] else []}))' \
     "$BRANCH" "$REMOTE_ERR" "$(IFS=,; echo "${DELETED[*]:-}")"
   exit 1
 fi
 if [ ${#DELETED[@]} -eq 0 ]; then
-  python3 -c 'import json,sys;print(json.dumps({"branch":sys.argv[1],"status":"not_found"}))' "$BRANCH"
+  python3 -I -c 'import json,sys;print(json.dumps({"branch":sys.argv[1],"status":"not_found"}))' "$BRANCH"
   exit 1
 fi
-python3 -c 'import json,sys;print(json.dumps({"branch":sys.argv[1],"deleted":sys.argv[2].split(","),"status":"ok"}))' "$BRANCH" "$(IFS=,; echo "${DELETED[*]}")"
+python3 -I -c 'import json,sys;print(json.dumps({"branch":sys.argv[1],"deleted":sys.argv[2].split(","),"status":"ok"}))' "$BRANCH" "$(IFS=,; echo "${DELETED[*]}")"

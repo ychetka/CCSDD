@@ -62,7 +62,7 @@ die() { echo "human_sign: $1" >&2; exit 2; }
 artifact_sha() {  # file path | 40-hex sha1 | 64-hex sha256 -> hex digest
   local a="$1"
   if [ -f "$a" ]; then
-    python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$a"
+    python3 -I -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$a"
   elif [[ "$a" =~ ^[0-9a-fA-F]{40}$ ]] || [[ "$a" =~ ^[0-9a-fA-F]{64}$ ]]; then
     printf '%s' "${a,,}"
   else
@@ -101,7 +101,7 @@ sign)
   [ -f "$SIGNERS" ] || die "no allowed_signers at $SIGNERS - run 'human_sign.sh init'"
   SHA=$(artifact_sha "$ARTIFACT")
   TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  NONCE=$(python3 -c 'import secrets;print(secrets.token_hex(16))')
+  NONCE=$(python3 -I -c 'import secrets;print(secrets.token_hex(16))')
   MSG="ccsdd-signoff v1|${VERDICT}|${SHA}|${TS}|${NONCE}"
   TMPD=$(mktemp -d); trap 'rm -rf "$TMPD"' EXIT INT TERM
   printf '%s' "$MSG" > "$TMPD/msg"
@@ -115,7 +115,7 @@ sign)
   ssh-keygen -Y sign -f "$TMPD/key.pub" -n "$NS" "$TMPD/msg" 2>/dev/null \
     || die "signing failed - is the key loaded in ssh-agent? (ssh-add -l)"
   MSG="$MSG" SHA="$SHA" VERDICT="$VERDICT" TS="$TS" NONCE="$NONCE" \
-  SIG="$TMPD/msg.sig" ENVELOPE="$ENVELOPE" python3 - <<'PY'
+  SIG="$TMPD/msg.sig" ENVELOPE="$ENVELOPE" python3 -I - <<'PY'
 import base64, json, os
 sig = base64.b64encode(open(os.environ["SIG"], "rb").read()).decode()
 e = {"type": "human_signoff", "format": "ssh-sig-v1",
@@ -151,7 +151,7 @@ verify|consume)
       CONSUME="$CONSUME" \
       NONCE_STORE="${NONCE_STORE:-${CCSDD_NONCE_STORE:-$CANON_DIR/human_signoffs/.used_nonces}}" \
       SIGNERS_ENV="$SIGNERS" NS_ENV="$NS" \
-      python3 - <<'PY'
+      python3 -I - <<'PY'
 import base64, json, os, sys, tempfile, subprocess, time, calendar, shutil, fcntl
 env, sha, want_v = (os.environ.get(k) or "" for k in
                     ("ENVELOPE", "SHA", "VERDICT"))

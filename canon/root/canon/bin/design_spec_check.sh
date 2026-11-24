@@ -50,7 +50,7 @@ done
 # or `//`-lines. Leading comment markers are stripped before
 # matching (but `##` itself is kept, it is the section marker).
 # Fenced code blocks are skipped BEFORE marker stripping.
-AXES=$(CONTRACT="$CONTRACT" python3 - <<'PY'
+AXES=$(CONTRACT="$CONTRACT" python3 -I - <<'PY'
 import os, re
 def strip_markers(line):
     line = line.strip()
@@ -108,7 +108,7 @@ fi
 # is every axis heading regardless of decision. Both go through the
 # same marker-strip + fence-skip pipeline as the contract so a spec
 # example can neither invent nor silently cover an axis.
-PARSED=$(SPEC="$SPEC" python3 - <<'PY'
+PARSED=$(SPEC="$SPEC" python3 -I - <<'PY'
 import os, re
 def strip_markers(line):
     line = line.strip()

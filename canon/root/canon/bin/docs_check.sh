@@ -16,7 +16,7 @@ PJ="$CANON_DIR/project.json"
 fails=0
 
 # --- 1. markdown relative links + anchors ---
-LINK_BAD=$(TOP="$TOP" CANON_DIR="$CANON_DIR" python3 - <<'PY'
+LINK_BAD=$(TOP="$TOP" CANON_DIR="$CANON_DIR" python3 -I - <<'PY'
 import os, re, sys, urllib.parse
 top = os.environ["TOP"]
 # Slugger/anchor logic is shared with spec_anchor_check.sh via
@@ -105,7 +105,7 @@ fi
 
 # --- 2. canon version sync (canon repos only) ---
 if [ -f "$TOP/canon/MANIFEST.json" ]; then
-  VER_BAD=$(TOP="$TOP" python3 - <<'PY'
+  VER_BAD=$(TOP="$TOP" python3 -I - <<'PY'
 import json, os, re
 top = os.environ["TOP"]
 want = json.load(open(os.path.join(top, "canon/MANIFEST.json")))["canon_version"]

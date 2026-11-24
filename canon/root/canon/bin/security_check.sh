@@ -16,7 +16,7 @@ fails=0
 
 BASE="${BASE:-}"
 if [ -z "$BASE" ]; then
-  BB=$(PJ="$PJ" python3 -c 'import json,os
+  BB=$(PJ="$PJ" python3 -I -c 'import json,os
 try: print(json.load(open(os.environ["PJ"])).get("base_branch") or "main")
 except Exception: print("main")' 2>/dev/null)
   for r in "origin/$BB" "$BB"; do
@@ -59,7 +59,7 @@ fi
 # must fail the check, never silently pass: capture the exit code
 # explicitly (empty stdout + ||true would swallow UnicodeDecodeError).
 SECRET_BAD=$(grep -aE '^\+' "$DIFF_F" | grep -avE '^\+\+\+' \
-             | python3 "$CANON_DIR/bin/secret_scan.py")
+             | python3 -I "$CANON_DIR/bin/secret_scan.py")
 SCAN_RC=$?
 if [ $SCAN_RC -eq 2 ] || [ $SCAN_RC -gt 2 ]; then
   echo "FAIL: secret scanner crashed (rc=$SCAN_RC)"; fails=$((fails+1))
@@ -71,7 +71,7 @@ else
 fi
 
 # --- 2. forbidden patterns (project policy) ---
-FORB=$(PJ="$PJ" python3 -c 'import json,os
+FORB=$(PJ="$PJ" python3 -I -c 'import json,os
 try:
     v = (json.load(open(os.environ["PJ"])).get("security") or {}).get("forbidden_patterns")
     print("\n".join(v) if isinstance(v, list) else "")
@@ -81,7 +81,7 @@ if [ -n "$FORB" ]; then
   # .changes/*.md fragment or spec document legitimately describes
   # what was removed ("removed calls to dangerous_call()"). The
   # '+++ b/<path>' headers in DIFF_F give every hit its filename.
-  FP_BAD=$(FORB="$FORB" DIFF_F="$DIFF_F" python3 - <<'PY'
+  FP_BAD=$(FORB="$FORB" DIFF_F="$DIFF_F" python3 -I - <<'PY'
 import os, re
 pats = [p for p in os.environ["FORB"].splitlines() if p.strip()]
 bad = []

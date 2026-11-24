@@ -461,7 +461,7 @@ git reset -q; rm -f db/migrations/011_up.sql
 # appends are denied (exit 3).
 CL="$SCRATCH/canon/bin/cycle_log.sh"
 REG=$("$CL" register --actor exec-1 --role executor)
-EX_TOKEN=$(printf '%s' "$REG" | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')
+EX_TOKEN=$(printf '%s' "$REG" | python3 -I -c 'import json,sys;print(json.load(sys.stdin)["token"])')
 "$CL" append --item i_1 --actor exec-1 --action commit \
   --expected e --result r --status open --verdict failure \
   --failure-class gate_blocked >/dev/null
@@ -479,7 +479,7 @@ expect T41b-resolve-no-token 3 $?
 "$CL" close --actor exec-1 --token "$EX_TOKEN" --item i_2 >"$SCRATCH/out" 2>&1
 expect T42a-esc-self-close 3 $?
 REG2=$("$CL" register --actor orc-1 --role orchestrator)
-ORC_TOKEN=$(printf '%s' "$REG2" | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')
+ORC_TOKEN=$(printf '%s' "$REG2" | python3 -I -c 'import json,sys;print(json.load(sys.stdin)["token"])')
 "$CL" close --actor orc-1 --token "$ORC_TOKEN" --for-actor exec-1 \
   --item i_2 >"$SCRATCH/out" 2>&1
 expect T42b-esc-cross-close 0 $?
@@ -620,7 +620,8 @@ mkdir -p "$PANEL_DIR/canon/bin" "$PANEL_DIR/canon/forge" \
          "$PANEL_DIR/canon/config" "$PANEL_DIR/docs/specs" "$PANEL_DIR/.changes"
 (cd "$PANEL_DIR" && git init -q -b main . && git config user.email t@t && git config user.name t)
 for f in gate_run panel_verdict panel_gate spec_anchor_check docs_check \
-         security_check quality_check fidelity_check hygiene_check gh_id; do
+         security_check quality_check fidelity_check hygiene_check gh_id \
+         cycle_log; do
   cp "$CANON_DIR/bin/$f.sh" "$PANEL_DIR/canon/bin/"
 done
 cp "$CANON_DIR/bin/secret_scan.py" "$CANON_DIR/bin/md_anchors.py" \
@@ -647,6 +648,21 @@ GR="$PANEL_DIR/canon/bin/gate_run.sh"
 PV="$PANEL_DIR/canon/bin/panel_verdict.sh"
 PG="$PANEL_DIR/canon/bin/panel_gate.sh"
 
+# Domain signal publication requires a registered actor whose role is
+# reviewer_<domain> (review_11: role<->domain binding is enforced
+# against canon/actors.json, not just prompted).
+declare -A PV_TOK
+for d in security docs quality design tester fidelity product; do
+  PV_TOK[$d]=$(cd "$PANEL_DIR" && bash canon/bin/cycle_log.sh register \
+    --actor "rev_$d" --role "reviewer_$d" 2>/dev/null \
+    | python3 -c 'import json,sys;print(json.loads(sys.stdin.read()).get("token") or "")')
+done
+pv_set() {  # pv_set <domain> <sha> <record.json> [extra args]
+  local d=$1 s=$2 rec=$3; shift 3
+  (cd "$PANEL_DIR" && bash "$PV" set --pr 1 --sha "$s" --record "$rec" \
+     --actor "rev_$d" --token "${PV_TOK[$d]}" "$@")
+}
+
 # T51: floor run attests + status/verify round-trip
 (cd "$PANEL_DIR" && bash "$GR" run --check docs_check --candidate $PSHA) >"$SCRATCH/out" 2>&1
 expect T51a-floor-run 0 $?
@@ -661,23 +677,23 @@ cat > "$SCRATCH/vsec.json" <<EOF
 {"domain":"security","head":"$PSHA","summary":"s","receipt":["a.txt"],
  "findings":[{"severity":"CRITICAL","text":"x"}]}
 EOF
-(cd "$PANEL_DIR" && bash "$PV" set --pr 1 --sha $PSHA --record "$SCRATCH/vsec.json") >"$SCRATCH/out" 2>&1
+pv_set security $PSHA "$SCRATCH/vsec.json" >"$SCRATCH/out" 2>&1
 expect T52a-critical-failure 0 $? '"state": "failure"'
 cat > "$SCRATCH/vdocs.json" <<EOF
 {"domain":"docs","head":"$PSHA","summary":"s","receipt":["a.txt"],"findings":[]}
 EOF
-(cd "$PANEL_DIR" && bash "$PV" set --pr 1 --sha $PSHA --record "$SCRATCH/vdocs.json") >"$SCRATCH/out" 2>&1
+pv_set docs $PSHA "$SCRATCH/vdocs.json" >"$SCRATCH/out" 2>&1
 expect T52b-clean-success 0 $? '"state": "success"'
 # a record whose head disagrees with --sha is stale_input
 sed "s/\"head\":\"$PSHA\"/\"head\":\"0000000000000000000000000000000000000000\"/" \
   "$SCRATCH/vdocs.json" > "$SCRATCH/vbad.json"
-(cd "$PANEL_DIR" && bash "$PV" set --pr 1 --sha $PSHA --record "$SCRATCH/vbad.json") >"$SCRATCH/out" 2>&1
+pv_set docs $PSHA "$SCRATCH/vbad.json" >"$SCRATCH/out" 2>&1
 expect T52c-stale-head-record 2 $? "stale_input"
 # missing receipt is malformed_input
 cat > "$SCRATCH/vnr.json" <<EOF
 {"domain":"docs","head":"$PSHA","summary":"s","findings":[]}
 EOF
-(cd "$PANEL_DIR" && bash "$PV" set --pr 1 --sha $PSHA --record "$SCRATCH/vnr.json") >"$SCRATCH/out" 2>&1
+pv_set docs $PSHA "$SCRATCH/vnr.json" >"$SCRATCH/out" 2>&1
 expect T52d-no-receipt 2 $? "receipt"
 
 # T53: panel gate fail-closed on missing domains, then passes
@@ -687,7 +703,7 @@ for d in quality design tester fidelity; do
 cat > "$SCRATCH/v_$d.json" <<EOF
 {"domain":"$d","head":"$PSHA","summary":"s","receipt":["a.txt"],"findings":[]}
 EOF
-(cd "$PANEL_DIR" && bash "$PV" set --pr 1 --sha $PSHA --record "$SCRATCH/v_$d.json" >/dev/null 2>&1)
+pv_set "$d" $PSHA "$SCRATCH/v_$d.json" >/dev/null 2>&1
 done
 # security still failing -> gate stays blocked
 (cd "$PANEL_DIR" && bash "$PG" --sha $PSHA --worktree . --info-file /dev/null) >"$SCRATCH/out" 2>&1
@@ -695,7 +711,7 @@ expect T53b-failed-domain 1 $? "security:failure"
 cat > "$SCRATCH/vsec2.json" <<EOF
 {"domain":"security","head":"$PSHA","summary":"fixed","receipt":["a.txt"],"findings":[]}
 EOF
-(cd "$PANEL_DIR" && bash "$PV" set --pr 1 --sha $PSHA --record "$SCRATCH/vsec2.json" >/dev/null 2>&1)
+pv_set security $PSHA "$SCRATCH/vsec2.json" >/dev/null 2>&1
 (cd "$PANEL_DIR" && bash "$PG" --sha $PSHA --worktree . --info-file /dev/null) >"$SCRATCH/out" 2>&1
 expect T53c-panel-green 0 $? '"ok": true'
 
@@ -711,7 +727,7 @@ cat > "$SCRATCH/vunc.json" <<EOF
 {"domain":"docs","head":"$NSHA","summary":"s","receipt":["a.txt"],
  "findings":[{"severity":"UNCERTAIN","text":"cannot verify X"}]}
 EOF
-(cd "$PANEL_DIR" && bash "$PV" set --pr 1 --sha $NSHA --record "$SCRATCH/vunc.json") >"$SCRATCH/out" 2>&1
+pv_set docs $NSHA "$SCRATCH/vunc.json" >"$SCRATCH/out" 2>&1
 expect T55-uncertain-failure 0 $? '"state": "failure"'
 
 # --- T56: a secret inside a binary/invalid-UTF-8 file is still
@@ -725,7 +741,7 @@ expect T56-binary-secret 1 $? "secret"
 # malformed UTF-8 in the stream must neither crash nor slip past the
 # scanner: errors=replace decodes it and the ASCII key body still trips.
 printf 'x = "sk-%s" \xff\xfe\n' 'abcdefghijklmnopqrst1234' \
-  | python3 "$CANON_DIR/bin/secret_scan.py" >/dev/null 2>&1
+  | python3 -I "$CANON_DIR/bin/secret_scan.py" >/dev/null 2>&1
 [ $? -eq 1 ] && { echo "PASS T56b-nonutf8-scanned"; pass=$((pass+1)); } \
   || { echo "FAIL T56b-nonutf8-scanned: scanner must flag rc=1"; fail=$((fail+1)); }
 
@@ -879,7 +895,7 @@ expect T65b-title-link-broken 1 $? "nope.md"
 # --- T66: forbidden_patterns must actually scan the delta file (the
 # FORB block once read a removed bash variable - silent fail-open).
 cp "$PANEL_DIR/canon/project.json" "$SCRATCH/pj_t66.bak"
-python3 - "$PANEL_DIR/canon/project.json" <<'PY'
+python3 -I - "$PANEL_DIR/canon/project.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 d["security"] = {"forbidden_patterns": ["dangerous_call\\("]}
@@ -935,7 +951,7 @@ expect T67c-bad-issue 1 $? "missing 'issue"
 # --- T68: forbidden_patterns exempts .changes/ prose but the
 # secret scanner still sees those files (review_7 #6).
 cp "$PANEL_DIR/canon/project.json" "$SCRATCH/pj_t68.bak"
-python3 - "$PANEL_DIR/canon/project.json" <<'PY'
+python3 -I - "$PANEL_DIR/canon/project.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 d["security"] = {"forbidden_patterns": ["dangerous_call\\("]}

@@ -5,6 +5,7 @@
 # adapter under canon/forge/<forge>.sh maps it to the forge API.
 #
 #   panel_verdict.sh set --pr <N> --sha <sha40> --record <verdict.json>
+#                       --actor <id> --token <capability-token>
 #   panel_verdict.sh get --sha <sha40> [--domain <d>]
 #
 # verdict.json:
@@ -28,20 +29,21 @@ PJ="$CANON_DIR/project.json"
 REG="$CANON_DIR/config/review_panel.json"
 FORGE_DIR="$CANON_DIR/forge"
 
-json_err() { python3 -c 'import json,sys;print(json.dumps({"status":"error","failure_class":sys.argv[1],"message":sys.argv[2]}))' "$1" "$2"; }
+json_err() { python3 -I -c 'import json,sys;print(json.dumps({"status":"error","failure_class":sys.argv[1],"message":sys.argv[2]}))' "$1" "$2"; }
 
 usage() {
-  echo "usage: panel_verdict.sh set --pr <N> --sha <sha40> --record <verdict.json>" >&2
+  echo "usage: panel_verdict.sh set --pr <N> --sha <sha40> --record <verdict.json> --actor <id> --token <tok>" >&2
   echo "       panel_verdict.sh get --sha <sha40> [--domain <d>]" >&2
   exit 2
 }
 [ $# -ge 1 ] || usage
 CMD=$1; shift
 
-PR=""; SHA=""; RECORD=""; DOMAIN=""
+PR=""; SHA=""; RECORD=""; DOMAIN=""; ACTOR=""; TOKEN=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --pr) PR=$2;; --sha) SHA=$2;; --record) RECORD=$2;; --domain) DOMAIN=$2;;
+    --actor) ACTOR=$2;; --token) TOKEN=$2;;
     *) usage;;
   esac; shift 2
 done
@@ -49,7 +51,7 @@ done
 
 # Forge adapter resolution: project.json `forge` (default github) ->
 # canon/forge/<forge>.sh must exist.
-FORGE=$(PJ="$PJ" python3 -c 'import json,os
+FORGE=$(PJ="$PJ" python3 -I -c 'import json,os
 try: print(json.load(open(os.environ["PJ"])).get("forge") or "github")
 except Exception: print("github")' 2>/dev/null)
 [[ "$FORGE" =~ ^[a-z][a-z0-9_]*$ ]] || { json_err malformed_input "bad forge name"; exit 2; }
@@ -60,7 +62,7 @@ ADAPTER="$FORGE_DIR/$FORGE.sh"
 # repo_pr_review.sh) - panel signals must be created by the review
 # identity, not the merge/author account.
 API_BIN="${GH_BIN:-}"
-ALLOWED=$(PJ="$PJ" python3 -c 'import json,os,re
+ALLOWED=$(PJ="$PJ" python3 -I -c 'import json,os,re
 try:
     pj = json.load(open(os.environ["PJ"]))
     rev = pj.get("review") or {}
@@ -72,7 +74,7 @@ try:
     print(" ".join(b for b in bins if re.fullmatch(r"[A-Za-z0-9_-]+", b or "")))
 except Exception: print("gh")' 2>/dev/null)
 if [ -z "$API_BIN" ]; then
-  API_BIN=$(PJ="$PJ" python3 -c 'import json,os
+  API_BIN=$(PJ="$PJ" python3 -I -c 'import json,os
 try:
     pj = json.load(open(os.environ["PJ"])); rev = pj.get("review") or {}
     print(rev.get("gh_bin") or rev.get("api_bin") or "gh")
@@ -93,10 +95,10 @@ fi
 [[ "$PR" =~ ^[0-9]+$ ]] || { json_err malformed_input "--pr must be numeric"; exit 2; }
 [ -f "$RECORD" ] || { json_err not_found "--record file missing"; exit 2; }
 # realpath -m is GNU-only - python3 is the portable canonicalizer.
-RECORD=$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$RECORD")
+RECORD=$(python3 -I -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$RECORD")
 
 # Validate + derive the signal state + build the comment body.
-DERIVED=$(RECORD="$RECORD" REG="$REG" SHA="$SHA" CANON_DIR="$CANON_DIR" python3 - <<'PY'
+DERIVED=$(RECORD="$RECORD" REG="$REG" SHA="$SHA" CANON_DIR="$CANON_DIR" python3 -I - <<'PY'
 import json, os, sys
 reg = json.load(open(os.environ["REG"]))
 domains = reg.get("domains") or {}
@@ -146,10 +148,50 @@ print(json.dumps(out))
 PY
 ) || { echo "$DERIVED"; exit 2; }
 
-ST=$(printf '%s' "$DERIVED" | python3 -c 'import json,sys;print(json.loads(sys.stdin.read()).get("state"))')
-DOM=$(printf '%s' "$DERIVED" | python3 -c 'import json,sys;print(json.loads(sys.stdin.read()).get("domain"))')
-SIG=$(printf '%s' "$DERIVED" | python3 -c 'import json,sys;print(json.loads(sys.stdin.read()).get("signal"))')
-GC=$(printf '%s' "$DERIVED" | python3 -c 'import json,sys;print(json.loads(sys.stdin.read()).get("gate_check") or "")')
+ST=$(printf '%s' "$DERIVED" | python3 -I -c 'import json,sys;print(json.loads(sys.stdin.read()).get("state"))')
+DOM=$(printf '%s' "$DERIVED" | python3 -I -c 'import json,sys;print(json.loads(sys.stdin.read()).get("domain"))')
+SIG=$(printf '%s' "$DERIVED" | python3 -I -c 'import json,sys;print(json.loads(sys.stdin.read()).get("signal"))')
+GC=$(printf '%s' "$DERIVED" | python3 -I -c 'import json,sys;print(json.loads(sys.stdin.read()).get("gate_check") or "")')
+
+# Domain ownership is cryptographic, not a prompt convention: the
+# caller must present an actors.json capability token whose actor_id
+# is registered under role `reviewer_<domain>` for the domain it is
+# publishing. One shared review identity (review.gh_bin) signs every
+# ccsdd/<domain> signal, so without this binding any panel member (or
+# a hijacked/hallucinating reviewer) could overwrite a foreign
+# domain's verdict. Fail-closed: no registry or no matching
+# actor+token+role -> no signal.
+if [ "$CMD" = "set" ]; then
+  ACTOR_CHECK=$(ACTORS="$CANON_DIR/actors.json" ACTOR="$ACTOR" \
+    TOKEN="$TOKEN" DOM="$DOM" python3 -I - <<'PY'
+import hashlib, json, os, sys
+def die(msg): print(msg); sys.exit(1)
+actor, token, dom = (os.environ.get(k) or "" for k in ("ACTOR","TOKEN","DOM"))
+if not actor or not token:
+    die("missing --actor/--token")
+path = os.environ["ACTORS"]
+if not os.path.isfile(path):
+    die("no actor registry - run: cycle_log.sh register --actor %s --role reviewer_%s" % (actor, dom))
+try:
+    reg = json.load(open(path, encoding="utf-8"))
+    actors = reg.get("actors") or []
+except Exception:
+    die("actor registry unreadable")
+h = hashlib.sha256(token.encode()).hexdigest()
+want_role = "reviewer_" + dom
+for a in actors:
+    if a.get("actor_id") != actor:
+        continue
+    if a.get("token_sha256") != h:
+        die("bad token for actor '%s'" % actor)
+    if a.get("role") != want_role:
+        die("actor role '%s' cannot publish domain '%s' (needs %s)"
+            % (a.get("role"), dom, want_role))
+    sys.exit(0)
+die("actor '%s' not registered for role %s" % (actor, want_role))
+PY
+) || { json_err unauthorized "panel_verdict: ${ACTOR_CHECK:-actor check failed}"; exit 2; }
+fi
 
 # Mechanical floor enforcement (independent of the caller's honesty):
 # a hybrid/ci domain may only emit success when its floor record on
@@ -162,7 +204,7 @@ if [ -n "$GC" ] && [ "$ST" = "success" ]; then
 fi
 
 # Compose the findings comment; hygiene-gate every outgoing text.
-BODY=$(DERIVED="$DERIVED" SHA="$SHA" ST="$ST" FLOOR_NOTE="${FLOOR_NOTE:-}" python3 - <<'PY'
+BODY=$(DERIVED="$DERIVED" SHA="$SHA" ST="$ST" FLOOR_NOTE="${FLOOR_NOTE:-}" python3 -I - <<'PY'
 import json, os
 d = json.loads(os.environ["DERIVED"])
 head = os.environ["SHA"][:8]
@@ -191,11 +233,11 @@ BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/panel-verdict.XXXXXX.md")
 trap 'rm -f "$BODY_FILE"' EXIT INT TERM
 printf '%s' "$BODY" > "$BODY_FILE"
 CURL_OUT=$(bash "$ADAPTER" finding_post --pr "$PR" --body-file "$BODY_FILE" 2>/dev/null)
-CURL=$(printf '%s' "$CURL_OUT" | python3 -c 'import json,sys
+CURL=$(printf '%s' "$CURL_OUT" | python3 -I -c 'import json,sys
 try: print(json.loads(sys.stdin.read() or "{}").get("url") or "")
 except Exception: print("")' 2>/dev/null)
 
-DESCR=$(printf '%s' "$DERIVED" | python3 -c 'import json,sys
+DESCR=$(printf '%s' "$DERIVED" | python3 -I -c 'import json,sys
 d=json.loads(sys.stdin.read()); n=len(d["findings"])
 b=sum(1 for f in d["findings"] if f["severity"] in ("CRITICAL","UNCERTAIN"))
 print((f"{b} blocking finding(s), {n} total" if n else "no findings")[:140])')
@@ -207,7 +249,7 @@ bash "$ADAPTER" signal_set --sha "$SHA" --context "$SIG" --state "$ST" \
 # at auto-merge - count them into the cycle log so a risk:high human
 # sign-off summary shows the accumulated debt. Best-effort: the
 # merge workspace may lack the actor registry, never block on it.
-WARN_N=$(printf '%s' "$DERIVED" | python3 -c 'import json,sys
+WARN_N=$(printf '%s' "$DERIVED" | python3 -I -c 'import json,sys
 d=json.loads(sys.stdin.read())
 print(sum(1 for f in d["findings"] if f["severity"]=="WARNING"))' 2>/dev/null || echo 0)
 VERDICT_C="ok"; [ "$ST" = "success" ] || VERDICT_C="failure"
@@ -225,4 +267,4 @@ else
     --status closed --verdict failure --failure-class panel_domain >/dev/null 2>&1 || true
 fi
 
-python3 -c 'import json,sys;print(json.dumps({"status":"ok","signal":sys.argv[1],"state":sys.argv[2],"sha":sys.argv[3]}))' "$SIG" "$ST" "$SHA"
+python3 -I -c 'import json,sys;print(json.dumps({"status":"ok","signal":sys.argv[1],"state":sys.argv[2],"sha":sys.argv[3]}))' "$SIG" "$ST" "$SHA"

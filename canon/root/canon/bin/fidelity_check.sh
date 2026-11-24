@@ -22,7 +22,7 @@ PJ="$CANON_DIR/project.json"
 
 BASE="${BASE:-}"
 if [ -z "$BASE" ]; then
-  BB=$(PJ="$PJ" python3 -c 'import json,os
+  BB=$(PJ="$PJ" python3 -I -c 'import json,os
 try: print(json.load(open(os.environ["PJ"])).get("base_branch") or "main")
 except Exception: print("main")' 2>/dev/null)
   for r in "origin/$BB" "$BB"; do
@@ -44,7 +44,7 @@ for f in $DELTA_FILES; do
   [ -n "$f" ] && [ -f "$TOP/$f" ] && SCAN_FILES="$SCAN_FILES $f"
 done
 
-TOP="$TOP" SCAN_FILES="$SCAN_FILES" python3 - <<'PY'
+TOP="$TOP" SCAN_FILES="$SCAN_FILES" python3 -I - <<'PY'
 import os, re
 top = os.environ["TOP"]
 files = os.environ.get("SCAN_FILES","").split()

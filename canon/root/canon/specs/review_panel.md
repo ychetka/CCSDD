@@ -80,7 +80,8 @@ gate, never launched by canon.
 ## Verdict records and signals
 
 A domain reviewer publishes via
-`canon/bin/panel_verdict.sh set --pr <N> --sha <head> --record v.json`:
+`canon/bin/panel_verdict.sh set --pr <N> --sha <head> --record v.json
+--actor <id> --token <tok>`:
 
 ```json
 {"domain":"<name>","head":"<sha>","summary":"...",
@@ -91,6 +92,15 @@ A domain reviewer publishes via
 `receipt` entries must name actual inspected files - blank strings
 and placeholders (`none`, `n/a`, `todo`, `null`, `-`, ...) are
 rejected by the wrapper before the signal is derived.
+
+Domain ownership is enforced cryptographically, not by convention:
+`set` requires `--actor`/`--token` naming an entry in
+`canon/actors.json` whose role is exactly `reviewer_<domain>` of
+the record's domain (register via `cycle_log.sh register --actor
+<id> --role reviewer_<domain>`; the token is issued once). Since
+all domains publish through one shared review identity, this is the
+only barrier against a panel member overwriting a foreign domain's
+signal - absent or mismatched credentials reject the publication.
 
 Severity taxonomy (identical to harness.md §4.6): CRITICAL/UNCERTAIN
 are blocking and force `failure` mechanically; WARNING and MINOR

@@ -81,7 +81,7 @@ fi
 # check_setup.sh at instance start. This check just raises tampering
 # from a one-file to a two-file edit.)
 if [ -f "$CANON_DIR/canon_manifest.json" ]; then
-  if ! CANON_DIR="$CANON_DIR" python3 - <<'PY'
+  if ! CANON_DIR="$CANON_DIR" python3 -I - <<'PY'
 import hashlib, json, os, sys
 canon_dir = os.environ["CANON_DIR"]
 try:
@@ -161,7 +161,7 @@ fi
 # Explicit file args bound this commit: anything ELSE already staged
 # must not ride along into a commit the caller never asked for.
 if [ $# -gt 0 ]; then
-  if ! STAGED_Z="$STAGED_Z" REQ_Z="$REQ_Z" python3 - <<'PY'
+  if ! STAGED_Z="$STAGED_Z" REQ_Z="$REQ_Z" python3 -I - <<'PY'
 import os, sys
 staged = set(open(os.environ["STAGED_Z"], "rb").read().split(b"\0")) - {b""}
 req = set(open(os.environ["REQ_Z"], "rb").read().split(b"\0")) - {b""}
@@ -206,7 +206,7 @@ fi
 # path - realpath -m does not exist on macOS, and falling back to the
 # uncanonicalized string would silently skip the index/HEAD checks.
 WL_DIR=$(dirname "$WL"); WL_BASE=$(basename "$WL")
-REL_DIR=$(WL_DIR="$WL_DIR" TOP="$TOP" python3 -c 'import os,sys; sys.stdout.write(os.path.relpath(os.path.realpath(os.environ["WL_DIR"]), os.path.realpath(os.environ["TOP"])))' 2>/dev/null) \
+REL_DIR=$(WL_DIR="$WL_DIR" TOP="$TOP" python3 -I -c 'import os,sys; sys.stdout.write(os.path.relpath(os.path.realpath(os.environ["WL_DIR"]), os.path.realpath(os.environ["TOP"])))' 2>/dev/null) \
   || REL_DIR=""
 case "$REL_DIR" in
   ../*|"") REL_WL="" ;;
@@ -217,6 +217,21 @@ wl_in_index=0; wl_in_head=0
 if [ -n "$REL_WL" ]; then
   git cat-file -e ":$REL_WL" 2>/dev/null && wl_in_index=1
   git cat-file -e "HEAD:$REL_WL" 2>/dev/null && wl_in_head=1
+fi
+# Branch binding: a live on-disk whitelist may carry a `# branch:
+# <name>` header pinning it to the branch it was written for. A
+# whitelist left over from a previous item must not silently widen
+# (or silently restrict) the scope of the next task on a different
+# branch. Index/HEAD versions are exempt - their owning commit is
+# already history.
+if [ -f "$WL" ]; then
+  WL_BRANCH=$(grep -m1 -E '^# *branch:' "$WL" | sed -E 's/^# *branch: *//; s/[[:space:]]+$//' || true)
+  CUR_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+  if [ -n "$WL_BRANCH" ] && [ -n "$CUR_BRANCH" ] && [ "$WL_BRANCH" != "$CUR_BRANCH" ]; then
+    echo "SCOPE_GATE: whitelist belongs to branch '$WL_BRANCH', current branch is '$CUR_BRANCH'" >&2
+    echo "(regenerate or remove $WL - a stale whitelist must not gate a different item)" >&2
+    exit 2
+  fi
 fi
 if [ -f "$WL" ] || [ "$wl_in_index" -eq 1 ] || [ "$wl_in_head" -eq 1 ]; then
   # When the staged set touches the whitelist path itself (edit,
@@ -229,7 +244,7 @@ if [ -f "$WL" ] || [ "$wl_in_index" -eq 1 ] || [ "$wl_in_head" -eq 1 ]; then
   # whitelist outside the toplevel cannot appear in the diff).
   wl_changed=0
   if [ -n "$REL_WL" ]; then
-    STAGED_Z="$STAGED_Z" REL_WL="$REL_WL" python3 -c 'import os,sys; sys.exit(0 if os.environ["REL_WL"].encode() in open(os.environ["STAGED_Z"],"rb").read().split(b"\0") else 1)' \
+    STAGED_Z="$STAGED_Z" REL_WL="$REL_WL" python3 -I -c 'import os,sys; sys.exit(0 if os.environ["REL_WL"].encode() in open(os.environ["STAGED_Z"],"rb").read().split(b"\0") else 1)' \
       && wl_changed=1
   fi
   # Evaluate the whitelist content that will actually be committed:
@@ -255,7 +270,7 @@ if [ -f "$WL" ] || [ "$wl_in_index" -eq 1 ] || [ "$wl_in_head" -eq 1 ]; then
   # be a NON-EMPTY, non-wildcard-everything list. Committing an empty
   # whitelist (or "*" / "/") would silently disarm the gate for every
   # later commit.
-  RULE_CHECK=$(WL_RULES="$wl_rules" python3 - <<'PY' 2>/dev/null
+  RULE_CHECK=$(WL_RULES="$wl_rules" python3 -I - <<'PY' 2>/dev/null
 import os, sys
 ok = 0
 for ln in os.environ["WL_RULES"].splitlines():

@@ -39,7 +39,7 @@ trap 'rm -f "$REVIEWS_JSONL"' EXIT
   echo '{"status":"error","failure_class":"upstream_error","message":"reviews fetch failed"}'
   exit 1
 }
-CFG=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os
+CFG=$(CANON_DIR="$CANON_DIR" python3 -I -c 'import json,os
 try:
     pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
     rev = pj.get("review") or {}
@@ -65,7 +65,7 @@ except Exception:
 # key:value only, same parser contract as issue_merge's FRAG_SCAN.
 # Fragment bodies come from the PR head via the contents API so the
 # report does not depend on the local checkout having the branch.
-RISK_HIGH=$(GH_OUT="$GH_OUT" GH_BIN="$GH_BIN" python3 -c '
+RISK_HIGH=$(GH_OUT="$GH_OUT" GH_BIN="$GH_BIN" python3 -I -c '
 import json, os, re, subprocess, base64
 try:
     d = json.loads(os.environ["GH_OUT"])
@@ -106,7 +106,7 @@ for p in frags:
 print("yes" if risk else "no")' 2>/dev/null || echo no)
 
 GH_OUT="$GH_OUT" CFG="$CFG" RISK_HIGH="$RISK_HIGH" \
-REVIEWS_JSONL="$REVIEWS_JSONL" python3 -c '
+REVIEWS_JSONL="$REVIEWS_JSONL" python3 -I -c '
 import json, os, sys
 try:
     d = json.loads(os.environ["GH_OUT"])

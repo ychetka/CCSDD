@@ -22,11 +22,11 @@ TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-
 cd "$TOP"
 
 json_error() {
-  python3 -c 'import json,sys;print(json.dumps({"status":"error","failure_class":sys.argv[1],"message":sys.argv[2]}))' "$1" "$2"
+  python3 -I -c 'import json,sys;print(json.dumps({"status":"error","failure_class":sys.argv[1],"message":sys.argv[2]}))' "$1" "$2"
   exit 1
 }
 json_blocked() {
-  python3 -c 'import json,sys;print(json.dumps({"status":"blocked","failure_class":sys.argv[1],"message":sys.argv[2]}))' "$1" "$2"
+  python3 -I -c 'import json,sys;print(json.dumps({"status":"blocked","failure_class":sys.argv[1],"message":sys.argv[2]}))' "$1" "$2"
   exit 1
 }
 
@@ -50,8 +50,8 @@ INFO=$("$GH" pr view "$PR" --json headRefName,baseRefName 2>"$INFO_ERR") || {
   json_error upstream_error "$(cat "$INFO_ERR" 2>/dev/null | head -c 300)"
 }
 rm -f "$INFO_ERR"
-HEAD_BRANCH=$(INFO="$INFO" python3 -c 'import json,os;print((json.loads(os.environ["INFO"]) or {}).get("headRefName") or "")' 2>/dev/null)
-BASE=$(INFO="$INFO" python3 -c 'import json,os;print((json.loads(os.environ["INFO"]) or {}).get("baseRefName") or "")' 2>/dev/null)
+HEAD_BRANCH=$(INFO="$INFO" python3 -I -c 'import json,os;print((json.loads(os.environ["INFO"]) or {}).get("headRefName") or "")' 2>/dev/null)
+BASE=$(INFO="$INFO" python3 -I -c 'import json,os;print((json.loads(os.environ["INFO"]) or {}).get("baseRefName") or "")' 2>/dev/null)
 
 [[ "$HEAD_BRANCH" =~ ^epic_issue_([0-9]+)-[a-z0-9][a-z0-9_-]*$ ]] \
   || json_error gate_blocked "epic_merge.sh requires an epic_issue_<N>-<slug> head, got '$HEAD_BRANCH' (route via repo_merge.sh)"
@@ -80,7 +80,7 @@ TMPD_RM="$CANON_DIR/roadmap.md"
 
 # Roadmap resolve: the `## Item` block declaring `issue: <EN>` must
 # be `type: epic` with a non-empty `tasks: [M,...]` list.
-TASKS=$(RM="$TMPD_RM" EN="$EN" python3 - <<'PY'
+TASKS=$(RM="$TMPD_RM" EN="$EN" python3 -I - <<'PY'
 import json, os, re
 en = os.environ["EN"]
 body = open(os.environ["RM"], encoding="utf-8", errors="replace").read()
@@ -107,7 +107,7 @@ if not nums or not all(re.fullmatch(r"\d+", n) for n in nums):
 print(json.dumps({"tasks": [str(int(n)) for n in nums]}))
 PY
 )
-TASKS_ERR=$(TASKS="$TASKS" python3 -c 'import json,os;print(json.loads(os.environ["TASKS"]).get("error") or "")')
+TASKS_ERR=$(TASKS="$TASKS" python3 -I -c 'import json,os;print(json.loads(os.environ["TASKS"]).get("error") or "")')
 if [ -n "$TASKS_ERR" ]; then
   json_blocked epic_incomplete "$TASKS_ERR"
 fi
@@ -123,7 +123,7 @@ fi
 
 # Objective evidence per task: fragment with `issue: M` in the
 # merge-base..head diff AND issue state CLOSED.
-PENDING=$(EXPECTED="$EXPECTED" BASE_REF="$REMOTE/$BASE" TASKS="$TASKS" python3 - <<'PY'
+PENDING=$(EXPECTED="$EXPECTED" BASE_REF="$REMOTE/$BASE" TASKS="$TASKS" python3 -I - <<'PY'
 import json, os, re, subprocess
 expected = os.environ["EXPECTED"]; base = os.environ["BASE_REF"]
 tasks = json.loads(os.environ["TASKS"])["tasks"]
@@ -162,7 +162,7 @@ pending = [t for t in tasks if t not in have]
 print(json.dumps({"pending": pending, "have": sorted(have, key=int)}))
 PY
 )
-PEND_LIST=$(PENDING="$PENDING" python3 -c 'import json,os;print(" ".join(json.loads(os.environ["PENDING"])["pending"]))')
+PEND_LIST=$(PENDING="$PENDING" python3 -I -c 'import json,os;print(" ".join(json.loads(os.environ["PENDING"])["pending"]))')
 if [ -n "$PEND_LIST" ]; then
   json_blocked epic_incomplete "task issue(s) #$PEND_LIST have no .changes fragment on the epic branch - not shipped into the epic"
 fi
@@ -171,10 +171,10 @@ fi
 # A failed upstream call is an infrastructure error (upstream_error),
 # not a substantive epic_incomplete block - the routings differ.
 OPEN_TASKS=""
-for t in $(TASKS="$TASKS" python3 -c 'import json,os;print(" ".join(json.loads(os.environ["TASKS"])["tasks"]))'); do
+for t in $(TASKS="$TASKS" python3 -I -c 'import json,os;print(" ".join(json.loads(os.environ["TASKS"])["tasks"]))'); do
   st_json=$("$GH" issue view "$t" --json state 2>/dev/null) \
     || json_error upstream_error "failed to query issue #$t state"
-  st=$(printf '%s' "$st_json" | python3 -c 'import json,sys;print((json.load(sys.stdin) or {}).get("state") or "")' 2>/dev/null) \
+  st=$(printf '%s' "$st_json" | python3 -I -c 'import json,sys;print((json.load(sys.stdin) or {}).get("state") or "")' 2>/dev/null) \
     || json_error upstream_error "unparseable issue #$t state payload"
   [ "$st" = "CLOSED" ] || OPEN_TASKS="$OPEN_TASKS $t"
 done

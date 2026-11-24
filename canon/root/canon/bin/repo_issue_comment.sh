@@ -24,7 +24,7 @@ done
 
 HYGIENE_OUT=$(printf '%s\n' "$BODY" | "$CANON_DIR/bin/hygiene_check.sh")
 if [ $? -ne 0 ]; then
-  HYGIENE_OUT="$HYGIENE_OUT" python3 -c 'import json,os
+  HYGIENE_OUT="$HYGIENE_OUT" python3 -I -c 'import json,os
 try: v=json.loads(os.environ["HYGIENE_OUT"])
 except Exception: v={"raw": os.environ["HYGIENE_OUT"]}
 print(json.dumps({"status":"error","failure_class":"gate_blocked","violations":v.get("violations",v)}))'
@@ -32,7 +32,7 @@ print(json.dumps({"status":"error","failure_class":"gate_blocked","violations":v
 fi
 
 URL=$("$GH" issue comment "$ISSUE" --body "$BODY" 2>&1) || {
-  python3 -c 'import json,sys;print(json.dumps({"status":"error","failure_class":"upstream_error","message":sys.argv[1]}))' "$URL"
+  python3 -I -c 'import json,sys;print(json.dumps({"status":"error","failure_class":"upstream_error","message":sys.argv[1]}))' "$URL"
   exit 1
 }
-python3 -c 'import json,sys;print(json.dumps({"issue_id":int(sys.argv[1]),"url":sys.argv[2].strip(),"status":"ok"}))' "$ISSUE" "$URL"
+python3 -I -c 'import json,sys;print(json.dumps({"issue_id":int(sys.argv[1]),"url":sys.argv[2].strip(),"status":"ok"}))' "$ISSUE" "$URL"

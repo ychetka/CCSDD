@@ -22,7 +22,7 @@ fi
 [ -f "$PJ" ] || fail "$PJ missing"
 
 if [ -f "$PJ" ]; then
-CANON_DIR="$CANON_DIR" python3 - <<'PY'
+CANON_DIR="$CANON_DIR" python3 -I - <<'PY'
 import json, os, re, sys
 try:
     cfg = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
@@ -240,7 +240,7 @@ RP="$CANON_DIR/config/review_panel.json"
 if [ ! -f "$RP" ]; then
   fail "missing canon/config/review_panel.json (review panel registry)"
 else
-CANON_DIR="$CANON_DIR" RP="$RP" PJ="$PJ" python3 - <<'PY'
+CANON_DIR="$CANON_DIR" RP="$RP" PJ="$PJ" python3 -I - <<'PY'
 import json, os, re, sys
 canon_dir = os.environ["CANON_DIR"]
 errs = []
@@ -297,7 +297,7 @@ fi
 # consume policy.json / partners.json at call time - a corrupt file
 # there currently degrades to hardcoded defaults (fail-open).
 # Deployment validation is where the failure must surface.
-CANON_DIR="$CANON_DIR" python3 - <<'PY'
+CANON_DIR="$CANON_DIR" python3 -I - <<'PY'
 import json, os, sys
 canon_dir = os.environ["CANON_DIR"]
 errs = []
@@ -346,7 +346,7 @@ CM="$CANON_DIR/canon_manifest.json"
 if [ ! -f "$CM" ]; then
   fail "missing canon/canon_manifest.json (canon deploy stamp)"
 else
-  CANON_DIR="$CANON_DIR" CM="$CM" python3 - <<'PY'
+  CANON_DIR="$CANON_DIR" CM="$CM" python3 -I - <<'PY'
 import json, os, sys
 canon_dir, cm_path = os.environ["CANON_DIR"], os.environ["CM"]
 try:
@@ -515,9 +515,9 @@ GIT_TOP=$(git -C "$CANON_DIR/.." rev-parse --show-toplevel 2>/dev/null \
 # the uncanonicalized string silently broke the containment check on
 # symlinked workspace paths).
 if [ -n "$GIT_TOP" ]; then
-  GIT_TOP=$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$GIT_TOP" 2>/dev/null || printf '%s' "$GIT_TOP")
+  GIT_TOP=$(python3 -I -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$GIT_TOP" 2>/dev/null || printf '%s' "$GIT_TOP")
 fi
-CANON_REAL=$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$CANON_DIR" 2>/dev/null || printf '%s' "$CANON_DIR")
+CANON_REAL=$(python3 -I -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$CANON_DIR" 2>/dev/null || printf '%s' "$CANON_DIR")
 if [ -z "$GIT_TOP" ]; then
   ok "no enclosing git repo resolved (gitignore block not needed)"
 else
@@ -525,7 +525,7 @@ case "$CANON_REAL" in
   "$GIT_TOP"/*)
     GI="$GIT_TOP/.gitignore"
     if [ -f "$CM" ]; then
-      GIT_TOP="$GIT_TOP" CM="$CM" GI="$GI" python3 - <<'PY'
+      GIT_TOP="$GIT_TOP" CM="$CM" GI="$GI" python3 -I - <<'PY'
 import json, os, re, subprocess, sys
 top, gi = os.environ["GIT_TOP"], os.environ["GI"]
 try:
@@ -600,7 +600,7 @@ fi
 # all; github/gitlab resolve the merge identity through gh_id.sh
 # (api_bin > gh_bin > forge default) and ask THAT binary for auth
 # status - a gitlab project must never be graded on `gh`.
-FORGE=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os
+FORGE=$(CANON_DIR="$CANON_DIR" python3 -I -c 'import json,os
 try: print((json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json"))).get("forge") or "github"))
 except Exception: print("github")' 2>/dev/null || echo github)
 if [ "$FORGE" = "test" ]; then
@@ -648,7 +648,7 @@ if [ -d "$WS_DIR/.devin" ]; then
   # leaves the compiled policy stale - every new check head is
   # denied at exec time.
   if [ -f "$WS_DIR/.devin/config.json" ] && [ -f "$CANON_DIR/project.json" ]; then
-    DRIFT=$(WS_DIR="$WS_DIR" CANON_DIR="$CANON_DIR" python3 - <<'PY'
+    DRIFT=$(WS_DIR="$WS_DIR" CANON_DIR="$CANON_DIR" python3 -I - <<'PY'
 import json, os, sys
 try:
     pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
@@ -657,7 +657,7 @@ except Exception:
     sys.exit(0)
 gc = pj.get("gate_checks") or {}
 # devin.sh compiles each gate_checks argv as its full joined prefix
-# (Exec(python3 -m pytest), not Exec(python3)) so interpreter heads
+# (Exec(python3 -I -m pytest), not Exec(python3)) so interpreter heads
 # can stay denied globally - drift compares the same join.
 argvs = {" ".join(str(a) for a in v) for v in gc.values()
          if isinstance(v, list) and v and isinstance(v[0], str) and v[0]}
@@ -691,7 +691,7 @@ fi
 # hardcoded: the same canon ships to multiple repos and onboard
 # generates a per-repo token. An absent/placeholder canary key in the
 # stamp is a setup defect, not a pass.
-EXPECTED_CANARY=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os,re
+EXPECTED_CANARY=$(CANON_DIR="$CANON_DIR" python3 -I -c 'import json,os,re
 try:
     v = json.load(open(os.path.join(os.environ["CANON_DIR"], "canon_manifest.json"))).get("canary") or ""
     # the canary becomes a grep pattern - multi-line or non-token
@@ -717,7 +717,7 @@ if [ $fails -gt 0 ]; then
   echo "SETUP: $fails FAILURES - halt, do not proceed"
   exit 1
 fi
-CANON_DIR="$CANON_DIR" PJ="$PJ" python3 -c 'import json,os
+CANON_DIR="$CANON_DIR" PJ="$PJ" python3 -I -c 'import json,os
 c = json.load(open(os.environ["PJ"]))
 print("SETUP OK:", c.get("project_name") or c["repo"], c["text_language"])' 2>/dev/null \
   || echo "SETUP OK"

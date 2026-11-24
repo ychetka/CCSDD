@@ -24,7 +24,7 @@ case "$CLS" in merge|review) ;; *) echo "usage: gh_id.sh merge|review [login]" >
 # A login only refines the review class - a merge identity is always
 # the single merge credential, never a per-login profile.
 [ "$CLS" = "review" ] || LOGIN=""
-OUT=$(CANON_DIR="$CANON_DIR" CLS="$CLS" LOGIN="$LOGIN" python3 -c 'import json,os,re
+OUT=$(CANON_DIR="$CANON_DIR" CLS="$CLS" LOGIN="$LOGIN" python3 -I -c 'import json,os,re
 cls = os.environ["CLS"]
 login = os.environ.get("LOGIN", "").strip().lower()
 try:

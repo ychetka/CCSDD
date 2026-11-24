@@ -26,7 +26,7 @@ PJ="$CANON_DIR/project.json"
 # embedded in a binary still leaks).
 run_check() { # $1 = file to scan, $2 = mode (stdin|diff)
   HYGIENE_INPUT_FILE="$1" HYGIENE_MODE="$2" \
-  HYGIENE_PJ="$PJ" python3 - <<'PYEOF'
+  HYGIENE_PJ="$PJ" python3 -I - <<'PYEOF'
 import json, os, re, sys
 mode = os.environ.get("HYGIENE_MODE", "stdin")
 with open(os.environ["HYGIENE_INPUT_FILE"], encoding="utf-8",

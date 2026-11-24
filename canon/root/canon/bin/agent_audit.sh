@@ -21,7 +21,7 @@ if [ -f "$LOG" ]; then
   # Structured JSONL counting - a compact serializer (no space after
   # ':') or an escaped '"action": "commit"' inside another field's
   # string value would fool a plain grep -c.
-  LOG="$LOG" python3 - <<'PY'
+  LOG="$LOG" python3 -I - <<'PY'
 import json, os
 n = dict.fromkeys(
     ("agent_calls","commits","failures","escalations",

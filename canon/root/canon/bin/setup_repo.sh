@@ -90,7 +90,7 @@ fi
 # sending null would silently drop the branch's existing CI gates.
 EXISTING_CHECKS=$(gh api "repos/$REPO/branches/$BASE/protection" \
     --jq '.required_status_checks' 2>/dev/null || echo 'null')
-PROT=$(EXISTING="$EXISTING_CHECKS" python3 - <<'PY'
+PROT=$(EXISTING="$EXISTING_CHECKS" python3 -I - <<'PY'
 import json, os
 try:
     checks = json.loads(os.environ.get("EXISTING") or "null")
@@ -125,7 +125,7 @@ if [ -z "$DRY" ]; then
   # unknown fields, org rulesets may override). Fail loudly rather
   # than report a phantom protection.
   APPLIED=$(gh api "repos/$REPO/branches/$BASE/protection" 2>/dev/null || true)
-  echo "$APPLIED" | python3 -c 'import json,sys
+  echo "$APPLIED" | python3 -I -c 'import json,sys
 try:
     d = json.loads(sys.stdin.read())
 except Exception:

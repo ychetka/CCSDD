@@ -69,7 +69,7 @@ if [ "$CMD" = "register" ]; then
     *) echo "register: bad role '$ROLE'" >&2; exit 2;;
   esac
   ACTORS="$ACTORS" ACTOR="$ACTOR" ROLE="$ROLE" PROJECT="$PROJECT" \
-    REG_TOKEN="$REG_TOKEN" OWN_TOKEN="$OWN_TOKEN" python3 - <<'PY'
+    REG_TOKEN="$REG_TOKEN" OWN_TOKEN="$OWN_TOKEN" python3 -I - <<'PY'
 import datetime, hashlib, json, os, secrets, sys
 path, actor, role, project, reg_tok, own_tok = (os.environ[k] for k in
     ("ACTORS","ACTOR","ROLE","PROJECT","REG_TOKEN","OWN_TOKEN"))
@@ -132,7 +132,7 @@ if [ "$CMD" = "unregister" ]; then
     esac; shift 2
   done
   [ -n "$ACTOR" ] || { echo "unregister: --actor required" >&2; exit 2; }
-  ACTORS="$ACTORS" ACTOR="$ACTOR" REG_TOKEN="$REG_TOKEN" OWN_TOKEN="$OWN_TOKEN" python3 - <<'PY'
+  ACTORS="$ACTORS" ACTOR="$ACTOR" REG_TOKEN="$REG_TOKEN" OWN_TOKEN="$OWN_TOKEN" python3 -I - <<'PY'
 import hashlib, json, os, sys
 path, actor, reg_tok, own_tok = (os.environ[k] for k in
     ("ACTORS","ACTOR","REG_TOKEN","OWN_TOKEN"))
@@ -214,7 +214,7 @@ if [ "$CMD" = "append" ]; then
   BY="${BY:-$ACTOR}"
   if [ "$CLEARING" = "1" ]; then
     [ -n "$TOKEN" ] || { echo "append: --action $ACTION requires --token"; exit 3; }
-    AUTH=$(ACTORS="$ACTORS" BY="$BY" TOKEN="$TOKEN" ACTOR="$ACTOR" python3 - <<'PY'
+    AUTH=$(ACTORS="$ACTORS" BY="$BY" TOKEN="$TOKEN" ACTOR="$ACTOR" python3 -I - <<'PY'
 import hashlib, json, os, sys
 actors_path = os.environ["ACTORS"]
 caller, token, target = (os.environ[k] for k in ("BY","TOKEN","ACTOR"))
@@ -236,7 +236,7 @@ print(role)
 PY
 ) || { echo "append: token auth failed for --by $BY" >&2; exit 3; }
   fi
-  python3 - "$ITEM" "$ACTOR" "$ACTION" "$EXPECTED" "$RESULT" "$STATUS" "$VERDICT" "$FC" "$CLEARING" "$BY" "$AUTH" <<'PY' >> "$LOG"
+  python3 -I - "$ITEM" "$ACTOR" "$ACTION" "$EXPECTED" "$RESULT" "$STATUS" "$VERDICT" "$FC" "$CLEARING" "$BY" "$AUTH" <<'PY' >> "$LOG"
 import json, sys, datetime
 item, actor, action, expected, result, status, verdict, fc, clearing, by, role = sys.argv[1:12]
 rec = {
@@ -276,7 +276,7 @@ elif [ "$CMD" = "close" ]; then
   [ -f "$LOG" ] || { echo "cycle_log: no log file - nothing to close" >&2; exit 1; }
   LOG="$LOG" ACTORS="$ACTORS" ITEM="$ITEM" ACTOR="$ACTOR" TOKEN="$TOKEN" \
     VERDICT="$VERDICT" NOTE="$NOTE" DRY="$DRY" ALL="$ALL" FOR="$FOR" \
-    ALLOW_EMPTY="$ALLOW_EMPTY" python3 - <<'PY'
+    ALLOW_EMPTY="$ALLOW_EMPTY" python3 -I - <<'PY'
 import datetime, hashlib, json, os, sys
 log, actors_path = os.environ["LOG"], os.environ["ACTORS"]
 want_item, caller, token = (os.environ[k] for k in ("ITEM","ACTOR","TOKEN"))

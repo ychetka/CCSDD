@@ -27,7 +27,7 @@ set -uo pipefail
 # canon/ lives at the workspace root.
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 json_error() {
-  python3 -c 'import json,sys;print(json.dumps({"status":"error","failure_class":sys.argv[1],"message":sys.argv[2]}))' "$1" "$2"
+  python3 -I -c 'import json,sys;print(json.dumps({"status":"error","failure_class":sys.argv[1],"message":sys.argv[2]}))' "$1" "$2"
   exit "${3:-1}"
 }
 TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || \
@@ -128,7 +128,7 @@ publish_tag_release() {
       "${tag#v}" "$tag" "$sha" "$MERGER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       >> "$CANON_DIR/release_history.jsonl" 2>/dev/null || true
   fi
-  TAG="$tag" SHA_V="$sha" NOTE_V="${note:-}" python3 -c 'import json,os
+  TAG="$tag" SHA_V="$sha" NOTE_V="${note:-}" python3 -I -c 'import json,os
 print(json.dumps({"status":"released","tag":os.environ["TAG"],"sha":os.environ["SHA_V"],
                   **({"note":os.environ["NOTE_V"]} if os.environ["NOTE_V"] else {})}))'
   return 0
@@ -165,7 +165,7 @@ if [ -z "$RTAG" ]; then
   # the version inside it is a strict semver bump over the parent.
   # Anything else (a forged subject, a mixed-content commit) stays
   # unrecognized and the release resumes through the normal path.
-  STRUCT=$(SHA="$SHA" CANON_DIR="$CANON_DIR" python3 - <<'PY'
+  STRUCT=$(SHA="$SHA" CANON_DIR="$CANON_DIR" python3 -I - <<'PY'
 import json, os, subprocess
 sha, canon = os.environ["SHA"], os.environ["CANON_DIR"]
 vf = None
@@ -228,7 +228,7 @@ FILE_VER=$(bash "$CANON_DIR/bin/repo_version_at.sh" "$REMOTE/$BASE" 2>/dev/null 
 if [ -z "$LATEST" ] && [ -z "$FILE_VER" ]; then
   json_error version_source_missing "no version source on base and no v* tags merged - cannot compute next version"
 fi
-BASE_VER=$(LATEST="${LATEST#v}" FILE_VER="$FILE_VER" python3 - <<'PY'
+BASE_VER=$(LATEST="${LATEST#v}" FILE_VER="$FILE_VER" python3 -I - <<'PY'
 import os, sys
 def key(v):
     try: return tuple(int(p) for p in v.split(".")[:3])
@@ -244,7 +244,7 @@ PY
   json_error version_source_missing "no parseable version source on base"
 
 # --- pending fragments: on base head but not under the latest tag ---
-FRAGS=$(LATEST="$LATEST" SHA="$SHA" TOP="$TOP" python3 - <<'PY'
+FRAGS=$(LATEST="$LATEST" SHA="$SHA" TOP="$TOP" python3 -I - <<'PY'
 import os, subprocess
 top, latest, sha = os.environ["TOP"], os.environ["LATEST"], os.environ["SHA"]
 def ls(ref):
@@ -262,7 +262,7 @@ PY
 # the leading key:value zone only - body text/code blocks cannot
 # inject contract fields. user_visible: false fragments are consumed
 # by the release but never folded into CHANGELOG. ---
-FRAG_META=$(FRAGS="$FRAGS" SHA="$SHA" TOP="$TOP" python3 - <<'PY'
+FRAG_META=$(FRAGS="$FRAGS" SHA="$SHA" TOP="$TOP" python3 -I - <<'PY'
 import json, os, re, subprocess
 top, sha = os.environ["TOP"], os.environ["SHA"]
 def front_fields(body):
@@ -297,7 +297,7 @@ PY
 # consuming a fragment that declared minor/major would silently
 # mis-version the release.
 if [ -n "$FRAGS" ]; then
-  BUMP=$(FRAG_META="$FRAG_META" BUMP="$BUMP" python3 - <<'PY'
+  BUMP=$(FRAG_META="$FRAG_META" BUMP="$BUMP" python3 -I - <<'PY'
 import json, os
 sev = {"patch":0,"minor":1,"major":2}
 best = os.environ["BUMP"] or None
@@ -317,7 +317,7 @@ if [ -z "$BUMP" ]; then
   json_error malformed_input "pending fragments carry no valid bump: field (patch|minor|major) and no --bump override given"
 fi
 
-NEXT=$(BASE_VER="$BASE_VER" BUMP="$BUMP" python3 - <<'PY'
+NEXT=$(BASE_VER="$BASE_VER" BUMP="$BUMP" python3 -I - <<'PY'
 import os, sys
 parts = os.environ["BASE_VER"].split(".")
 if len(parts) < 3:
@@ -357,7 +357,7 @@ if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
 fi
 
 [ $DRY -eq 1 ] && {
-  FRAGS="$FRAGS" NEXT="$NEXT" TAG="$TAG" BUMP="$BUMP" BASE_VER="$BASE_VER" SHA="$SHA" python3 - <<'PY'
+  FRAGS="$FRAGS" NEXT="$NEXT" TAG="$TAG" BUMP="$BUMP" BASE_VER="$BASE_VER" SHA="$SHA" python3 -I - <<'PY'
 import json, os
 print(json.dumps({"status":"dry_run","next":os.environ["NEXT"],
   "tag":os.environ["TAG"],"bump":os.environ["BUMP"],
@@ -394,7 +394,7 @@ VFILE=$(cd "$WT" && bash "$CANON_DIR/bin/repo_version_set.sh" "$NEXT" 2>/dev/nul
 # user_visible fragments produce entries; metadata fields, the Spec
 # impact section and leading bullet markers are stripped so entries
 # do not come out as '- - text'.
-FRAG_META="$FRAG_META" FRAGS="$FRAGS" NEXT="$NEXT" WT="$WT" python3 - <<'PY' || json_error upstream_error "changelog fold failed"
+FRAG_META="$FRAG_META" FRAGS="$FRAGS" NEXT="$NEXT" WT="$WT" python3 -I - <<'PY' || json_error upstream_error "changelog fold failed"
 import json, os, re, sys
 wt, ver = os.environ["WT"], os.environ["NEXT"]
 import datetime
@@ -561,7 +561,7 @@ else
     AM_OUT=$("$GH" pr merge "$PR_URL" --squash --match-head-commit "$REL_SHA" 2>&1)
     AM_RC=$?
     AUTO_FLAG=""
-    [ $AM_RC -ne 0 ] && AUTO_FLAG=",\"merge_error\":$(python3 -c 'import json,sys;print(json.dumps(sys.argv[1][:300]))' "$AM_OUT")"
+    [ $AM_RC -ne 0 ] && AUTO_FLAG=",\"merge_error\":$(python3 -I -c 'import json,sys;print(json.dumps(sys.argv[1][:300]))' "$AM_OUT")"
     printf '{"status":"release_pr_opened","tag":"%s","sha":"%s","pr":"%s"%s,"message":"base protected - release lands via PR; merge it (or let the release workflow finalize); rerun repo_release.sh after it merges to tag+publish"}\n' \
       "$TAG" "$REL_SHA" "$PR_URL" "$AUTO_FLAG"
     exit 0

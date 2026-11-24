@@ -18,7 +18,7 @@ TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-
 cd "$TOP"
 
 json_error() {
-  python3 -c 'import json,sys;print(json.dumps({"status":"error","failure_class":sys.argv[1],"message":sys.argv[2]}))' "$1" "$2"
+  python3 -I -c 'import json,sys;print(json.dumps({"status":"error","failure_class":sys.argv[1],"message":sys.argv[2]}))' "$1" "$2"
   exit 1
 }
 
@@ -61,9 +61,9 @@ INFO=$("$GH" pr view "$PR" --json headRefOid,headRefName,baseRefName,mergeable,r
 printf '%s' "$INFO" > "$TMPD/info.json"
 INFO_FILE="$TMPD/info.json"
 
-BASE=$(INFO_FILE="$INFO_FILE" python3 -c 'import json,os;print(json.load(open(os.environ["INFO_FILE"])).get("baseRefName") or "")')
-HEAD_BRANCH=$(INFO_FILE="$INFO_FILE" python3 -c 'import json,os;print(json.load(open(os.environ["INFO_FILE"])).get("headRefName") or "")')
-PR_AUTHOR=$(INFO_FILE="$INFO_FILE" python3 -c 'import json,os;print(((json.load(open(os.environ["INFO_FILE"])).get("author") or {}).get("login")) or "")')
+BASE=$(INFO_FILE="$INFO_FILE" python3 -I -c 'import json,os;print(json.load(open(os.environ["INFO_FILE"])).get("baseRefName") or "")')
+HEAD_BRANCH=$(INFO_FILE="$INFO_FILE" python3 -I -c 'import json,os;print(json.load(open(os.environ["INFO_FILE"])).get("headRefName") or "")')
+PR_AUTHOR=$(INFO_FILE="$INFO_FILE" python3 -I -c 'import json,os;print(((json.load(open(os.environ["INFO_FILE"])).get("author") or {}).get("login")) or "")')
 # Epic heads carry the completeness gate in epic_merge.sh - a direct
 # call here would silently skip it. Route through repo_merge.sh;
 # epic_merge.sh marks the delegated call with EPIC_GATE_PASSED.
@@ -101,7 +101,7 @@ VER_AT() { bash "$CANON_DIR/bin/repo_version_at.sh" "$1" 2>/dev/null; }
 
 # Version file declared in project.json (version.file); used for the
 # release-PR provenance allowlist.
-VFILE_CFG=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os
+VFILE_CFG=$(CANON_DIR="$CANON_DIR" python3 -I -c 'import json,os
 try:
     pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
     print(((pj.get("version") or {}).get("file")) or "")
@@ -124,7 +124,7 @@ if [[ "$HEAD_BRANCH" =~ ^release/v([0-9]+\.[0-9]+\.[0-9]+)(-r[0-9a-zA-Z]+)?$ ]];
   REL_N_COMMITS=$(git rev-list --count "$PRE_MERGE_SHA..$EXPECTED" 2>/dev/null || echo 0)
   if [ "$HEAD_SUBJ" = "release: v$REL_VER" ] && [ "$REL_N_COMMITS" = "1" ]; then
     PROV_OK=$(TOP="$TOP" PRE_MERGE_SHA="$PRE_MERGE_SHA" EXPECTED="$EXPECTED" \
-              VFILE_CFG="$VFILE_CFG" python3 - <<'PY'
+              VFILE_CFG="$VFILE_CFG" python3 -I - <<'PY'
 import os, subprocess
 top = os.environ["TOP"]
 vfile = os.environ.get("VFILE_CFG") or ""
@@ -198,7 +198,7 @@ fi
 # only when classic returns 404 (mixed-protection repos enforce
 # checks that live only in rulesets). A failed lookup for another
 # reason (auth/5xx) fails CLOSED.
-BASE_ENC=$(python3 -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1], safe=""))' "$BASE")
+BASE_ENC=$(python3 -I -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1], safe=""))' "$BASE")
 REQUIRED=""
 REQUIRED_LOOKUP_FAILED=0
 PROT_ERR="$TMPD/prot.err"
@@ -214,7 +214,7 @@ fi
 # Rulesets always apply on top of classic protection - including
 # org-level rulesets (includes_parents), whose detail documents live
 # on the org endpoint (source_type-aware dispatch).
-RULESET_REQ=$(BASE="$BASE" DEFAULT_BRANCH="$DEFAULT_BRANCH" GH="$GH" python3 - <<'PY'
+RULESET_REQ=$(BASE="$BASE" DEFAULT_BRANCH="$DEFAULT_BRANCH" GH="$GH" python3 -I - <<'PY'
 import json, os, re, subprocess, sys
 base = os.environ["BASE"]
 default_branch = os.environ.get("DEFAULT_BRANCH") or ""
@@ -324,7 +324,7 @@ fi
 # environment. No project-agnostic default exists: an unset reviewer
 # list must never degrade to "zero approvals needed" - the gate
 # fails closed instead.
-REVIEWERS_RAW=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os
+REVIEWERS_RAW=$(CANON_DIR="$CANON_DIR" python3 -I -c 'import json,os
 try:
     pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
     rev = pj.get("review") or {}
@@ -396,12 +396,12 @@ if [ "$IS_RELEASE_PR" = "1" ]; then
 elif [ -n "$ADAPTER" ]; then
   ADP_OUT=$(cd "$WT" && bash "$ADAPTER" --pr "$PR" 2>&1 | tail -n 1)
   ENTRY="$ADP_OUT"
-  printf '%s' "$ENTRY" | python3 -c 'import json,sys
+  printf '%s' "$ENTRY" | python3 -I -c 'import json,sys
 try: json.load(sys.stdin)
 except Exception: print("bad")' | grep -q bad && \
     ENTRY='{"status":"error","detail":"adapter returned non-JSON output"}'
 else
-  FRAG_SCAN=$(TOP="$TOP" REMOTE="$REMOTE" BASE="$BASE" EXPECTED="$EXPECTED" INFO_FILE="$INFO_FILE" HEAD_BRANCH="$HEAD_BRANCH" python3 - <<'PY'
+  FRAG_SCAN=$(TOP="$TOP" REMOTE="$REMOTE" BASE="$BASE" EXPECTED="$EXPECTED" INFO_FILE="$INFO_FILE" HEAD_BRANCH="$HEAD_BRANCH" python3 -I - <<'PY'
 import json, os, re, subprocess
 top = os.environ["TOP"]
 base_ref = os.environ["REMOTE"] + "/" + os.environ["BASE"]
@@ -524,7 +524,7 @@ fi
 # when a repo adapter owns the entry verdict (an adapter returning
 # flags:{} must not bypass manual_gate).
 if [ "$IS_RELEASE_PR" != "1" ]; then
-  FLAGS_SCAN=$(TOP="$TOP" REMOTE="$REMOTE" BASE="$BASE" EXPECTED="$EXPECTED" python3 - <<'PY'
+  FLAGS_SCAN=$(TOP="$TOP" REMOTE="$REMOTE" BASE="$BASE" EXPECTED="$EXPECTED" python3 -I - <<'PY'
 import json, os, re, subprocess
 top = os.environ["TOP"]
 base_ref = os.environ["REMOTE"] + "/" + os.environ["BASE"]
@@ -568,7 +568,7 @@ print(json.dumps({"bumps": bumps,
                   "risk_high": risk_high}))
 PY
 )
-  ENTRY=$(ENTRY="$ENTRY" FLAGS_SCAN="$FLAGS_SCAN" python3 -c 'import json,os
+  ENTRY=$(ENTRY="$ENTRY" FLAGS_SCAN="$FLAGS_SCAN" python3 -I -c 'import json,os
 raw = os.environ.get("ENTRY", "")
 try: entry = json.loads(raw)
 except Exception: entry = {"status": "error", "detail": raw}
@@ -584,14 +584,14 @@ except Exception: pass
 print(json.dumps(entry))')
 fi
 
-ENTRY_VIA=$(printf '%s' "$ENTRY" | python3 -c 'import json,sys
+ENTRY_VIA=$(printf '%s' "$ENTRY" | python3 -I -c 'import json,sys
 try: print(json.load(sys.stdin).get("via") or "")
 except Exception: print("")')
-ENTRY_OK=$(printf '%s' "$ENTRY" | python3 -c 'import json,sys
+ENTRY_OK=$(printf '%s' "$ENTRY" | python3 -I -c 'import json,sys
 try: print("yes" if json.load(sys.stdin).get("status") == "pass" else "no")
 except Exception: print("no")')
 if [ "$ENTRY_OK" != "yes" ]; then
-  ENTRY="$ENTRY" python3 -c 'import json,os,sys
+  ENTRY="$ENTRY" python3 -I -c 'import json,os,sys
 raw = os.environ.get("ENTRY", "")
 try: report = json.loads(raw)
 except Exception: report = {"status": "error", "detail": raw}
@@ -611,7 +611,7 @@ fi
 # must verify against the exact head the gate would merge (7-day
 # freshness, nonce anti-replay). No envelope or a
 # stale/mismatched/replayed one = blocked.
-MANUAL_GATE=$(printf '%s' "$ENTRY" | python3 -c 'import json,sys
+MANUAL_GATE=$(printf '%s' "$ENTRY" | python3 -I -c 'import json,sys
 try:
     f = (json.load(sys.stdin).get("flags") or {})
     # risk: high implies the human-confirmation envelope too
@@ -627,7 +627,7 @@ if [ "$MANUAL_GATE" = "yes" ]; then
     ENVELOPE_OK="yes"
   fi
   if [ "$ENVELOPE_OK" != "yes" ]; then
-    ENTRY="$ENTRY" ENV_FILE="$ENV_FILE" EXPECTED="$EXPECTED" python3 -c 'import json,os
+    ENTRY="$ENTRY" ENV_FILE="$ENV_FILE" EXPECTED="$EXPECTED" python3 -I -c 'import json,os
 raw = os.environ.get("ENTRY", "")
 try: report = json.loads(raw)
 except Exception: report = {}
@@ -638,7 +638,7 @@ print(json.dumps({"status": "blocked", "failure_class": "manual_gate",
   fi
 fi
 
-CI_BOOTSTRAP=$(printf '%s' "$ENTRY" | python3 -c 'import json,sys
+CI_BOOTSTRAP=$(printf '%s' "$ENTRY" | python3 -I -c 'import json,sys
 try: print("yes" if (json.load(sys.stdin).get("flags") or {}).get("ci_bootstrap") else "no")
 except Exception: print("no")')
 # Bootstrap allowance only counts when the base truly has no CI yet.
@@ -650,7 +650,7 @@ fi
 
 # mergeable=UNKNOWN is transient: GitHub computes it lazily. Retry a
 # few seconds before treating it as a block.
-MERGEABLE=$(INFO_FILE="$INFO_FILE" python3 -c 'import json,os;print(json.load(open(os.environ["INFO_FILE"])).get("mergeable") or "")')
+MERGEABLE=$(INFO_FILE="$INFO_FILE" python3 -I -c 'import json,os;print(json.load(open(os.environ["INFO_FILE"])).get("mergeable") or "")')
 if [ "$MERGEABLE" = "UNKNOWN" ]; then
   for _i in 1 2 3; do
     sleep 3
@@ -663,10 +663,10 @@ fi
 # model families. reviewer_profiles.<login>.model_family names the
 # family; logins without a declared family share the implicit
 # "default" family so two unlabeled accounts never satisfy the rule.
-RISK_HIGH=$(printf '%s' "$ENTRY" | python3 -c 'import json,sys
+RISK_HIGH=$(printf '%s' "$ENTRY" | python3 -I -c 'import json,sys
 try: print("yes" if (json.load(sys.stdin).get("flags") or {}).get("risk_high") else "no")
 except Exception: print("no")')
-FAMILY_MAP=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os
+FAMILY_MAP=$(CANON_DIR="$CANON_DIR" python3 -I -c 'import json,os
 try:
     pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
     rp = ((pj.get("review") or {}).get("reviewer_profiles") or {})
@@ -679,7 +679,7 @@ except Exception: pass' 2>/dev/null)
 # their APPROVED must reach the family set - excluding them from
 # counting entirely would deadlock every risk:high merge on
 # family_deficit.
-HIGH_RISK_REVIEWERS=$(CANON_DIR="$CANON_DIR" python3 -c 'import json,os
+HIGH_RISK_REVIEWERS=$(CANON_DIR="$CANON_DIR" python3 -I -c 'import json,os
 try:
     pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
     rp = ((pj.get("review") or {}).get("reviewer_profiles") or {})
@@ -692,7 +692,7 @@ GATE=$(INFO_FILE="$INFO_FILE" REVIEWS_FILE="$REVIEWS_FILE" REQUIRED="$REQUIRED" 
        PR_AUTHOR="$PR_AUTHOR" CI_BOOTSTRAP="$CI_BOOTSTRAP" MERGEABLE="$MERGEABLE" \
        RISK_HIGH="$RISK_HIGH" FAMILY_MAP="$FAMILY_MAP" \
        HIGH_RISK_REVIEWERS="$HIGH_RISK_REVIEWERS" \
-       python3 - "$EXPECTED" <<'PY'
+       python3 -I - "$EXPECTED" <<'PY'
 import json, sys, os
 expected = sys.argv[1]
 d = json.load(open(os.environ["INFO_FILE"]))
@@ -843,13 +843,13 @@ print(json.dumps(report))
 PY
 )
 
-OK=$(printf '%s' "$GATE" | python3 -c 'import json,sys
+OK=$(printf '%s' "$GATE" | python3 -I -c 'import json,sys
 try: g=json.load(sys.stdin)
 except Exception: print("no"); raise SystemExit(0)
 print("yes" if all([g["head_match"],g["mergeable"],g["approved"],g["checks_green"]]) else "no")')
 
 if [ "$OK" != "yes" ]; then
-  printf '%s' "$GATE" | python3 -c 'import json,sys
+  printf '%s' "$GATE" | python3 -I -c 'import json,sys
 try: g=json.load(sys.stdin)
 except Exception: g={"head_match":False,"unparseable_gate_report":True}
 fc="stale_head" if not g["head_match"] else "gate_blocked";print(json.dumps({"status":"blocked","failure_class":fc,"gate_report":g}))'
@@ -865,7 +865,7 @@ if [ "$IS_RELEASE_PR" != "1" ]; then
   # Drift covers removal too: a PR deleting the version source
   # (VER_HEAD empty while base has one) is the same violation.
   if [ -n "$VER_BASE" ] && [ "$VER_HEAD" != "$VER_BASE" ]; then
-    python3 -c 'import json,sys
+    python3 -I -c 'import json,sys
 print(json.dumps({"status":"blocked","failure_class":"version_drift",
   "message":"PR head changes the version (%s -> %s); Release-on-Merge owns bumps" % (sys.argv[2], sys.argv[1])}))' "$VER_HEAD" "$VER_BASE"
     exit 1
@@ -873,7 +873,7 @@ print(json.dumps({"status":"blocked","failure_class":"version_drift",
 else
   VER_HEAD=$(VER_AT "$EXPECTED")
   if [ "$VER_HEAD" != "$REL_VER" ]; then
-    python3 -c 'import json,sys
+    python3 -I -c 'import json,sys
 print(json.dumps({"status":"blocked","failure_class":"version_drift",
   "message":"release PR version file (%s) does not match branch version (%s)" % (sys.argv[1], sys.argv[2])}))' "$VER_HEAD" "$REL_VER"
     exit 1
@@ -893,13 +893,13 @@ fi
 #    for the .changes fragment's issue: field (an epic PR carries
 #    task fragments named after the task issues). No existence or
 #    link requirement - a mention is not a commitment to close.
-BLOOD_ISSUES=$(INFO_FILE="$INFO_FILE" python3 -c 'import json,os,re
+BLOOD_ISSUES=$(INFO_FILE="$INFO_FILE" python3 -I -c 'import json,os,re
 body = json.load(open(os.environ["INFO_FILE"])).get("body") or ""
 nums = sorted({m.group(1) for m in re.finditer(
     r"(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b\s*:?\s*#(\d+)", body)},
     key=int)
 print(" ".join(nums))')
-FRAG_ISSUES=$(INFO_FILE="$INFO_FILE" python3 -c 'import json,os,re
+FRAG_ISSUES=$(INFO_FILE="$INFO_FILE" python3 -I -c 'import json,os,re
 body = json.load(open(os.environ["INFO_FILE"])).get("body") or ""
 nums = sorted({m.group(1) for m in re.finditer(r"#(\d+)", body)},
     key=int)
@@ -913,7 +913,7 @@ VW_OUT=$(cd "$WT" && bash "$CANON_DIR/bin/verify_worktree.sh" 2>&1)
 VW_RC=$?
 VW_JSON=$(printf '%s' "$VW_OUT" | tail -n 1)
 if [ $VC_RC -ne 0 ] || [ $VW_RC -ne 0 ]; then
-  VC_OUT="$VC_OUT" VW_JSON="$VW_JSON" VC_RC="$VC_RC" VW_RC="$VW_RC" python3 -c 'import json,os
+  VC_OUT="$VC_OUT" VW_JSON="$VW_JSON" VC_RC="$VC_RC" VW_RC="$VW_RC" python3 -I -c 'import json,os
 vc = int(os.environ["VC_RC"]); vw = int(os.environ["VW_RC"])
 if vw != 0:
     fc = "verify_failed"
@@ -927,7 +927,7 @@ print(json.dumps({"status":"blocked","failure_class":fc,"message":msg,
   exit 1
 fi
 # The worktree signature must itself parse and report a clean run.
-VW_OK=$(printf '%s' "$VW_JSON" | python3 -c 'import json,sys
+VW_OK=$(printf '%s' "$VW_JSON" | python3 -I -c 'import json,sys
 try:
     d = json.load(sys.stdin)
 except Exception:
@@ -939,7 +939,7 @@ print("yes" if (d.get("status") in ("pass","ok","signed")
                 and not base.get("error")
                 and base.get("exit", 0) == 0) else "no")')
 if [ "$VW_OK" != "yes" ]; then
-  python3 -c 'import json,os
+  python3 -I -c 'import json,os
 print(json.dumps({"status":"blocked","failure_class":"verify_failed",
   "message":"verify_worktree.sh report invalid or baseline failed"}))'
   exit 1
@@ -958,7 +958,7 @@ PANEL_OUT=$(bash "$CANON_DIR/bin/panel_gate.sh" --sha "$EXPECTED" \
             --worktree "$WT" --info-file "$INFO_FILE" 2>&1)
 PANEL_RC=$?
 if [ $PANEL_RC -ne 0 ]; then
-  PANEL_OUT="$PANEL_OUT" python3 -c 'import json,os
+  PANEL_OUT="$PANEL_OUT" python3 -I -c 'import json,os
 try:
     r = json.loads(os.environ["PANEL_OUT"].strip().splitlines()[-1])
 except Exception:
@@ -977,7 +977,7 @@ fi
 # without it the release step could not compute the next version.
 BASE_VER=$(VER_AT "$PRE_MERGE_SHA")
 if [ -z "$BASE_VER" ]; then
-  python3 -c 'import json
+  python3 -I -c 'import json
 print(json.dumps({"status":"blocked","failure_class":"version_source_missing",
   "message":"no version source found on base (adapter: canon/version_source.sh, project.json version.file+regex, or a known manifest) - release-on-merge cannot compute the next version"}))'
   exit 1
@@ -986,7 +986,7 @@ fi
 ERR=$("$GH" pr merge "$PR" --"$METHOD" --match-head-commit "$EXPECTED" 2>&1)
 rc=$?
 if [ $rc -ne 0 ]; then
-  python3 -c 'import json,sys;print(json.dumps({"status":"error","failure_class":"upstream_error","message":sys.argv[1]}))' "$ERR"
+  python3 -I -c 'import json,sys;print(json.dumps({"status":"error","failure_class":"upstream_error","message":sys.argv[1]}))' "$ERR"
   exit 1
 fi
 
@@ -998,6 +998,33 @@ if [ "${MANUAL_GATE:-no}" = "yes" ] && [ -n "${ENV_FILE:-}" ]; then
   "$CANON_DIR/bin/human_sign.sh" consume --envelope "$ENV_FILE" \
     --artifact "$EXPECTED" --verdict approve >/dev/null 2>&1 \
     || echo "issue_merge: signoff nonce consume failed post-merge" >&2
+fi
+
+# Contract envelopes are consumed post-merge the same way: without a
+# burn, a 7-day-fresh signature could be replayed on a revert+restore
+# cycle reintroducing the identical contract content. For each
+# contract path touched by the merged diff, compute the artifact the
+# same way verify_constraints does (file sha256 for live contracts,
+# sha256("delete|path|HEAD") for deletions) and burn the matching
+# contract_<path>.json envelope. Best-effort: a missing envelope is
+# not an error (the gate may have accepted $BRANCH.json instead).
+CONTRACT_TOUCHED=$(git diff --name-only --no-renames "${PRE_MERGE_SHA:-$REMOTE/$BASE}..$EXPECTED" 2>/dev/null \
+  | grep -E '(^|/)contract\.(py|ts)$' || true)
+if [ -n "$CONTRACT_TOUCHED" ]; then
+  while IFS= read -r cpath; do
+    [ -n "$cpath" ] || continue
+    if git cat-file -e "$EXPECTED:$cpath" 2>/dev/null; then
+      CART=$(git show "$EXPECTED:$cpath" | sha256sum | cut -d' ' -f1)
+    else
+      CART=$(printf 'delete|%s|%s' "$cpath" "$EXPECTED" | sha256sum | cut -d' ' -f1)
+    fi
+    for CENV in "$CANON_DIR/human_signoffs/contract_$(printf '%s' "$cpath" | tr '/' '_').json" \
+                "$CANON_DIR/human_signoffs/${HEAD_BRANCH:-}.json"; do
+      [ -f "$CENV" ] \
+        && "$CANON_DIR/bin/human_sign.sh" consume --envelope "$CENV" \
+             --artifact "$CART" --verdict approve >/dev/null 2>&1 || true
+    done
+  done <<< "$CONTRACT_TOUCHED"
 fi
 
 # Post-merge release under RoM: release is part of the merge
@@ -1029,7 +1056,7 @@ else
   [ $REL_RC -ne 0 ] && [ -z "$RELEASE" ] && \
     RELEASE='{"status":"error","failure_class":"release_failed","reason":"nonzero_exit_no_json"}'
 fi
-ENTRY_VIA="$ENTRY_VIA" python3 -c 'import json,os,sys
+ENTRY_VIA="$ENTRY_VIA" python3 -I -c 'import json,os,sys
 raw = os.environ.get("RELEASE","{}")
 try: rel = json.loads(raw)
 except Exception: rel = {"status":"error","message":raw}

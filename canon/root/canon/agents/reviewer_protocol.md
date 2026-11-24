@@ -76,7 +76,15 @@ predicate on per-item candidates.
 Publish ONE verdict record via the panel wrapper:
 
   GH_BIN="$REVIEWER_GH" canon/bin/panel_verdict.sh set \
-    --pr <N> --sha <headRefOid> --record verdict.json
+    --pr <N> --sha <headRefOid> --record verdict.json \
+    --actor <your actor id> --token <your capability token>
+
+`--actor`/`--token` are the credentials issued to you at spawn time
+(`cycle_log.sh register --actor <id> --role reviewer_<domain>`). The
+wrapper verifies against canon/actors.json that your token belongs
+to an actor whose role is exactly `reviewer_<domain>` of the domain
+in your record - publishing under another domain's name is
+impossible, not just a violation.
 
 verdict.json:
 ```json

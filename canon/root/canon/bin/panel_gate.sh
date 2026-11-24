@@ -28,7 +28,7 @@ PJ="$CANON_DIR/project.json"
 REG="$CANON_DIR/config/review_panel.json"
 FORGE_DIR="$CANON_DIR/forge"
 
-json_out() { python3 -c 'import json,sys;print(json.dumps(json.loads(sys.argv[1])))' "$1"; }
+json_out() { python3 -I -c 'import json,sys;print(json.dumps(json.loads(sys.argv[1])))' "$1"; }
 
 SHA=""; WT=""; INFO_FILE=""
 while [ $# -gt 0 ]; do
@@ -40,7 +40,7 @@ done
 [ -d "$WT" ] || { json_out '{"status":"error","failure_class":"malformed_input","message":"--worktree missing"}'; exit 1; }
 [ -f "$REG" ] || { json_out '{"status":"blocked","failure_class":"missing_panel_registry","message":"canon/config/review_panel.json absent"}'; exit 1; }
 
-FORGE=$(PJ="$PJ" python3 -c 'import json,os
+FORGE=$(PJ="$PJ" python3 -I -c 'import json,os
 try: print(json.load(open(os.environ["PJ"])).get("forge") or "github")
 except Exception: print("github")' 2>/dev/null)
 ADAPTER="$FORGE_DIR/$FORGE.sh"
@@ -56,7 +56,7 @@ export API_BIN CANON_DIR
 # --- 1. mechanical floors ---
 # canon scripts: safe to run here (file reads only). project argv:
 # code execution - verify the journal, never run under merge creds.
-BB=$(PJ="$PJ" python3 -c 'import json,os
+BB=$(PJ="$PJ" python3 -I -c 'import json,os
 try: print(json.load(open(os.environ["PJ"])).get("base_branch") or "main")
 except Exception: print("main")' 2>/dev/null)
 BREF=""
@@ -78,13 +78,13 @@ while IFS= read -r chk; do
   bash "$CANON_DIR/bin/gate_run.sh" verify --check "$chk" --candidate "$SHA" >/dev/null 2>&1 \
     || FLOOR_FAIL="$FLOOR_FAIL $chk"
   NREC=$(bash "$CANON_DIR/bin/gate_run.sh" status --check "$chk" --candidate "$SHA" 2>/dev/null)
-  FLOOR_NOTES=$(FN="$FLOOR_NOTES" NR="$NREC" CHK="$chk" python3 -c 'import json,os
+  FLOOR_NOTES=$(FN="$FLOOR_NOTES" NR="$NREC" CHK="$chk" python3 -I -c 'import json,os
 d = json.loads(os.environ["FN"])
 try: r = json.loads(os.environ["NR"])
 except Exception: r = None
 if r and r.get("note"): d[os.environ["CHK"]] = r["note"]
 print(json.dumps(d))')
-done < <(REG="$REG" python3 -c 'import json,os
+done < <(REG="$REG" python3 -I -c 'import json,os
 d = json.load(open(os.environ["REG"]))
 for name, e in (d.get("domains") or {}).items():
     if e.get("gate_check"): print(e["gate_check"])' | sort -u)
@@ -95,7 +95,7 @@ for name, e in (d.get("domains") or {}).items():
 # green attestation at --sha in gate_runs.jsonl, recorded earlier in
 # the credential-free worktree (gate_run run). *_optional opt-outs
 # are handled inside gate_run verify itself.
-REG_CHECKS=$(REG="$REG" python3 -c 'import json,os
+REG_CHECKS=$(REG="$REG" python3 -I -c 'import json,os
 d = json.load(open(os.environ["REG"]))
 print(" ".join(sorted({e.get("gate_check") or "" for e in
       (d.get("domains") or {}).values()} - {""})))' 2>/dev/null)
@@ -104,7 +104,7 @@ while IFS= read -r chk; do
   case " $REG_CHECKS " in *" $chk "*) continue;; esac
   bash "$CANON_DIR/bin/gate_run.sh" verify --check "$chk" --candidate "$SHA" >/dev/null 2>&1 \
     || FLOOR_FAIL="$FLOOR_FAIL $chk"
-done < <(PJ="$PJ" python3 -c 'import json,os
+done < <(PJ="$PJ" python3 -I -c 'import json,os
 try:
     gc = json.load(open(os.environ["PJ"])).get("gate_checks") or {}
 except Exception: gc = {}
@@ -113,7 +113,7 @@ for k in sorted(gc):
 
 # --- 2. domain signals on --sha ---
 SIG_JSON=$(bash "$ADAPTER" signal_get --sha "$SHA" 2>/dev/null || echo '{"signals":[]}')
-PANEL_REPORT=$(SIG_JSON="$SIG_JSON" REG="$REG" PJ="$PJ" SHA="$SHA" FLOOR_FAIL="$FLOOR_FAIL" FLOOR_NOTES="$FLOOR_NOTES" INFO_FILE="$INFO_FILE" python3 - <<'PY'
+PANEL_REPORT=$(SIG_JSON="$SIG_JSON" REG="$REG" PJ="$PJ" SHA="$SHA" FLOOR_FAIL="$FLOOR_FAIL" FLOOR_NOTES="$FLOOR_NOTES" INFO_FILE="$INFO_FILE" python3 -I - <<'PY'
 import json, os
 reg = json.load(open(os.environ["REG"]))
 domains = reg.get("domains") or {}
@@ -206,7 +206,7 @@ print(json.dumps({
 PY
 )
 echo "$PANEL_REPORT"
-OK=$(printf '%s' "$PANEL_REPORT" | python3 -c 'import json,sys
+OK=$(printf '%s' "$PANEL_REPORT" | python3 -I -c 'import json,sys
 try: print("yes" if json.load(sys.stdin)["ok"] else "no")
 except Exception: print("no")')
 [ "$OK" = "yes" ] && exit 0 || exit 1
