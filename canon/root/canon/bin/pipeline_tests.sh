@@ -90,6 +90,9 @@ p = sys.argv[1]; d = json.load(open(p))
 d["forge"] = "test"
 d["review"] = {"reviewer_logins": ["panel-test"]}
 d.setdefault("gate_checks", {})["test_suite_optional"] = True
+# 'acme' is the fixture partner - role validation refuses
+# unregistered partners, so it must be a declared binding.
+d["partners"] = {"acme": {"impl": "fixture"}}
 json.dump(d, open(p, "w"), indent=2)
 PY
 

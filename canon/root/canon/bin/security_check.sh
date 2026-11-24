@@ -9,7 +9,11 @@
 # Base: BASE env or origin/<base_branch>. CANON_DIR env honored.
 set -uo pipefail
 CANON_DIR="${CANON_DIR:-$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)}"
-TOP=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
+# Nested workspaces: probe cwd, ./code, and the sibling of CANON_DIR.
+TOP=$(git rev-parse --show-toplevel 2>/dev/null \
+      || git -C code rev-parse --show-toplevel 2>/dev/null \
+      || git -C "$CANON_DIR/../code" rev-parse --show-toplevel 2>/dev/null) \
+  || { echo "not a git repo" >&2; exit 1; }
 cd -P "$TOP"
 PJ="$CANON_DIR/project.json"
 fails=0

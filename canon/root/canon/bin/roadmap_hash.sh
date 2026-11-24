@@ -81,6 +81,16 @@ def canon_hash(block_lines):
         kept.pop()
     return hashlib.sha256("\n".join(kept).encode()).hexdigest()
 
+def block_status(start, end):
+    # `status:` inside the item block decides whether a missing
+    # frozen_hash is legal: a draft item is pre-freeze by contract
+    # (harness.md §4 'do not freeze criteria until its verdict'), so
+    # verify skips it. Any non-draft status (or a draft that already
+    # carries a recorded hash) is verified fail-closed.
+    m = re.search(r"(?m)^\s*-\s*status\s*:\s*(\S+)",
+                  "\n".join(lines[start:end]))
+    return (m.group(1) if m else "").strip().lower()
+
 def cur_hash(start, end):
     for l in lines[start:end]:
         m = FH.match(l)
@@ -101,6 +111,10 @@ for start, end, slug in blocks:
         print(computed); sys.exit(0)
     if mode == "verify":
         if recorded is None:
+            if block_status(start, end) == "draft":
+                # draft = pre-freeze by contract; a recorded hash on a
+                # draft would still be verified below.
+                continue
             # fail-closed: an unfrozen (or field-deleted) item means
             # the plan was never frozen or was tampered with.
             print(f"roadmap_hash: UNFROZEN item '{slug}': no recorded "

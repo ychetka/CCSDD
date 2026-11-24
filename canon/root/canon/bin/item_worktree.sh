@@ -27,7 +27,12 @@ set -euo pipefail
 
 die()  { echo "item_worktree: $1" >&2; exit 2; }
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
-TOP=$(git rev-parse --show-toplevel 2>/dev/null) || die "not a git repo"
+# Nested workspaces: the repo may live in <ws>/code while canon sits
+# at <ws>/canon - probe cwd, ./code, and the sibling of CANON_DIR.
+TOP=$(git rev-parse --show-toplevel 2>/dev/null \
+      || git -C code rev-parse --show-toplevel 2>/dev/null \
+      || git -C "$CANON_DIR/../code" rev-parse --show-toplevel 2>/dev/null) \
+  || die "not a git repo"
 WT_ROOT="${CCSDD_WT_ROOT:-$(dirname "$TOP")/.worktrees}"
 
 BRANCH=""; BASE=""; FORCE=""; KEEP=""

@@ -626,6 +626,14 @@ else
         fail "forge CLI $AUTH_BIN not found"
       fi ;;
   esac
+  if [ "$FORGE" = "gitlab" ]; then
+    # The panel adapter accepts glab, but repo_*.sh lifecycle scripts
+    # speak the `gh` dialect directly (gh pr view --json, repos/{o}/{r}
+    # REST paths - see forge/gitlab.sh SCOPE note). Without a
+    # gh-compatible CLI the repo lifecycle silently cannot work.
+    command -v gh >/dev/null 2>&1 \
+      || fail "forge=gitlab: repo_*.sh lifecycle needs a gh-compatible CLI (gh not found)"
+  fi
 fi
 
 # Runtime adapter integrity: the Devin adapter wires .devin/* ->
@@ -661,17 +669,49 @@ except Exception:
 gc = pj.get("gate_checks") or {}
 # devin.sh compiles each gate_checks argv as its full shlex.join-ed
 # prefix (Exec(python3 -m pytest), not Exec(python3)) so interpreter
-# heads can stay denied globally - drift compares the same join.
-argvs = {shlex.join(str(a) for a in v) for v in gc.values()
-         if isinstance(v, list) and v and isinstance(v[0], str) and v[0]}
+# heads can stay denied globally - drift compares the same join,
+# AND the same admissibility filter: an argv the adapter refuses to
+# compile (shell metachars in an element, a shell head, or a bare
+# interpreter head) is an explicit config failure, not silent drift
+# that trips exec.deny at runtime.
+import re
+_tok = re.compile(r"^[A-Za-z0-9_./:=+@%,~-]+$")
+_shell = {"sh","bash","zsh","dash","fish","env"}
+_interp = {"python","python2","python3","node","nodejs","deno","bun",
+           "perl","ruby","php","npx"}
+def compilable(v):
+    if not isinstance(v, list) or not v or not all(isinstance(a, str) for a in v):
+        return False
+    elems = [str(a) for a in v]
+    if not all(_tok.match(e) for e in elems):
+        return False
+    head = elems[0].rsplit("/", 1)[-1]
+    if head in _shell:
+        return False
+    if len(elems) == 1 and head in _interp:
+        return False
+    return True
+comp, uncomp = [], []
+for name, v in gc.items():
+    if name.endswith("_optional") or not isinstance(v, list):
+        continue
+    (comp if compilable(v) else uncomp).append(name)
+argvs = {shlex.join(str(a) for a in v) for n, v in gc.items()
+         if n in comp}
 allow = set((cfg.get("permissions") or {}).get("allow") or [])
 missing = sorted(a for a in argvs if f"Exec({a})" not in allow)
+out = []
+if uncomp:
+    out.append("UNCOMPILABLE:" + ",".join(sorted(uncomp)))
 if missing:
-    print(" ".join(missing))
+    out.append("MISSING:" + " ".join(missing))
+print("\n".join(out))
 PY
 )
-    [ -n "$DRIFT" ] \
-      && ADAPT_FAIL="$ADAPT_FAIL gate_checks-not-compiled($DRIFT)"
+    printf '%s\n' "$DRIFT" | grep -q 'UNCOMPILABLE:' \
+      && ADAPT_FAIL="$ADAPT_FAIL gate_checks-uncompilable"
+    printf '%s\n' "$DRIFT" | grep -q 'MISSING:' \
+      && ADAPT_FAIL="$ADAPT_FAIL gate_checks-not-compiled($(printf '%s\n' "$DRIFT" | sed -n 's/^MISSING://p'))"
   fi
   if [ -L "$WS_DIR/.windsurfrules" ]; then
     [ "$(readlink "$WS_DIR/.windsurfrules")" = "canon/RULES.md" ] \

@@ -85,21 +85,56 @@ if [ -z "$CHILD_BASE" ] && [ -n "$BASE_REF" ]; then
   CHILD_BASE=$(git merge-base HEAD "$BASE_REF" 2>/dev/null || true)
 fi
 
-# Resolve the runner: canon script at base ref when canon is tracked
-# in the repo; otherwise the deployed canon itself - its drift is
-# pinned by the deploy manifest (check_setup verifies every shipped
-# file's sha), so it is the trusted source in deployed workspaces.
-RUNNER=""; SCRIPT_TMP=""
+# Resolve the runner + script source. Priority:
+#   1. deployed script pinned by canon_manifest.json - the manifest is
+#      the deploy-integrity root, and a manifest-pinned file beats a
+#      base-ref blob (a repo that TRACKED canon before untracking
+#      leaves a stale blob that would self-attest; its aux imports
+#      resolve from disk anyway, so blob execution adds no isolation).
+#      A pin MISMATCH refuses outright - never silent-fall-back.
+#   2. base-ref blob (canon tracked in repo, no manifest coverage) -
+#      minimal fixtures and legacy layouts.
+#   3. deployed script without manifest coverage.
+#   4. project.json gate_checks.<name> argv.
+RUNNER=""; SCRIPT_TMP=""; SCRIPT_SRC=""
 CANON_PATH="canon/bin/$CHECK.sh"
 BASE_SHA=""
 DEPLOYED="$CANON_DIR/bin/$CHECK.sh"
-if [ -n "$BASE_REF" ] && git cat-file -e "$BASE_REF:$CANON_PATH" 2>/dev/null; then
-  RUNNER=canon
+MF_PIN=absent   # absent|ok|mismatch|unlisted
+if [ -f "$CANON_DIR/canon_manifest.json" ] && [ -f "$DEPLOYED" ]; then
+  MF_PIN=$(DEPLOYED="$DEPLOYED" CANON_PATH="$CANON_PATH" CANON_DIR="$CANON_DIR" \
+    python3 -I - <<'PY'
+import hashlib, json, os, sys
+try:
+    mf = json.load(open(os.path.join(os.environ["CANON_DIR"], "canon_manifest.json")))
+    want = (mf.get("sha256") or {}).get(os.environ["CANON_PATH"])
+except Exception:
+    print("unlisted"); sys.exit(0)
+if not isinstance(want, str):
+    print("unlisted"); sys.exit(0)
+h = hashlib.sha256(open(os.environ["DEPLOYED"], "rb").read()).hexdigest()
+print("ok" if h == want else "mismatch")
+PY
+)
+fi
+case "$MF_PIN" in
+  ok)
+    RUNNER=canon; SCRIPT_SRC=deployed
+    BASE_SHA=$($SHA256_BIN "$DEPLOYED" | cut -d' ' -f1) ;;
+  mismatch|unlisted)
+    # Fail-closed like Gate-0: a deployed canon tree plus a manifest
+    # that does not cover this script means either a tampered file or
+    # an attacker-dropped gate - never silent-fall-back to the blob.
+    echo "gate_run: $CANON_PATH failed manifest pin ($MF_PIN) - refuse to execute tampered gate" >&2
+    exit 1 ;;
+esac
+if [ -z "$RUNNER" ] && [ -n "$BASE_REF" ] && git cat-file -e "$BASE_REF:$CANON_PATH" 2>/dev/null; then
+  RUNNER=canon; SCRIPT_SRC=blob
   BASE_SHA=$(git show "$BASE_REF:$CANON_PATH" | $SHA256_BIN | cut -d' ' -f1)
-elif [ -f "$DEPLOYED" ]; then
-  RUNNER=canon
+elif [ -z "$RUNNER" ] && [ -f "$DEPLOYED" ]; then
+  RUNNER=canon; SCRIPT_SRC=deployed
   BASE_SHA=$($SHA256_BIN "$DEPLOYED" | cut -d' ' -f1)
-else
+elif [ -z "$RUNNER" ]; then
   ARGV=$(PJ="$PJ" CHECK="$CHECK" python3 -I -c 'import json,os
 try:
     pj = json.load(open(os.environ["PJ"]))
@@ -166,8 +201,12 @@ if r.get("runner") == "canon" and want and r.get("script_sha256") != want:
 # base binding: the attestation is evidence for the diff window
 # (base,candidate]. If the base moved since the run, the verdict was
 # computed on a different window - stale evidence must not pass.
+# CANON-runner only: a project check (pytest/npm test) evaluates the
+# candidate TREE, not the diff window - its base_head is informational
+# and must not deadlock task->epic merges where the PR base ref
+# legitimately differs from the branch-level base_branch.
 cur_base = os.environ.get("REC_BASE_HEAD") or ""
-if r.get("base_head") and cur_base and r["base_head"] != cur_base:
+if r.get("runner") == "canon" and r.get("base_head") and cur_base and r["base_head"] != cur_base:
     print("gate_run verify: base moved since attestation for %s "
           "(%s -> %s)" % (r.get("check"), r["base_head"][:12], cur_base[:12]),
           file=sys.stderr); sys.exit(1)
@@ -209,29 +248,9 @@ DIRTY=$(git status --porcelain 2>/dev/null | grep -v -E \
 OUT=$(mktemp); SCRIPT_TMP=""
 if [ "$RUNNER" = canon ]; then
   SCRIPT_TMP=$(mktemp)
-  if [ -n "$BASE_REF" ] && git cat-file -e "$BASE_REF:$CANON_PATH" 2>/dev/null; then
+  if [ "$SCRIPT_SRC" = "blob" ]; then
     git show "$BASE_REF:$CANON_PATH" > "$SCRIPT_TMP" 2>/dev/null
   else
-    # canon/ is deployed-not-tracked in real projects, so the base
-    # blob never exists there and the on-disk script is the only
-    # source. Before executing it, pin it against the deploy
-    # manifest (same Gate-0 rule as ship_commit.sh): a rewritten
-    # gate script would otherwise attest itself.
-    if [ -f "$CANON_DIR/canon_manifest.json" ]; then
-      DEPLOYED="$DEPLOYED" CANON_PATH="$CANON_PATH" CANON_DIR="$CANON_DIR" \
-      python3 -I - <<'PY' || { echo "gate_run: $CANON_PATH failed manifest pin - refuse to execute tampered gate" >&2; exit 1; }
-import hashlib, json, os, sys
-try:
-    mf = json.load(open(os.path.join(os.environ["CANON_DIR"], "canon_manifest.json")))
-    want = (mf.get("sha256") or {}).get(os.environ["CANON_PATH"])
-except Exception:
-    sys.exit(1)
-if not isinstance(want, str):
-    sys.exit(1)
-h = hashlib.sha256(open(os.environ["DEPLOYED"], "rb").read()).hexdigest()
-sys.exit(0 if h == want else 1)
-PY
-    fi
     cat "$DEPLOYED" > "$SCRIPT_TMP"
   fi
   CANON_DIR="$CANON_DIR" BASE="$CHILD_BASE" BASE_REF="$BASE_REF" \

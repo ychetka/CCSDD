@@ -102,12 +102,15 @@ findings go back to the executor.
 5a. **Attestation**: for every check configured in
    `project.json -> gate_checks` (test_suite, lint, sast, …) run it
    on the candidate commit through
-   `canon/bin/gate_run.sh run --check <name> --candidate <head_sha>`
+   `BASE_REF=<base_ref> canon/bin/gate_run.sh run --check <name> --candidate <head_sha>`
    inside the worktree BEFORE the merge is attempted — the merge
    gate verifies the journal, it never executes project code under
-   merge credentials. A check left unattested blocks the merge:
-   record it even when the native run already passed — the journal
-   entry is the gate-visible artifact.
+   merge credentials. `<base_ref>` is the PR's `baseRefName` remote
+   ref (e.g. `origin/epic_issue_9-x` for task→epic PRs), NOT always
+   `origin/main`: attesting against the wrong base binds the record
+   to a diff window the merge gate does not use. A check left
+   unattested blocks the merge: record it even when the native run
+   already passed — the journal entry is the gate-visible artifact.
 6. **PROVENANCE**: with new dependencies — verify the name and
    version exist in the manifest and registry, and that the called
    APIs' signatures exist in code/vendor sources. Calling a

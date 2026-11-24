@@ -65,7 +65,18 @@ done
 # #N referenced in the body (FRAG_ISSUES). An epic accumulates task
 # fragments - link each declared issue: as `Includes #M` (a
 # reference, not a close: task issues close on task->epic landing).
-for frag in .changes/*.md; do
+# Only fragments introduced/changed BY THIS BRANCH count - globbing
+# the whole .changes/ dir would attribute foreign fragments already
+# sitting on the base (e.g. an epic's earlier task fragments) to this
+# PR and let it edit them via FRAG_ISSUES.
+BASE_REF=""
+for r in $(git remote 2>/dev/null | sed "s#\$#/$BASE#") "$BASE"; do
+  git rev-parse --verify --quiet "$r" >/dev/null 2>&1 && { BASE_REF=$r; break; }
+done
+DELTA_FRAGS=""
+[ -n "$BASE_REF" ] && DELTA_FRAGS=$(git diff --name-only --diff-filter=ACMR \
+  "$BASE_REF"...HEAD -- '.changes/*.md' 2>/dev/null || true)
+for frag in $DELTA_FRAGS; do
   [ -f "$frag" ] || continue
   # The directory's own README may document an example 'issue:'
   # field - it is not a release fragment (same exclusion as

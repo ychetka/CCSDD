@@ -10,7 +10,11 @@
 set -uo pipefail
 export PYTHONDONTWRITEBYTECODE=1  # canon bin imports must not litter __pycache__
 CANON_DIR="${CANON_DIR:-$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)}"
-TOP=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
+# Nested workspaces: probe cwd, ./code, and the sibling of CANON_DIR.
+TOP=$(git rev-parse --show-toplevel 2>/dev/null \
+      || git -C code rev-parse --show-toplevel 2>/dev/null \
+      || git -C "$CANON_DIR/../code" rev-parse --show-toplevel 2>/dev/null) \
+  || { echo "not a git repo" >&2; exit 1; }
 cd -P "$TOP"
 PJ="$CANON_DIR/project.json"
 fails=0

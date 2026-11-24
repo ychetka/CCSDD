@@ -78,17 +78,15 @@ if not bb:
 print(bb)
 PY
 )
-# Remote like issue_merge: detect by the repo slug (forge-agnostic),
-# fall back to a github/gitlab URL heuristic, then 'origin'.
-REPO_SLUG=$(PJ="$PJ" python3 -I -c 'import json,os,re
-try:
-  u = json.load(open(os.environ["PJ"])).get("repo","")
-  m = re.search(r"[:/]([^/:]+/[^/:]+?)(?:\.git)?$", u)
-  print(m.group(1) if m else "")
+# Remote like issue_merge: project.json 'repo' is a bare slug
+# 'owner/name' - match it as a SUFFIX of the remote URL, then fall
+# back to a github/gitlab URL heuristic, then 'origin'.
+REPO_SLUG=$(CANON_DIR="$CANON_DIR" python3 -I -c 'import json,os
+try: print((json.load(open(os.path.join(os.environ["CANON_DIR"],"project.json"))).get("repo") or "").strip("/"))
 except Exception: print("")' 2>/dev/null)
 REMOTE=""
 if [ -n "$REPO_SLUG" ]; then
-  REMOTE=$(git remote -v | awk -v s="$REPO_SLUG" 'index($2, s) {print $1; exit}')
+  REMOTE=$(git remote -v | awk -v s="$REPO_SLUG" '$2 ~ ("(^|[:/])" s "(\\.git)?$") {print $1; exit}')
 fi
 [ -z "$REMOTE" ] && REMOTE=$(git remote -v | awk '$2 ~ /github\.com|gitlab\./ {print $1; exit}')
 [ -z "$REMOTE" ] && REMOTE=$(git remote get-url origin >/dev/null 2>&1 && echo origin)

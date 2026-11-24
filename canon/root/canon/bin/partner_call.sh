@@ -135,6 +135,28 @@ except Exception as e:
               file=sys.stderr)
         sys.exit(3)
     AUDIT_PARTNERS = {p for p in (partner,) if p.startswith("ex-")}
+# Partner must be a REGISTERED role (gateway.md §1: roles, not
+# vendors) - otherwise an arbitrary --partner silently classifies
+# as 'consult' and dials whatever impl binding the name resolves.
+# Valid: a role in partners.json, a binding in project.json ->
+# partners, or the ex-* external-arbitration convention.
+_known = set(AUDIT_PARTNERS)
+try:
+    _preg2 = json.load(open(os.environ["PARTNERS_CFG"], encoding="utf-8"))
+    _known |= set((_preg2.get("roles") or {}).keys())
+except Exception:
+    pass
+try:
+    _pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json"),
+                       encoding="utf-8"))
+    _known |= set((_pj.get("partners") or {}).keys())
+except Exception:
+    pass
+if partner not in _known and not partner.startswith("ex-"):
+    print(f"partner_call: REFUSED - partner '{partner}' is not a "
+          f"registered role (partners.json roles / project.json "
+          f"partners / ex-*)", file=sys.stderr)
+    sys.exit(2)
 call_class = "audit" if partner in AUDIT_PARTNERS else "consult"
 if req_class == "audit":
     call_class = "audit"          # initiator may only raise

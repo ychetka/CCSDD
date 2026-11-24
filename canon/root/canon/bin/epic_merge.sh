@@ -100,10 +100,23 @@ def _issue_num(v):
     v = v.lstrip("#").strip()
     return str(int(v)) if v.isdigit() else ""
 
+def _front_fields(b):
+    # Only the contiguous run of '- key: value' lines directly under
+    # the '## Item:' header counts as fields. A '- issue: #9' shaped
+    # bullet deeper in the item body is prose, not a declaration.
+    fields = {}
+    for ln in b.splitlines()[1:]:  # first line is the item title
+        m = re.match(r"^\s*-\s*([a-z_]+)\s*:\s*(.+?)\s*$", ln)
+        if m:
+            fields[m.group(1)] = m.group(2)
+        elif ln.strip():
+            break
+    return fields
+
 blocks = re.split(r"(?m)^##\s+Item\s*:", body)[1:]
 item = None
 for b in blocks:
-    fields = dict(re.findall(r"(?m)^\s*-\s*([a-z_]+)\s*:\s*(.+?)\s*$", b))
+    fields = _front_fields(b)
     if _issue_num(fields.get("issue")) == en:
         item = fields; break
 if item is None:

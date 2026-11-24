@@ -32,7 +32,10 @@
 set -uo pipefail
 export PYTHONDONTWRITEBYTECODE=1  # canon bin imports must not litter __pycache__
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
-TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
+TOP=$(git rev-parse --show-toplevel 2>/dev/null \
+      || git -C code rev-parse --show-toplevel 2>/dev/null \
+      || git -C "$CANON_DIR/../code" rev-parse --show-toplevel 2>/dev/null) \
+  || { echo "not a git repo" >&2; exit 1; }
 cd -P "$TOP"
 
 BASELINE_CMD=""
@@ -120,11 +123,14 @@ if [ -n "$BASELINE_CMD" ]; then
         # prepared main workspace ($TOP/node_modules); a baseline_env.sh
         # adapter may instead create $WT/node_modules itself.
         # Trust bound: the $TOP fallback applies only when $TOP is the
-        # main workspace. In an item worktree ($TOP/canon is a symlink)
-        # $TOP is the agent's own tree - a planted
-        # node_modules/.bin/pytest would run here under gate creds.
+        # main workspace. Detect a linked worktree by git-dir vs
+        # git-common-dir, NOT the canon symlink - an agent can delete
+        # $TOP/canon to look like a main workspace and plant
+        # node_modules/.bin/pytest to run under gate creds.
         NM_DIR="$WT/node_modules"
-        if [ ! -d "$NM_DIR" ] && [ ! -L "$TOP/canon" ]; then
+        _gd=$(git -C "$TOP" rev-parse --absolute-git-dir 2>/dev/null)
+        _gcd=$(git -C "$TOP" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+        if [ ! -d "$NM_DIR" ] && { [ -z "$_gd" ] || [ "$_gd" = "$_gcd" ]; }; then
           NM_DIR="$TOP/node_modules"
         fi
         if [ -d "$NM_DIR" ]; then
@@ -184,9 +190,36 @@ if [ -n "$BASELINE_CMD" ]; then
       # artifacts as the human. env -i with a minimal whitelist is
       # the only sound boundary; the check needs a test verdict,
       # not API access.
+      # PATH hygiene: an inherited PATH can carry segments pointing
+      # into OTHER trees (the caller's .venv, .worktrees/<other>) -
+      # a pytest/python resolved there imports editable .pth code
+      # from the wrong tree under gate creds. Keep segments inside
+      # $WT (the prepared toolchain) and everything outside $TOP;
+      # drop anything inside $TOP but outside $WT - EXCEPT the
+      # prepared $NM_DIR the env setup just vetted (main-workspace
+      # node_modules is only used when $TOP is not an item worktree).
+      CLEAN_PATH=$(WT="$WT" TOP="$TOP" NM="${NM_DIR:-}" python3 -I -c 'import os
+wt = os.path.realpath(os.environ["WT"])
+top = os.path.realpath(os.environ["TOP"])
+nm = os.path.realpath(os.environ["NM"]) if os.environ.get("NM") else ""
+out = []
+for seg in os.environ.get("PATH", "").split(os.pathsep):
+    if not seg:
+        continue
+    r = os.path.realpath(seg)
+    try:
+        if os.path.commonpath([r, wt]) == wt or \
+           (nm and os.path.commonpath([r, nm]) == nm):
+            out.append(seg); continue
+        if os.path.commonpath([r, top]) == top:
+            continue
+    except ValueError:
+        pass
+    out.append(seg)
+print(os.pathsep.join(out))')
       SAFE_ENV=(
         env -i
-        "PATH=$WT/.venv/bin:$WT/node_modules/.bin:$PATH"
+        "PATH=$WT/.venv/bin:$WT/node_modules/.bin:$CLEAN_PATH"
         "HOME=${HOME:-/tmp}"
         "TMPDIR=${TMPDIR:-/tmp}"
         "LANG=${LANG:-C.UTF-8}"

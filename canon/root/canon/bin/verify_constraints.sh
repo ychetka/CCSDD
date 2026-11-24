@@ -336,13 +336,21 @@ if [ -n "$CONTRACT_HITS" ]; then
   while IFS= read -r cfile; do
     [ -n "$cfile" ] || continue
     if printf '%s\n' "$CONTRACT_DELETED" | grep -qxF "$cfile"; then
-      # Deletion is bound to a composite hash of (path, HEAD) - NOT to
-      # the bare HEAD sha. One branch-bound envelope must not silently
-      # authorize deleting several contracts in a single PR; each
-      # deletion owes its own signature.
-      ARTIFACT=$(printf 'delete|%s|%s' "$cfile" "$HEAD_SHA_NOW" \
+      # Deletion binds to the DELETED BLOB at the merge-base - NOT to
+      # HEAD: a signature tied to the moving head sha is invalidated
+      # by every later commit on the same branch, and a branch-bound
+      # envelope must not silently authorize deleting several
+      # contracts in one PR. Each deletion owes its own signature,
+      # and it stays valid while the deleted blob is unchanged.
+      MB=$(git merge-base "$BASE" HEAD 2>/dev/null || true)
+      DEL_BLOB=""
+      [ -n "$MB" ] && DEL_BLOB=$(git rev-parse -q --verify "$MB:$cfile" 2>/dev/null || true)
+      # Fallback: file added+deleted within the branch (never existed
+      # at the merge-base) keeps the HEAD binding.
+      DEL_BIND="${DEL_BLOB:-$HEAD_SHA_NOW}"
+      ARTIFACT=$(printf 'delete|%s|%s' "$cfile" "$DEL_BIND" \
         | sha256sum | cut -d' ' -f1)
-      SIGN_NOTE=" # deletion-bound sha256(delete|path|HEAD)"
+      SIGN_NOTE=" # deletion-bound sha256(delete|path|base-blob)"
     elif [ -f "$cfile" ]; then
       ARTIFACT="$cfile"
       SIGN_NOTE=""

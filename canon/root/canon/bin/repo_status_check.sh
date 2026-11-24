@@ -78,17 +78,27 @@ frags = [f.get("path") for f in (d.get("files") or [])
          and not f.get("path").endswith("/README.md")]
 risk = False
 for p in frags:
-    out = subprocess.run(
-        [os.environ["GH_BIN"], "api",
-         "repos/{owner}/{repo}/contents/" + p + "?ref=" + head,
-         "--jq", ".content"],
-        capture_output=True, text=True)
-    if out.returncode != 0:
-        continue
-    try:
-        body = base64.b64decode(out.stdout.strip()).decode("utf-8", "replace")
-    except Exception:
-        continue
+    # Local object first: the PR head is usually fetched already, and
+    # 'git show' answers for files the API cannot (e.g. a fragment
+    # DELETED by a release PR - contents/<p> would 404). The API call
+    # stays only as fallback for an unfetched head.
+    body = ""
+    loc = subprocess.run(["git", "show", head + ":" + p],
+                         capture_output=True, text=True)
+    if loc.returncode == 0:
+        body = loc.stdout
+    else:
+        out = subprocess.run(
+            [os.environ["GH_BIN"], "api",
+             "repos/{owner}/{repo}/contents/" + p + "?ref=" + head,
+             "--jq", ".content"],
+            capture_output=True, text=True)
+        if out.returncode != 0:
+            continue
+        try:
+            body = base64.b64decode(out.stdout.strip()).decode("utf-8", "replace")
+        except Exception:
+            continue
     lines = body.splitlines()
     start = 1 if lines and lines[0].strip() == "---" else 0
     for ln in lines[start:]:

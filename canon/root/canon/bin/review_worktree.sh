@@ -23,7 +23,8 @@ die() { echo "review_worktree: $1" >&2; exit 2; }
 # puts the repo root beside canon, not around it).
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 TOP=$(git rev-parse --show-toplevel 2>/dev/null \
-      || git -C code rev-parse --show-toplevel 2>/dev/null) \
+      || git -C code rev-parse --show-toplevel 2>/dev/null \
+      || git -C "$CANON_DIR/../code" rev-parse --show-toplevel 2>/dev/null) \
   || die "not a git repo"
 cd -P "$TOP"
 REMOTE=$(git remote 2>/dev/null | head -1 || true)

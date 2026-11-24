@@ -916,11 +916,23 @@ body = json.load(open(os.environ["INFO_FILE"])).get("body") or ""
 nums = sorted({m.group(1) for m in re.finditer(r"#(\d+)", body)},
     key=int)
 print(" ".join(nums))')
-VC_OUT=$(cd "$WT" && VERIFY_BRANCH="$HEAD_BRANCH" VERIFY_PR="$PR" \
-         VERIFY_BASE="$BASE" ISSUE_NUMS="$BLOOD_ISSUES" \
-         FRAG_ISSUES="$FRAG_ISSUES" \
-         bash "$CANON_DIR/bin/verify_constraints.sh" 2>&1)
-VC_RC=$?
+if [ "$IS_RELEASE_PR" = "1" ]; then
+  # A release/v* PR's provenance is already proven above: exactly one
+  # commit, subject 'release: vX.Y.Z', diff confined to {version_file,
+  # CHANGELOG.md, .changes/*}. Running verify_constraints here would
+  # (a) demand Closes-links for any #N in the release body,
+  # (b) escalate on the version file in protected_paths,
+  # (c) flag CHANGELOG prose as forbidden-pattern content.
+  # verify_worktree still runs - the release worktree must be clean.
+  VC_OUT="release-pr: verify_constraints skipped (provenance proven)"
+  VC_RC=0
+else
+  VC_OUT=$(cd "$WT" && VERIFY_BRANCH="$HEAD_BRANCH" VERIFY_PR="$PR" \
+           VERIFY_BASE="$BASE" ISSUE_NUMS="$BLOOD_ISSUES" \
+           FRAG_ISSUES="$FRAG_ISSUES" \
+           bash "$CANON_DIR/bin/verify_constraints.sh" 2>&1)
+  VC_RC=$?
+fi
 VW_OUT=$(cd "$WT" && bash "$CANON_DIR/bin/verify_worktree.sh" 2>&1)
 VW_RC=$?
 VW_JSON=$(printf '%s' "$VW_OUT" | tail -n 1)
@@ -1017,10 +1029,13 @@ fi
 # cycle reintroducing the identical contract content. For each
 # contract path touched by the merged diff, compute the artifact the
 # same way verify_constraints does (file sha256 for live contracts,
-# sha256("delete|path|HEAD") for deletions) and burn the matching
+# sha256("delete|path|base-blob") for deletions) and burn the matching
 # contract_<path>.json envelope. Best-effort: a missing envelope is
 # not an error (the gate may have accepted $BRANCH.json instead).
-CONTRACT_TOUCHED=$(git diff --name-only --no-renames "${PRE_MERGE_SHA:-$REMOTE/$BASE}..$EXPECTED" 2>/dev/null \
+# Three-dot diff, matching verify_constraints: two-dot would list
+# contracts changed on the BASE side since the branch forked, burning
+# envelopes for contracts this PR never touched.
+CONTRACT_TOUCHED=$(git diff --name-only --no-renames "${PRE_MERGE_SHA:-$REMOTE/$BASE}...$EXPECTED" 2>/dev/null \
   | grep -E '(^|/)contract\.(py|ts)$' || true)
 if [ -n "$CONTRACT_TOUCHED" ]; then
   while IFS= read -r cpath; do
@@ -1028,7 +1043,13 @@ if [ -n "$CONTRACT_TOUCHED" ]; then
     if git cat-file -e "$EXPECTED:$cpath" 2>/dev/null; then
       CART=$(git show "$EXPECTED:$cpath" | sha256sum | cut -d' ' -f1)
     else
-      CART=$(printf 'delete|%s|%s' "$cpath" "$EXPECTED" | sha256sum | cut -d' ' -f1)
+      # Same binding as verify_constraints: delete|path|blob-at-
+      # merge-base (fallback EXPECTED when the file never existed
+      # there - add+delete within the branch).
+      MB=$(git merge-base "${PRE_MERGE_SHA:-$REMOTE/$BASE}" "$EXPECTED" 2>/dev/null || true)
+      DEL_BLOB=""
+      [ -n "$MB" ] && DEL_BLOB=$(git rev-parse -q --verify "$MB:$cpath" 2>/dev/null || true)
+      CART=$(printf 'delete|%s|%s' "$cpath" "${DEL_BLOB:-$EXPECTED}" | sha256sum | cut -d' ' -f1)
     fi
     # Only the contract-named envelope is burned here - $BRANCH.json
     # is the manual_gate/risk:high PR sign-off (artifact = head sha),

@@ -11,6 +11,13 @@
 # post statuses under any name - creator checks are weaker than on
 # GitHub. Deploys that need hard creator enforcement should rely on
 # MR approval state (final_approve) rather than status authorship.
+#
+# SCOPE: this adapter covers the PANEL surface only (panel_verdict.sh
+# signals/findings/final_approve). The repo_*.sh lifecycle scripts
+# (repo_merge/repo_release/repo_pr_*/repo_status_check) speak the
+# `gh` CLI dialect directly (gh pr view --json, repos/{o}/{r} REST
+# paths) - on GitLab they require a gh-compatible wrapper, they do
+# not accept `glab`.
 set -uo pipefail
 API_BIN="${API_BIN:-glab}"
 

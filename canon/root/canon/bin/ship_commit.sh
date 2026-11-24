@@ -190,11 +190,19 @@ fi
 # (info/excluded by item_worktree open); absent that, the shared
 # $CANON_DIR whitelist applies.
 WL="$TOP/.canon_scope_whitelist.txt"
-if [ ! -f "$WL" ] && [ -L "$TOP/canon" ]; then
-  # canon/ is a symlink here -> item worktree under shared control
-  # plane. The shared $CANON_DIR whitelist is NOT a valid fallback:
-  # parallel executors would race on one global file. The director
-  # must drop .canon_scope_whitelist.txt at this worktree's root.
+# Linked-worktree detection must NOT rely on the canon symlink: an
+# agent can delete $TOP/canon and then the shared-whitelist fallback
+# silently applies. git-dir vs git-common-dir is the real signal -
+# a linked worktree's git dir lives under <main>/.git/worktrees/*.
+IS_LINKED_WT=0
+GD=$(git -C "$TOP" rev-parse --absolute-git-dir 2>/dev/null)
+GCD=$(git -C "$TOP" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+[ -n "$GD" ] && [ -n "$GCD" ] && [ "$GD" != "$GCD" ] && IS_LINKED_WT=1
+if [ ! -f "$WL" ] && [ "$IS_LINKED_WT" = "1" ]; then
+  # Linked worktree under the shared control plane. The shared
+  # $CANON_DIR whitelist is NOT a valid fallback: parallel executors
+  # would race on one global file. The director must drop
+  # .canon_scope_whitelist.txt at this worktree's root.
   echo "SCOPE: item worktree without .canon_scope_whitelist.txt - refusing shared-canon fallback (parallel executors race on it)" >&2
   exit 1
 fi
