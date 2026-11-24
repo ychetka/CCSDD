@@ -1197,6 +1197,99 @@ grep -q "risk_flags items carry a risk: high fragment" "$SCRATCH/out" \
   && { echo "PASS T76b-risk-frag-ok"; pass=$((pass+1)); } \
   || { echo "FAIL T76b-risk-frag-ok: $(grep -i risk "$SCRATCH/out")"; fail=$((fail+1)); }
 
+# --- T77: lenient risk_flags parser (review_11 #14) - a bare
+# comma list and the template's nested-list form must escalate
+# exactly like the bracketed form; an empty/none value must not.
+T77D="$SCRATCH/t77"; mkdir -p "$T77D/canon/bin"
+cp "$CANON_DIR/bin/verify_constraints.sh" "$CANON_DIR/bin/roadmap_hash.sh" \
+   "$CANON_DIR/bin/spec_anchor_check.sh" "$CANON_DIR/bin/human_sign.sh" \
+   "$CANON_DIR/bin/secret_scan.py" "$CANON_DIR/bin/md_anchors.py" \
+   "$T77D/canon/bin/"
+(cd "$T77D" && git init -q -b main . && git config user.email t@t \
+  && git config user.name t && git commit -q --allow-empty -m init \
+  && printf '## Item: a\n\n- id: a\n- type: implementation\n- status: in_progress\n- risk_flags: auth, migration\n- frozen_hash: x\n- issue: 82\n\n## Item: b\n\n- id: b\n- type: implementation\n- status: in_progress\n- risk_flags: []\n- frozen_hash: x\n- issue: 83\n\n## Item: c\n\n- id: c\n- type: implementation\n- status: in_progress\n- risk_flags:\n  - payments\n- frozen_hash: x\n- issue: 84\n' \
+       > canon/roadmap.md \
+  && git add -A && git commit -qm roadmap \
+  && git checkout -qb issue_82-bare \
+  && mkdir -p .changes \
+  && printf -- '---\nbump: patch\nuser_visible: "false"\nissue: 82\n---\nnote\n' \
+       > .changes/g.md \
+  && git add -A && git commit -qm frag)
+(cd "$T77D" && VERIFY_BRANCH=issue_82-bare VERIFY_BASE=main \
+   bash canon/bin/verify_constraints.sh) >"$SCRATCH/out" 2>&1
+grep -q "risk_flags set on issue(s) 82" "$SCRATCH/out" \
+  && { echo "PASS T77a-bare-list-escalates"; pass=$((pass+1)); } \
+  || { echo "FAIL T77a-bare-list-escalates: $(grep -i risk "$SCRATCH/out")"; fail=$((fail+1)); }
+# nested-list form on issue 84, bare value absent on 83
+(cd "$T77D" && git checkout -qb issue_84-nested \
+  && printf -- '---\nbump: patch\nuser_visible: "false"\nissue: 84\n---\nnote\n' \
+       > .changes/g.md \
+  && git add -A && git commit -qm frag84)
+(cd "$T77D" && VERIFY_BRANCH=issue_84-nested VERIFY_BASE=main \
+   bash canon/bin/verify_constraints.sh) >"$SCRATCH/out" 2>&1
+grep -q "risk_flags set on issue(s) 84" "$SCRATCH/out" \
+  && { echo "PASS T77b-nested-list-escalates"; pass=$((pass+1)); } \
+  || { echo "FAIL T77b-nested-list-escalates: $(grep -i risk "$SCRATCH/out")"; fail=$((fail+1)); }
+# issue 83's empty list must NOT escalate
+(cd "$T77D" && git checkout -qb issue_83-empty \
+  && printf -- '---\nbump: patch\nuser_visible: "false"\nissue: 83\n---\nnote\n' \
+       > .changes/g.md \
+  && git add -A && git commit -qm frag83)
+(cd "$T77D" && VERIFY_BRANCH=issue_83-empty VERIFY_BASE=main \
+   bash canon/bin/verify_constraints.sh) >"$SCRATCH/out" 2>&1
+grep -q "risk_flags" "$SCRATCH/out" \
+  && { echo "FAIL T77c-empty-no-escalation: $(grep -i risk "$SCRATCH/out")"; fail=$((fail+1)); } \
+  || { echo "PASS T77c-empty-no-escalation"; pass=$((pass+1)); }
+
+# --- T78: G/W/T pathspec narrowing + parameterized JS tests
+# (review_11 #22) - a production file matching the old *test* glob
+# must NOT count as a test, while it.each/test.concurrent do.
+T78D="$SCRATCH/t78"; mkdir -p "$T78D"
+(cd "$T78D" && git init -q -b main . && git config user.email t@t \
+  && git config user.name t && git commit -q --allow-empty -m init \
+  && git checkout -qb issue_85-gwt \
+  && mkdir -p .changes tests src \
+  && printf -- '---\nbump: patch\nuser_visible: "false"\nissue: 85\n---\nscenarios: ITEM-85.GWT-1 ITEM-85.GWT-2 ITEM-85.GWT-3\n' \
+       > .changes/g.md \
+  && printf 'def test_connection():\n    # [ITEM-85.GWT-1] a prod helper, not a test\n    return True\n' \
+       > src/latest_report.py \
+  && printf 'test.each([[409], [422]])(\n  "ITEM-85.GWT-2 rejects duplicate [%i]",\n  async (code) => { expect(code).toBeGreaterThan(0) }\n)\n\ntest.concurrent("ITEM-85.GWT-3 races cleanly", async () => {\n  expect(1).toBe(1)\n})\n' \
+       > tests/dup.spec.ts \
+  && git add -A && git commit -qm gwt)
+(cd "$T78D" && VERIFY_BRANCH=issue_85-gwt VERIFY_BASE=main \
+   bash "$CANON_DIR/bin/verify_constraints.sh") >"$SCRATCH/out" 2>&1
+t78=0
+grep -q "missing.*ITEM-85.GWT-1\b" "$SCRATCH/out" || { echo "  t78: prod-file id not flagged"; t78=1; }
+grep -q "missing.*ITEM-85.GWT-2\b" "$SCRATCH/out" && { echo "  t78: it.each id flagged"; t78=1; }
+grep -q "missing.*ITEM-85.GWT-3\b" "$SCRATCH/out" && { echo "  t78: test.concurrent id flagged"; t78=1; }
+[ "$t78" -eq 0 ] && { echo "PASS T78-pathspec-and-param-js"; pass=$((pass+1)); } \
+  || { echo "FAIL T78-pathspec-and-param-js"; fail=$((fail+1)); }
+
+# --- T79: fidelity - an impl_specs file in the diff WITHOUT the
+# '## Impl spec' section FAILs instead of silently auto-passing
+# (review_11 #20).
+T79D="$SCRATCH/t79"; mkdir -p "$T79D"
+(cd "$T79D" && git init -q -b main . && git config user.email t@t \
+  && git config user.name t && git commit -q --allow-empty -m init \
+  && git checkout -qb issue_86-fid \
+  && mkdir -p docs/impl_specs \
+  && printf '# Implementation Spec\n### axis: color\n- decision: red\n' \
+       > docs/impl_specs/broken.md \
+  && git add -A && git commit -qm broken)
+(cd "$T79D" && BASE=main bash "$CANON_DIR/bin/fidelity_check.sh") >"$SCRATCH/out" 2>&1
+expect T79-implspec-section-required 1 $? "no '## Impl spec'"
+
+# --- T80: agent_audit on a binary transcript (ANSI/NUL dumps)
+# prints numeric counters instead of 'Binary file ... matches'
+# (review_11 #24).
+printf 'Exec(git commit)\xff\x00binary junk\nVERIFY: ALL PASS\n' >"$SCRATCH/tr80"
+bash "$CANON_DIR/bin/agent_audit.sh" "$SCRATCH/tr80" >"$SCRATCH/out" 2>&1
+t80=0
+grep -q "^direct_git_calls=[0-9]" "$SCRATCH/out" || { echo "  t80: git counter not numeric"; t80=1; }
+grep -q "verify_output=present" "$SCRATCH/out" || { echo "  t80: VERIFY line lost"; t80=1; }
+[ "$t80" -eq 0 ] && { echo "PASS T80-binary-transcript"; pass=$((pass+1)); } \
+  || { echo "FAIL T80-binary-transcript"; fail=$((fail+1)); }
+
 echo "---"
 echo "gate_tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

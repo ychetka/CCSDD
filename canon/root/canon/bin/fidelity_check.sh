@@ -103,6 +103,7 @@ for rel in files:
     is_spec = bool(IMPL_SPEC_RE.match(rel))
     stem = stem_of(rel)
     in_axes = in_spec = False
+    saw_spec = False
     cur_axis = None
     fence = None   # ``` and ~~~ code blocks are opaque - an
                  # `### axis:` inside a spec example is not a
@@ -121,7 +122,8 @@ for rel in files:
         if re.match(r"^##\s+Delegated decisions", line):
             in_axes = True; in_spec = False; continue
         if is_spec and re.match(r"^##\s+Impl spec", line):
-            in_spec = True; in_axes = False; continue
+            in_spec = True; in_axes = False; saw_spec = True
+            continue
         if re.match(r"^##\s", line):
             in_axes = False; in_spec = False; cur_axis = None
             continue
@@ -148,6 +150,12 @@ for rel in files:
                 cur_axis = norm(m.group(1)); continue
             if cur_axis and re.match(r"^-\s+decision:\s*\S", line):
                 decided.setdefault(rel, set()).add(cur_axis)
+    # An impl-spec file in the diff without the `## Impl spec`
+    # section is malformed - axes declared outside it are ignored,
+    # so a missing header must not fall through to auto-pass.
+    if is_spec and not saw_spec:
+        print(f"FAIL: {rel} has no '## Impl spec' section")
+        raise SystemExit(1)
 
 # A spec's '- contract: <path>' pulls that contract INTO the scan
 # even when the contract file itself is not in this PR delta - it

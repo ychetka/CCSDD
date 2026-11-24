@@ -537,17 +537,28 @@ top = os.environ["TOP"]
 # definition (contiguous decorator lines directly above the def) or
 # a skip() call sits in its first body lines. A bare TODO/FIXME
 # comment is work debt, not a skipped test.
-TESTDEF = re.compile(r"^\s*(async\s+def\s+test_|def\s+test_|it\s*\(|test\s*\()")
+# it.each/test.each/test.concurrent are real parameterized tests.
+# `.skip` is deliberately excluded - SKIPDEC already marks it, and
+# a matched TESTDEF line is never re-checked for being skipped.
+TESTDEF = re.compile(
+    r"^\s*(async\s+def\s+test_|def\s+test_|"
+    r"(?:it|test)(?:\.(?:each|concurrent|sequential))?\s*\()")
 # describe()/context() are suite CONTAINERS, not tests - an id in a
 # comment inside a describe block must NOT count as covered. They
 # stay in NEWDEF so the upward walk stops at them.
 NEWDEF  = re.compile(r"^\s*(async\s+def\s+|def\s+|class\s+\w|it\s*\(|test\s*\(|describe\s*\(|context\s*\(|function\s)")
 SKIPDEC = re.compile(r"(@pytest\.mark\.skip|@pytest\.mark\.skipif|@unittest\.skip|it\.skip|test\.skip|describe\.skip|xit\(|xtest\(|xdescribe\(|@tag\(.skip)")
 SKIPCALL = re.compile(r"(pytest\.skip\(|unittest\.SkipTest|self\.skipTest|this\.skip\(\)|return\s*//\s*skip)")
+# Real test-file conventions only - a bare "*test*" glob also hits
+# production files like src/attestation.py or docs/latest_notes.md.
+TEST_PATHS = [":(glob)**/test_*", ":(glob)**/*_test.*",
+              ":(glob)**/*.test.*", ":(glob)**/*.spec.*",
+              ":(glob)tests/**",
+              ":(exclude,glob)**/*.md", ":(exclude,glob)**/.changes/**"]
 missing = []
 for gid in os.environ["GWT_IDS"].split():
     out = subprocess.run(
-        ["git","-C",top,"grep","-nF",gid,"HEAD","--","*test*","*.spec.*"],
+        ["git","-C",top,"grep","-nF",gid,"HEAD","--"] + TEST_PATHS,
         capture_output=True, text=True).stdout
     covered = False
     for ln in out.splitlines():
@@ -621,18 +632,41 @@ issues = set(os.environ["GWT_ISSUES"].split())
 # so block-level association (## Item: ... until the next heading)
 # is required - streaming 'last issue seen' misattributes flags.
 risky, cur_issue, cur_flags = [], None, False
+rf_indent = None
 def flush():
     if cur_issue in issues and cur_flags:
         risky.append(cur_issue)
 for line in open(os.environ["RM"], encoding="utf-8", errors="replace"):
     if re.match(r"^##\s", line):
-        flush(); cur_issue, cur_flags = None, False; continue
+        flush(); cur_issue, cur_flags = None, False
+        rf_indent = None; continue
     m = re.match(r"^\s*-\s*issue:\s*#?(\d+)\b", line)
     if m:
-        cur_issue = str(int(m.group(1))); continue
-    m = re.match(r"^\s*-\s*risk_flags:\s*\[([^\]]*)\]", line)
+        cur_issue = str(int(m.group(1)))
+        rf_indent = None; continue
+    # Lenient: accept `[a, b]`, bare `a, b`, and the nested-list
+    # form (a deeper-indented `- flag` on the next line). Any
+    # non-empty value besides [], none, -, n/a means risky - a
+    # rigid regex would fail OPEN on a format the director picked
+    # from the research_questions template.
+    m = re.match(r"^(\s*)-\s*risk_flags:\s*(.*)$", line)
     if m:
-        cur_flags = bool(m.group(1).strip())
+        indent, val = len(m.group(1)), m.group(2).strip()
+        val = val.strip("[]").strip()
+        cur_flags = bool(val) and val.lower() not in (
+            "none", "n/a", "-", '""', "''")
+        if not cur_flags:
+            # Maybe a nested list follows.
+            rf_indent = indent
+            continue
+        continue
+    if rf_indent is not None and not cur_flags:
+        mn = re.match(r"^(\s*)-\s*(\S.*)$", line)
+        if mn and len(mn.group(1)) > rf_indent:
+            cur_flags = mn.group(2).strip().lower() not in (
+                "none", "n/a", "-", "[]")
+            continue
+        rf_indent = None
 flush()
 print(" ".join(sorted(set(risky), key=int)))
 PY

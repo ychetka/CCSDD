@@ -111,7 +111,8 @@ if item is None:
 if item.get("type", "").strip() != "epic":
     print(json.dumps({"error": "roadmap item with 'issue: %s' is not 'type: epic'" % en})); raise SystemExit(0)
 raw = (item.get("tasks") or "").strip()
-nums = [n.strip() for n in raw.strip("[]").split(",") if n.strip()]
+nums = [n.strip().lstrip("#").strip()
+        for n in raw.strip("[]").split(",") if n.strip()]
 if not nums or not all(re.fullmatch(r"\d+", n) for n in nums):
     print(json.dumps({"error": "epic item must declare 'tasks: [<issue numbers>]'" })); raise SystemExit(0)
 print(json.dumps({"tasks": [str(int(n)) for n in nums]}))

@@ -40,8 +40,8 @@ flowchart LR
   ISS --> EPB
   DEC --> CF
   TPR -->|all tasks merged| INTG
-  JDG2 -->|changes, ≤3 rounds| CODE
-  JDG2 -.->|">3 rounds"| RES["resolver → stop / escalation"]
+  JDG2 -->|changes, ≤2 rounds| CODE
+  JDG2 -.->|">2 rounds"| RES["resolver → stop / escalation"]
   SO -.->|drift| PD["PLAN_DELTA → human"]
   DEV -.-> TASK
   AP1 -.-> DEV

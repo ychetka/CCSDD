@@ -107,7 +107,7 @@ chat text.
 
 `designer (delegated axes → impl spec, gated before the writer) →
 executor (pre-code interrogation → code+tests → green run) → judge
-(≤3 rounds against the frozen contract) → git agent (candidate
+(≤2 rounds against the frozen contract) → git agent (candidate
 commit with explicit sha + push + PR open) → reviewer subagent
 (separate account, remote-storage-only reads, APPROVE bound to the
 head sha, verdict unfiltered by the director) → hygiene
@@ -121,7 +121,7 @@ human confirmation before PR assembly.
 
 ### 7. Bounded loops and the escalation ladder
 
-Rework is bounded: >3 dispute rounds with judge/reviewer → resolver →
+Rework is bounded: >2 dispute rounds with judge/reviewer → resolver →
 item stop, not endless thrash. Ambiguity climbs the ladder: question →
 level committee → architecture committee → human (terminal); skipping
 a level is forbidden. The mandatory **pre-code interrogation** makes
@@ -279,7 +279,7 @@ Diagrams: [item lifecycle](diagrams/item_lifecycle.svg) ·
 
 `plan → 👨‍💻roadmap approve → issues → (optional §2a batch contracts) →
 contract: draft→judged→👨‍💻sign-off(sha) → pre-consult → spawn → pre-code
-interrogation → code+tests → judge rounds ≤3 → review panel → GIT commit →
+interrogation → code+tests → judge rounds ≤2 → review panel → GIT commit →
 HYG → merge gate (isolated copy + expected_sha + reviewer verdicts +
 green checks; manual_gate fragment → 👨‍💻) → release`
 

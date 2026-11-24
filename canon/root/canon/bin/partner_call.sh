@@ -215,7 +215,9 @@ consult_max = int(os.environ.get("GATEWAY_CONSULT_DAILY_MAX",
 consult_max = min(consult_max,
                   int(_gw.get("consult_daily_max_per_partner", 50)))
 audit_daily = int(_gw.get("audit_daily_max_total", 100))
-today = datetime.date.today().isoformat()
+# Machine-readable marks are strictly UTC (harness spec): quota
+# keys must not drift with the worker's local timezone.
+today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
 # SQLite/WAL store: quota check+increment is ONE transaction -
 # concurrent calls can never lose or double-spend an increment,
 # and the transaction commits BEFORE the backend call below (a

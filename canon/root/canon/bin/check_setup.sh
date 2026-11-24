@@ -18,6 +18,9 @@ done
 if ! command -v python3 >/dev/null; then
   echo "SETUP: $fails FAILURES - halt, do not proceed"; exit 1
 fi
+python3 -I -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' \
+  && ok "python3 >= 3.9" \
+  || fail "python3 >= 3.9 required (canon scripts use removeprefix/reconfigure)"
 
 [ -f "$PJ" ] || fail "$PJ missing"
 

@@ -893,7 +893,7 @@ developer. No sub-rungs.
     committee refines the G/W/T;
   - heterogeneous minor objections — judge recalibration.
 
-Escalation caps are uniform across the ladder: executor-judge > 3
+Escalation caps are uniform across the ladder: executor-judge > 2
 rounds = resolver (not a counter reset); arch committee called on
 one item 3 times without clearing objections = terminal escalation
 to the developer (the step moves to `paused` and waits for the

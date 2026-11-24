@@ -74,8 +74,11 @@ case "$MODE" in
 init)
   [ -n "$KEYFILE" ] || {
     if ssh-add -L >/dev/null 2>&1; then
+      PUBKEY=$(ssh-add -L | head -1)
+      [ -n "$PUBKEY" ] || die "ssh-agent identity list is empty"
       KEYFILE=$(mktemp -t ccsdd-pubkey.XXXXXX)
-      ssh-add -L | head -1 > "$KEYFILE"
+      trap 'rm -f "$KEYFILE"' EXIT
+      printf '%s\n' "$PUBKEY" > "$KEYFILE"
       echo "human_sign: using first ssh-agent identity: $(cut -c1-32 "$KEYFILE")..."
     else
       die "no --key given and ssh-agent has no identities (ssh-add first)"
@@ -201,7 +204,9 @@ try:
     age = time.time() - calendar.timegm(ts)
 except Exception:
     sys.exit("human_sign: unparseable ts in envelope")
-if not (0 <= age <= float(os.environ["WINDOW"])):
+# Tolerate clock skew: a signer host whose clock runs a few
+# minutes fast must not produce a spuriously-rejected envelope.
+if not (-300 <= age <= float(os.environ["WINDOW"])):
     sys.exit(f"human_sign: envelope stale ({int(age//86400)}d old, window 7d)")
 # Anti-replay: a nonce may certify exactly one acceptance. The
 # consumed-check happens on EVERY verify (a burned nonce is dead

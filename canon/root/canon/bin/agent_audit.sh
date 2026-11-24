@@ -45,9 +45,9 @@ PY
 else
   echo "cycle_log: missing"
 fi
-echo "direct_git_calls=$(grep -cE 'Exec\(git|(^| )git (status|add|commit|push|checkout|diff|log)' "$TR" || true)"
-echo "direct_gh_calls=$(grep -cE 'Exec\(gh|(^| )gh (pr|issue|api|auth)' "$TR" || true)"
-echo "confirmations_asked=$(grep -ciE 'confirm|approve\?|may i|permission|allow(ed)? (me|to)|подтверд|можно ли|разреш' "$TR" || true)"
-echo "attribution_hits=$(grep -ciE 'Generated with|Co-Authored-By|Devin AI' "$TR" || true)"
-V=$(grep -c 'VERIFY: ALL PASS' "$TR" || true)
+echo "direct_git_calls=$(grep -acE 'Exec\(git|(^| )git (status|add|commit|push|checkout|diff|log)' "$TR" || true)"
+echo "direct_gh_calls=$(grep -acE 'Exec\(gh|(^| )gh (pr|issue|api|auth)' "$TR" || true)"
+echo "confirmations_asked=$(grep -aciE 'confirm|approve\?|may i|permission|allow(ed)? (me|to)|подтверд|можно ли|разреш' "$TR" || true)"
+echo "attribution_hits=$(grep -aciE 'Generated with|Co-Authored-By|Devin AI' "$TR" || true)"
+V=$(grep -ac 'VERIFY: ALL PASS' "$TR" || true)
 echo "verify_output=$([ "${V:-0}" -gt 0 ] && echo present || echo absent)"

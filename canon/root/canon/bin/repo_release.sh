@@ -423,7 +423,7 @@ FRAG_META="$FRAG_META" FRAGS="$FRAGS" NEXT="$NEXT" WT="$WT" python3 -I - <<'PY' 
 import json, os, re, sys
 wt, ver = os.environ["WT"], os.environ["NEXT"]
 import datetime
-date = datetime.date.today().isoformat()
+date = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
 meta = json.loads(os.environ["FRAG_META"])
 entries = []
 for f in os.environ["FRAGS"].splitlines():
