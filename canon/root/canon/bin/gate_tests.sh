@@ -1290,6 +1290,45 @@ grep -q "verify_output=present" "$SCRATCH/out" || { echo "  t80: VERIFY line los
 [ "$t80" -eq 0 ] && { echo "PASS T80-binary-transcript"; pass=$((pass+1)); } \
   || { echo "FAIL T80-binary-transcript"; fail=$((fail+1)); }
 
+# --- T81: agent_audit counts path-qualified and flag-prefixed
+# invocations (review_12 #20): '/usr/bin/git status', 'git -C . status',
+# 'git --no-pager log', 'gh -R o/r pr view' all count as direct calls.
+cat >"$SCRATCH/tr81" <<'TR'
+Exec(/usr/bin/git commit -m x)
+ git -C . status
+Exec(git --no-pager log)
+ git branch -D tmp
+Exec(/usr/bin/gh pr view 3)
+ gh -R owner/repo pr merge 3
+TR
+bash "$CANON_DIR/bin/agent_audit.sh" "$SCRATCH/tr81" >"$SCRATCH/out" 2>&1
+t81=0
+g=$(grep -o '^direct_git_calls=[0-9]*' "$SCRATCH/out" | cut -d= -f2)
+h=$(grep -o '^direct_gh_calls=[0-9]*' "$SCRATCH/out" | cut -d= -f2)
+[ "${g:-0}" -ge 4 ] || { echo "  t81: git counter=$g want >=4"; t81=1; }
+[ "${h:-0}" -ge 2 ] || { echo "  t81: gh counter=$h want >=2"; t81=1; }
+[ "$t81" -eq 0 ] && { echo "PASS T81-audit-regex"; pass=$((pass+1)); } \
+  || { echo "FAIL T81-audit-regex"; fail=$((fail+1)); }
+
+# --- T82: TOML section boundary (review_12 #21): a multiline array
+# value whose own line starts with '[' is section content, NOT a new
+# table - version must still resolve AND rewrite inside [project].
+T82D="$SCRATCH/t82"; mkdir -p "$T82D/canon/bin"
+cp "$CANON_DIR/bin/repo_version_at.sh" "$CANON_DIR/bin/repo_version_set.sh" \
+   "$T82D/canon/bin/"
+(cd "$T82D" && git init -q . && git config user.email t@t && git config user.name t \
+  && printf '[project]\nname = "x"\ndependencies =\n[\n  "dep",\n]\nversion = "1.2.3"\n\n[tool.ruff]\nline-length = 88\n' > pyproject.toml \
+  && git add -A && git commit -qm init)
+t82=0
+v82=$(cd "$T82D" && bash canon/bin/repo_version_at.sh HEAD 2>/dev/null)
+[ "$v82" = "1.2.3" ] || { echo "  t82: at=$v82 want 1.2.3"; t82=1; }
+w82=$(cd "$T82D" && bash canon/bin/repo_version_set.sh 9.9.9 2>/dev/null)
+[ "$w82" = "pyproject.toml" ] || { echo "  t82: set=$w82 want pyproject.toml"; t82=1; }
+v82b=$(grep -c '^version = "9.9.9"' "$T82D/pyproject.toml")
+[ "$v82b" = "1" ] || { echo "  t82: written version not found"; t82=1; }
+[ "$t82" -eq 0 ] && { echo "PASS T82-toml-section"; pass=$((pass+1)); } \
+  || { echo "FAIL T82-toml-section"; fail=$((fail+1)); }
+
 echo "---"
 echo "gate_tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

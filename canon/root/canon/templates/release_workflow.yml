@@ -8,10 +8,13 @@ name: release
 on:
   pull_request:
     types: [closed]
-    branches: [main]
+    # __BASE__ is substituted by setup_repo.sh at deploy time with
+    # the repo's --base branch - never a literal, or the workflow
+    # silently never triggers on non-'main' bases.
+    branches: [__BASE__]
 
 concurrency:
-  group: release-main
+  group: release-__BASE__
   cancel-in-progress: false
 
 jobs:
@@ -100,9 +103,12 @@ jobs:
           def read(p):
               try: return open(p, encoding="utf-8", errors="replace").read()
               except OSError: return None
+          # Section boundary = real TOML table header only; a multiline
+          # array value line starting with '[' is content.
+          _hdr = r"^\[\[?[A-Za-z0-9_.-][A-Za-z0-9_.'\" \t-]*\]\]?[ \t]*(?:#.*)?$"
           body = read("pyproject.toml")
           if body:
-              m = re.search(r"(?ms)^\[project\](?:(?!^\[).)*?^\s*version\s*=\s*[\"']([^\"']+)", body)
+              m = re.search(r"(?ms)^\[project\](?:(?!" + _hdr + r").)*?^\s*version\s*=\s*[\"']([^\"']+)", body)
               if m: print(m.group(1)); raise SystemExit(0)
           body = read("package.json")
           if body:
@@ -112,14 +118,14 @@ jobs:
               except Exception: pass
           body = read("Cargo.toml")
           if body:
-              m = re.search(r"(?ms)^\[package\](?:(?!^\[).)*?^\s*version\s*=\s*[\"']([^\"']+)", body)
+              m = re.search(r"(?ms)^\[package\](?:(?!" + _hdr + r").)*?^\s*version\s*=\s*[\"']([^\"']+)", body)
               if m: print(m.group(1)); raise SystemExit(0)
           body = read("VERSION")
           if body:
               print(body.strip().splitlines()[0].strip()); raise SystemExit(0)
           body = read("setup.cfg")
           if body:
-              m = re.search(r"(?ms)^\[metadata\](?:(?!^\[).)*?^\s*version\s*=\s*(\S+)", body)
+              m = re.search(r"(?ms)^\[metadata\](?:(?!" + _hdr + r").)*?^\s*version\s*=\s*(\S+)", body)
               if m: print(m.group(1)); raise SystemExit(0)
           PYEOF
           )

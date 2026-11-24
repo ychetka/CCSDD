@@ -48,10 +48,15 @@ except Exception:
 
 # Section-anchored patterns: `version` must be found inside the
 # declaring section only - an unanchored `^version =` would match a
-# [tool.*]/[dependency] version and report the wrong number.
+# [tool.*]/[dependency] version and report the wrong number. The
+# section boundary must match a REAL TOML table header (bare key in
+# brackets), not just any line starting with '[': a multiline array
+# value like `[` or `["dep", "x"]` on its own line is section content,
+# not a boundary.
+_HDR = r"^\[\[?[A-Za-z0-9_.-][A-Za-z0-9_.'\" \t-]*\]\]?[ \t]*(?:#.*)?$"
 body = show("pyproject.toml")
 if body:
-    m = re.search(r"(?ms)^\[project\](?:(?!^\[).)*?^\s*version\s*=\s*[\"']([^\"']+)", body)
+    m = re.search(r"(?ms)^\[project\](?:(?!" + _HDR + r").)*?^\s*version\s*=\s*[\"']([^\"']+)", body)
     if m:
         print(m.group(1)); sys.exit(0)
 body = show("package.json")
@@ -64,7 +69,7 @@ if body:
         pass
 body = show("Cargo.toml")
 if body:
-    m = re.search(r"(?ms)^\[package\](?:(?!^\[).)*?^\s*version\s*=\s*[\"']([^\"']+)", body)
+    m = re.search(r"(?ms)^\[package\](?:(?!" + _HDR + r").)*?^\s*version\s*=\s*[\"']([^\"']+)", body)
     if m:
         print(m.group(1)); sys.exit(0)
 body = show("VERSION")
@@ -72,7 +77,7 @@ if body:
     print(body.strip().splitlines()[0].strip()); sys.exit(0)
 body = show("setup.cfg")
 if body:
-    m = re.search(r"(?ms)^\[metadata\](?:(?!^\[).)*?^\s*version\s*=\s*(\S+)", body)
+    m = re.search(r"(?ms)^\[metadata\](?:(?!" + _HDR + r").)*?^\s*version\s*=\s*(\S+)", body)
     if m:
         print(m.group(1)); sys.exit(0)
 PY

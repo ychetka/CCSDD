@@ -87,13 +87,17 @@ fi
 VER="$VER" python3 -I - <<'PY'
 import json, os, re, sys
 ver = os.environ["VER"]
+# Section boundary must match a REAL TOML table header, not any line
+# starting with '[' - a multiline array value (`[`/`["dep", "x"]` on
+# its own line) inside the section is content, not a boundary.
+_HDR = r"^\[\[?[A-Za-z0-9_.-][A-Za-z0-9_.'\" \t-]*\]\]?[ \t]*(?:#.*)?$"
 candidates = [
-    ("pyproject.toml", r'(?ms)(^\[project\](?:(?!^\[).)*?^\s*version\s*=\s*["\'])([^"\']+)(["\'])'),
+    ("pyproject.toml", r'(?ms)(^\[project\](?:(?!' + _HDR + r').)*?^\s*version\s*=\s*["\'])([^"\']+)(["\'])'),
     # package.json: anchor the key at top-level indent so a nested
     # "version" (engines/plugin config) can never shadow the root
     # field - and verify the write with json.loads afterwards.
     ("package.json",   r'(?m)^([ \t]{1,4}"version"\s*:\s*")([^"]+)(")'),
-    ("Cargo.toml",     r'(?ms)(^\[package\](?:(?!^\[).)*?^\s*version\s*=\s*["\'])([^"\']+)(["\'])'),
+    ("Cargo.toml",     r'(?ms)(^\[package\](?:(?!' + _HDR + r').)*?^\s*version\s*=\s*["\'])([^"\']+)(["\'])'),
 ]
 for path, pat in candidates:
     if not os.path.isfile(path):
@@ -121,7 +125,7 @@ if os.path.isfile("VERSION"):
     sys.exit(0)
 if os.path.isfile("setup.cfg"):
     body = open("setup.cfg", encoding="utf-8").read()
-    m = re.search(r'(?ms)(^\[metadata\](?:(?!^\[).)*?^\s*version\s*=\s*)(\S+)', body)
+    m = re.search(r'(?ms)(^\[metadata\](?:(?!' + _HDR + r').)*?^\s*version\s*=\s*)(\S+)', body)
     if m:
         open("setup.cfg", "w", encoding="utf-8").write(body[:m.start(2)] + ver + body[m.end(2):])
         print("setup.cfg")

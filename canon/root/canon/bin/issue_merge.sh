@@ -155,10 +155,13 @@ else:
     # must match, exactly like the writer checks.
     import re
     pre = os.environ["PRE_MERGE_SHA"]
+    # Section boundary = real TOML table header only; a multiline
+    # array value line starting with '[' is content, not a boundary.
+    _hdr = r"^\[\[?[A-Za-z0-9_.-][A-Za-z0-9_.'\" \t-]*\]\]?[ \t]*(?:#.*)?$"
     candidates = [
-        ("pyproject.toml", r'(?ms)^\[project\](?:(?!^\[).)*?^\s*version\s*=\s*["\'][^"\']+["\']'),
+        ("pyproject.toml", r'(?ms)^\[project\](?:(?!' + _hdr + r').)*?^\s*version\s*=\s*["\'][^"\']+["\']'),
         ("package.json",   r'"version"\s*:\s*"[^"]+"'),
-        ("Cargo.toml",     r'(?ms)^\[package\](?:(?!^\[).)*?^\s*version\s*=\s*["\'][^"\']+["\']'),
+        ("Cargo.toml",     r'(?ms)^\[package\](?:(?!' + _hdr + r').)*?^\s*version\s*=\s*["\'][^"\']+["\']'),
     ]
     found = ""
     for path, pat in candidates:

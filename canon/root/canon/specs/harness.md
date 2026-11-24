@@ -324,7 +324,8 @@ issue_mismatch | stale_input | plan_drift | verify_escalated | verify_failed |
 release_failed | missing_review_domain | bad_creator |
 external_check_failed | panel_incomplete | missing_panel_registry |
 panel_domain |
-baseline_unresolvable | env_setup_failed | unknown`
+baseline_unresolvable | env_setup_failed | unauthorized |
+already_exists | unknown`
 
 ### cycle_log.jsonl
 

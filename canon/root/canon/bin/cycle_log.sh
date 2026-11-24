@@ -195,7 +195,8 @@ if [ "$CMD" = "append" ]; then
       verify_escalated|verify_failed|release_failed|\
       missing_review_domain|bad_creator|external_check_failed|panel_incomplete|\
       missing_panel_registry|panel_domain|\
-      baseline_unresolvable|env_setup_failed|unknown) ;; *) FC=unknown;; esac
+      baseline_unresolvable|env_setup_failed|unauthorized|already_exists|\
+      unknown) ;; *) FC=unknown;; esac
   fi
   # failure_class is only meaningful on a failure/escalated verdict -
   # a closed-ok record must never carry one

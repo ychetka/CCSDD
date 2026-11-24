@@ -45,8 +45,14 @@ PY
 else
   echo "cycle_log: missing"
 fi
-echo "direct_git_calls=$(grep -acE 'Exec\(git|(^| )git (status|add|commit|push|checkout|diff|log)' "$TR" || true)"
-echo "direct_gh_calls=$(grep -acE 'Exec\(gh|(^| )gh (pr|issue|api|auth)' "$TR" || true)"
+# Path-qualified and flag-prefixed invocations count too:
+# '/usr/bin/git status', 'git -C . status', 'git --no-pager log' all
+# bypass the old '^ git <subcmd>' shape. The token-skip group lets any
+# number of flag/arg words precede the subcommand; the subcommand set
+# covers the full porcelain write surface, not only the few verbs the
+# first version listed.
+echo "direct_git_calls=$(grep -acE 'Exec\([^)]*/?git |(^|[/ ])git +([^ ]+ +)*(status|add|commit|push|checkout|diff|log|branch|reset|tag|merge|rebase|fetch|pull|clone|rm|mv|restore|switch|stash|config|remote|init|worktree)( |$)' "$TR" || true)"
+echo "direct_gh_calls=$(grep -acE 'Exec\([^)]*/?gh |(^|[/ ])gh +([^ ]+ +)*(pr|issue|api|auth|release|repo|run|workflow|browse)( |$)' "$TR" || true)"
 echo "confirmations_asked=$(grep -aciE 'confirm|approve\?|may i|permission|allow(ed)? (me|to)|подтверд|можно ли|разреш' "$TR" || true)"
 echo "attribution_hits=$(grep -aciE 'Generated with|Co-Authored-By|Devin AI' "$TR" || true)"
 V=$(grep -ac 'VERIFY: ALL PASS' "$TR" || true)

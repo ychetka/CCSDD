@@ -282,8 +282,20 @@ if staged:
           "(rerun on a clean index)")
     sys.exit(0)
 branch = git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-default = (git("symbolic-ref", "--short", "refs/remotes/origin/HEAD")
-           .stdout.strip().removeprefix("origin/")) or "main"
+# Default branch resolution order: <remote>/HEAD for ANY configured
+# remote (not only 'origin'), then init.defaultBranch, then the
+# current branch itself (a local-only repo has no remote truth;
+# hardcoding "main" lies on master/trunk-based repos).
+default = ""
+for remote in git("remote").stdout.split():
+    rh = git("symbolic-ref", "--short",
+             f"refs/remotes/{remote}/HEAD").stdout.strip()
+    if rh:
+        default = rh.removeprefix(remote + "/")
+        break
+if not default:
+    default = (git("config", "init.defaultBranch").stdout.strip()
+               or branch or "main")
 gi_abs = os.path.join(os.environ.get("WORKSPACE", top), ".gitignore")
 gi_rel = os.path.relpath(gi_abs, top)
 gi_stage = (not gi_rel.startswith("..")

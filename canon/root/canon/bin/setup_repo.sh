@@ -51,6 +51,9 @@ fi
 # not a fallback branch.
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 WF=$(cat "$CANON_DIR/templates/release_workflow.yml")
+# Substitute the __BASE__ placeholder with the deploy target branch -
+# a literal 'main' trigger never fires on repos whose base differs.
+WF=${WF//__BASE__/$BASE}
 HAVE_WF=$(gh api "repos/$REPO/contents/.github/workflows/release.yml" \
             --jq .sha 2>/dev/null || true)
 if [ -n "$HAVE_WF" ]; then
