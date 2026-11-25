@@ -344,6 +344,10 @@ if gi_stage:
 c = subprocess.run(
     ["git", "-C", top, "-c", "user.name=canon-onboard",
      "-c", "user.email=canon-onboard@local",
+     # commit.gpgsign=false: a developer's global commit.gpgsign=true
+     # would invoke pinentry on a headless/CI run and fail the infra
+     # commit outright (review_15 #17).
+     "-c", "commit.gpgsign=false",
      # --no-verify: a repo's own pre-commit/commit-msg hooks (e.g.
      # ticket-number policies) must not veto this infra commit and
      # leave a half-staged .gitignore behind.

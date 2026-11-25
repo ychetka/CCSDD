@@ -60,18 +60,27 @@ ADAPTER="$FORGE_DIR/$FORGE.sh"
 
 # Panel identity binary: review.gh_bin allowlist (same policy as
 # repo_pr_review.sh) - panel signals must be created by the review
-# identity, not the merge/author account.
+# identity, not the merge/author account. When the project configures
+# a review identity (review.gh_bin/api_bin or reviewer_profiles), the
+# allowlist is EXACTLY those binaries - the unconditional gh/glab
+# defaults would let a caller substitute the merge credential and
+# spoof a reviewer (review_15 #9). Single-identity projects (no
+# review config at all) fall back to the forge default.
 API_BIN="${GH_BIN:-}"
 ALLOWED=$(PJ="$PJ" python3 -I -c 'import json,os,re
 try:
     pj = json.load(open(os.environ["PJ"]))
     rev = pj.get("review") or {}
-    bins = ["gh", "glab", rev.get("gh_bin") or "", rev.get("api_bin") or ""]
+    bins = [rev.get("gh_bin") or "", rev.get("api_bin") or ""]
     for prof in (rev.get("reviewer_profiles") or {}).values():
         if isinstance(prof, dict):
             bins.append(prof.get("gh_bin") or "")
             bins.append(prof.get("api_bin") or "")
-    print(" ".join(b for b in bins if re.fullmatch(r"[A-Za-z0-9_-]+", b or "")))
+    bins = [b for b in bins if re.fullmatch(r"[A-Za-z0-9_-]+", b or "")]
+    if not bins:
+        forge = pj.get("forge") or "github"
+        bins = [{"gitlab": "glab"}.get(forge, "gh")]
+    print(" ".join(bins))
 except Exception: print("gh")' 2>/dev/null)
 if [ -z "$API_BIN" ]; then
   API_BIN=$(PJ="$PJ" python3 -I -c 'import json,os
@@ -83,6 +92,22 @@ fi
 case "$API_BIN" in */*|*\\*) json_err malformed_input "API binary must be a bare basename"; exit 2;; esac
 OK=0; for a in $ALLOWED; do [ "$API_BIN" = "$a" ] && OK=1; done
 [ "$OK" = "1" ] || { json_err malformed_input "panel identity binary not in review allowlist"; exit 2; }
+# With a configured review identity the panel binary must not be the
+# merge/author credential (author == reviewer makes every signal
+# self-issued). forge=test shares one stub transport by design.
+HAS_REVIEW_CFG=$(PJ="$PJ" python3 -I -c 'import json,os
+try:
+    pj = json.load(open(os.environ["PJ"])); rev = pj.get("review") or {}
+    cfg = any([(rev.get("gh_bin") or "").strip(), (rev.get("api_bin") or "").strip(),
+               bool(rev.get("reviewer_profiles"))])
+    print("1" if cfg else "")
+except Exception: print("")' 2>/dev/null)
+if [ "$FORGE" != "test" ] && [ "$HAS_REVIEW_CFG" = "1" ]; then
+  MERGE_BIN=$("$CANON_DIR/bin/gh_id.sh" merge 2>/dev/null || true)
+  if [ -n "$MERGE_BIN" ] && [ "$API_BIN" = "$MERGE_BIN" ]; then
+    json_err malformed_input "panel identity binary must differ from the merge identity"; exit 2
+  fi
+fi
 export API_BIN CANON_DIR
 
 if [ "$CMD" = "get" ]; then

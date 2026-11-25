@@ -43,6 +43,7 @@ usage() {
   echo "       cycle_log.sh unregister --actor <id> [--registrar-token <t> | --token <t>]" >&2
   echo "       cycle_log.sh append --item <id> --actor <id> --action <a> --expected <e> --result <r> --status open|closed --verdict ok|failure|escalated [--failure-class <fc>]" >&2
   echo "       cycle_log.sh close --actor <id> --token <t> [--item <id> | --all] [--for-actor <id>] [--verdict ok|escalated] [--note <t>] [--allow-empty] [--dry-run]" >&2
+  echo "       cycle_log.sh compact [--keep <n>]  - archive resolved chains to cycle_log.archive.jsonl" >&2
   exit 2
 }
 [ $# -ge 1 ] || usage
@@ -420,6 +421,82 @@ with open(log, "a", encoding="utf-8") as f:
     f.flush(); os.fsync(f.fileno())
 print(f"appended {len(events)} close event(s) by {caller} (role={role})"
       + (f" for actor={target}" if target != caller else ""))
+PY
+elif [ "$CMD" = "compact" ]; then
+  KEEP=1000
+  while [ $# -gt 0 ]; do
+    [ $# -ge 2 ] || usage
+    case "$1" in
+      --keep) KEEP=$2;; *) usage;;
+    esac; shift 2
+  done
+  [[ "$KEEP" =~ ^[0-9]+$ ]] || { echo "cycle_log compact: --keep must be numeric" >&2; exit 2; }
+  # Rotation (review_15 #18): the log is read front-to-back on every
+  # verify/commit; an unbounded file slows every gate. Archive into
+  # cycle_log.archive.jsonl and rewrite the active file keeping:
+  #   - every record of a (actor,item) pair that is STILL OPEN (the
+  #     gate's open-failures scan and 'close' matching need the whole
+  #     live chain),
+  #   - corrupt lines (never lose data silently),
+  #   - the newest --keep records overall (current-cycle history).
+  # Runs under the script's own flock; the rewrite is atomic via
+  # temp+rename so a concurrent append never reads a half file.
+  LOG="$LOG" KEEP="$KEEP" python3 -I - <<'PY'
+import json, os, sys, tempfile
+log = os.environ["LOG"]; keep = int(os.environ["KEEP"])
+if not os.path.isfile(log):
+    print("cycle_log compact: no log file"); sys.exit(0)
+lines = open(log, encoding="utf-8", errors="replace").read().splitlines()
+recs = []
+for i, ln in enumerate(lines):
+    try:
+        r = json.loads(ln)
+        recs.append((i, ln, r if isinstance(r, dict) else None))
+    except Exception:
+        recs.append((i, ln, None))
+# Live (actor,item) keys: last event for the key is status=open.
+last = {}
+for i, ln, r in recs:
+    if r is None: continue
+    k = (r.get("actor"), r.get("item"))
+    if k not in last or i > last[k][0]:
+        last[k] = (i, r)
+live = {k for k, (i, r) in last.items() if r.get("status") == "open"}
+keep_idx = set()
+# newest `keep` records overall
+for i, ln, r in recs[max(0, len(recs) - keep):]:
+    keep_idx.add(i)
+# whole chains of live keys + all corrupt lines
+for i, ln, r in recs:
+    if r is None:
+        keep_idx.add(i); continue
+    if (r.get("actor"), r.get("item")) in live:
+        keep_idx.add(i)
+archived = [ln for i, ln, r in recs if i not in keep_idx]
+if not archived:
+    print("cycle_log compact: nothing to archive")
+    sys.exit(0)
+arc = log.replace("cycle_log.jsonl", "cycle_log.archive.jsonl")
+with open(arc, "a", encoding="utf-8") as f:
+    for ln in archived:
+        f.write(ln + "\n")
+    f.flush(); os.fsync(f.fileno())
+kept = [ln for i, ln, r in recs if i in keep_idx]
+marker = {"ts": __import__("datetime").datetime.now(
+            __import__("datetime").timezone.utc).isoformat(),
+          "actor": "cycle_log", "item": "-", "action": "compact",
+          "expected": "log rotation", "result":
+          f"archived={len(archived)} kept={len(kept)}",
+          "status": "closed", "verdict": "ok"}
+kept.append(json.dumps(marker, ensure_ascii=False))
+d = os.path.dirname(log)
+fd, tmp = tempfile.mkstemp(dir=d, prefix=".cycle_log.")
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    f.write("\n".join(kept) + "\n")
+    f.flush(); os.fsync(f.fileno())
+os.replace(tmp, log)
+print(f"cycle_log compact: archived {len(archived)} record(s) -> {arc}, "
+      f"kept {len(kept)}")
 PY
 else
   usage

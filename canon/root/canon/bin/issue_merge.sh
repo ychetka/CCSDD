@@ -14,6 +14,14 @@ set -uo pipefail
 # nested workspaces the git top may be a subdir like code/ while
 # canon/ lives at the workspace root.
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+# Gate 0 (review_15 #5): the merge path must never run under a
+# workspace-tampered canon - prove manifest hashes + the external
+# stamp before trusting any $CANON_DIR script or adapter hook.
+if [ -f "$CANON_DIR/canon_manifest.json" ]; then
+  [ -x "$CANON_DIR/bin/assert_canon_integrity.sh" ] \
+    || { echo "GATE_INTEGRITY: assert_canon_integrity.sh missing under a pinned manifest" >&2; exit 1; }
+  "$CANON_DIR/bin/assert_canon_integrity.sh" || exit 1
+fi
 TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
 cd "$TOP"
 # macOS has shasum, not sha256sum - resolve once like gate_run.sh.
@@ -105,8 +113,22 @@ PRE_MERGE_SHA=$(git rev-parse --verify -q "$REMOTE/$BASE" 2>/dev/null || true)
 [ -n "$PRE_MERGE_SHA" ] || \
   json_error upstream_error "cannot resolve pre-merge base sha - refusing to merge"
 
-# Repo default branch (for ~DEFAULT_BRANCH ruleset matching).
+# Repo default branch (for ~DEFAULT_BRANCH ruleset matching AND the
+# post-merge release decision). It must NEVER resolve to empty: an
+# API glitch that left it blank would run a full repo_release on a
+# non-default base (epic branch) - tag + fragment consumption on
+# integration work. Resolve locally when the API is silent:
+# <remote>/HEAD, then project.json base_branch, then 'main'
+# (review_15 #7).
 DEFAULT_BRANCH=$("$GH" repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null || echo "")
+if [ -z "$DEFAULT_BRANCH" ]; then
+  DEFAULT_BRANCH=$(git symbolic-ref --short "refs/remotes/$REMOTE/HEAD" 2>/dev/null \
+                   | sed "s|^$REMOTE/||" || true)
+fi
+[ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(CANON_DIR="$CANON_DIR" python3 -I -c 'import json,os
+try: print((json.load(open(os.path.join(os.environ["CANON_DIR"],"project.json"))).get("base_branch") or "").strip())
+except Exception: print("")' 2>/dev/null)
+[ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=main
 
 # Stack-neutral version probe - shared canonical resolver.
 VER_AT() { bash "$CANON_DIR/bin/repo_version_at.sh" "$1" 2>/dev/null; }
@@ -1027,41 +1049,38 @@ if [ "${MANUAL_GATE:-no}" = "yes" ] && [ -n "${ENV_FILE:-}" ]; then
     || echo "issue_merge: signoff nonce consume failed post-merge" >&2
 fi
 
-# Contract envelopes are consumed post-merge the same way: without a
-# burn, a 7-day-fresh signature could be replayed on a revert+restore
-# cycle reintroducing the identical contract content. For each
-# contract path touched by the merged diff, compute the artifact the
-# same way verify_constraints does (file sha256 for live contracts,
-# sha256("delete|path|base-blob") for deletions) and burn the matching
-# contract_<path>.json envelope. Best-effort: a missing envelope is
-# not an error (the gate may have accepted $BRANCH.json instead).
+# Contract envelopes are NOT nonce-consumed at merge (review_15 #6):
+# a contract signature is frozen on content, so the same envelope
+# must verify again when this change rides the epic into main -
+# burning it here deadlocked every subsequent task and the epic
+# merge itself. Rollback protection comes from the superseded list
+# instead: for each contract path touched by the merged diff we
+# record the PRE-merge content hash into
+# human_signoffs/.superseded_contracts. A later PR that rolls the
+# file back to a superseded hash is rejected at verify time.
 # Three-dot diff, matching verify_constraints: two-dot would list
-# contracts changed on the BASE side since the branch forked, burning
-# envelopes for contracts this PR never touched.
+# contracts changed on the BASE side since the branch forked,
+# superseding hashes this PR never touched.
 CONTRACT_TOUCHED=$(git diff --name-only --no-renames "${PRE_MERGE_SHA:-$REMOTE/$BASE}...$EXPECTED" 2>/dev/null \
   | grep -E '(^|/)contract\.(py|ts)$' || true)
 if [ -n "$CONTRACT_TOUCHED" ]; then
+  SUP="$CANON_DIR/human_signoffs/.superseded_contracts"
+  mkdir -p "$(dirname "$SUP")"
   while IFS= read -r cpath; do
     [ -n "$cpath" ] || continue
-    if git cat-file -e "$EXPECTED:$cpath" 2>/dev/null; then
-      CART=$(git show "$EXPECTED:$cpath" | $SHA256_BIN | cut -d' ' -f1)
-    else
-      # Same binding as verify_constraints: delete|path|blob-at-
-      # merge-base (fallback EXPECTED when the file never existed
-      # there - add+delete within the branch).
-      MB=$(git merge-base "${PRE_MERGE_SHA:-$REMOTE/$BASE}" "$EXPECTED" 2>/dev/null || true)
-      DEL_BLOB=""
-      [ -n "$MB" ] && DEL_BLOB=$(git rev-parse -q --verify "$MB:$cpath" 2>/dev/null || true)
-      CART=$(printf 'delete|%s|%s' "$cpath" "${DEL_BLOB:-$EXPECTED}" | $SHA256_BIN | cut -d' ' -f1)
+    # The previous content hash is dead for future envelopes - a
+    # rollback to it is a fresh contract change needing fresh
+    # sign-off. A path that did not exist pre-merge records nothing.
+    # NOTE: the delete-artifact hash ('delete|path|base-blob') is
+    # deliberately NOT superseded - the epic merge re-computes it
+    # against the same merge-base blob, so spending it here would
+    # deadlock the epic exactly like a nonce burn did. Its replay
+    # surface stays closed because re-adding the deleted bytes is
+    # itself a superseded content hash.
+    if git cat-file -e "${PRE_MERGE_SHA:-$REMOTE/$BASE}:$cpath" 2>/dev/null; then
+      git show "${PRE_MERGE_SHA:-$REMOTE/$BASE}:$cpath" 2>/dev/null \
+        | $SHA256_BIN | cut -d' ' -f1 >> "$SUP"
     fi
-    # Only the contract-named envelope is burned here - $BRANCH.json
-    # is the manual_gate/risk:high PR sign-off (artifact = head sha),
-    # already consumed by the manual_gate step above; it is never a
-    # contract envelope.
-    CENV="$CANON_DIR/human_signoffs/contract_$(printf '%s' "$cpath" | tr '/' '_').json"
-    [ -f "$CENV" ] \
-      && "$CANON_DIR/bin/human_sign.sh" consume --envelope "$CENV" \
-           --artifact "$CART" --verdict approve >/dev/null 2>&1 || true
   done <<< "$CONTRACT_TOUCHED"
 fi
 

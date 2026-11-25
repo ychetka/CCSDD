@@ -83,6 +83,28 @@ bad = []
 sys.path.insert(0, os.path.join(os.environ.get("CANON_DIR") or "", "bin"))
 from changes_parser import front_fields, issue_numbers
 
+# Section extraction must ignore fenced code blocks entirely: a '#'
+# inside an example fence is code, not the next markdown heading, and
+# '- adds: ...' written inside an example fence is code, not a real
+# spec-impact directive.
+def spec_impact_section(body):
+    m = re.search(r"(?im)^#+\s*spec impact\s*$", body)
+    if not m:
+        return None
+    out, in_fence = [], None
+    for l in body[m.end():].splitlines():
+        fm = re.match(r"^\s*(`{3,}|~{3,})", l)
+        if fm:
+            mark = fm.group(1)[0]
+            if in_fence is None: in_fence = mark
+            elif mark == in_fence: in_fence = None
+            continue
+        if in_fence is None and re.match(r"^#", l):
+            break
+        if in_fence is None:
+            out.append(l)
+    return "\n".join(out)
+
 for rel in frags:
     path = os.path.join(top, rel)
     if not os.path.isfile(path):
@@ -103,14 +125,10 @@ for rel in frags:
         bad.append(f"{name}: missing 'issue: <N>'")
     elif issue_list and not {str(n) for n in iss_nums} <= issue_list:
         bad.append(f"{name}: 'issue:' {iss} does not match the branch/linked issues")
-    m = re.search(r"(?im)^#+\s*spec impact\s*$", body)
-    if not m:
+    sec = spec_impact_section(body)
+    if sec is None:
         bad.append(f"{name}: missing mandatory '## Spec impact' section")
         continue
-    sec = body[m.end():]
-    nxt = re.search(r"(?m)^#", sec)
-    if nxt:
-        sec = sec[:nxt.start()]
     has_lines = re.search(
         r"(?im)^\s*(?:-\s*)?(adds|modifies|removes)\s*:\s*\S", sec)
     if not has_lines and not re.search(
@@ -124,6 +142,9 @@ for rel in frags:
     # targets or use the bare '-' none-marker.
     for kind, targets in re.findall(
             r"(?im)^\s*(?:-\s*)?(adds|modifies|removes)\s*:\s*(.+)$", sec):
+        # ' # ...' tail is an inline comment, not a target (same rule
+        # as spec_impact_lines).
+        targets = re.sub(r"\s+#\s.*$", "", targets)
         toks = [t.strip().strip("`")
                 for t in re.split(r"[,\s]+", targets.strip())]
         if not any(t and t.lower() not in ("none", "-", "n/a")
@@ -254,16 +275,41 @@ def norm_target(t):
     file_part, _, anchor = t.partition("#")
     return os.path.normpath(file_part), anchor
 
-def spec_impact_lines(body):
+def spec_impact_section(body):
     m = re.search(r"(?im)^#+\s*spec impact\s*$", body)
     if not m:
+        return None
+    # Same fence-aware extraction as the FIELD_BAD scan above: fenced
+    # lines are dropped, and a '#'-heading only ends the section
+    # outside a fence.
+    out, in_fence = [], None
+    for l in body[m.end():].splitlines():
+        fm = re.match(r"^\s*(`{3,}|~{3,})", l)
+        if fm:
+            mark = fm.group(1)[0]
+            if in_fence is None: in_fence = mark
+            elif mark == in_fence: in_fence = None
+            continue
+        if in_fence is None and re.match(r"^#", l):
+            break
+        if in_fence is None:
+            out.append(l)
+    return "\n".join(out)
+
+def spec_impact_lines(body):
+    sec = spec_impact_section(body)
+    if sec is None:
         return []
-    sec = body[m.end():]
-    nxt = re.search(r"(?m)^#", sec)
-    if nxt:
-        sec = sec[:nxt.start()]
-    return re.findall(
-        r"(?im)^\s*(?:-\s*)?(adds|modifies|removes)\s*:\s*(.+)$", sec)
+    out = []
+    for kind, targets in re.findall(
+            r"(?im)^\s*(?:-\s*)?(adds|modifies|removes)\s*:\s*(.+)$", sec):
+        # Strip an inline comment tail: 'file.md#anchor # rationale' -
+        # '#'-without-space stays part of the target (it IS the anchor
+        # separator), ' # ...' is a comment, not three more targets
+        # (review_15 #13).
+        targets = re.sub(r"\s+#\s.*$", "", targets)
+        out.append((kind, targets))
+    return out
 
 # Anchors a PR introduces itself: every `adds:` target declared by
 # any fragment of the delta. An epic merges task by task - task 1

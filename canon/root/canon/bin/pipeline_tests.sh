@@ -272,6 +272,10 @@ N=$(gwdb "SELECT value FROM counters WHERE key='audit:conc'")
   || { echo "FAIL G5-flock-counted: counter=$N, expected 10"; fail=$((fail+1)); }
 
 # Timeout: policy call_timeout_seconds=1, partner sleeps 5s -> refused.
+# The file is manifest-pinned: restore the DEPLOYED BYTES afterward
+# (a json re-dump changes formatting and trips the Gate-0 integrity
+# check at every later merge entry point).
+cp "$WS/canon/config/policy.json" "$SCRATCH/policy.bak"
 python3 -I - "$WS/canon/config/policy.json" <<'PY'
 import json, sys
 p = sys.argv[1]
@@ -282,13 +286,7 @@ PY
 PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool sleep \
   --args '{"seconds":5}' >"$SCRATCH/out" 2>&1
 expect G6-timeout 4 $? "upstream_timeout"
-python3 -I - "$WS/canon/config/policy.json" <<'PY'
-import json, sys
-p = sys.argv[1]
-d = json.load(open(p))
-d["gateway"]["call_timeout_seconds"] = 300
-json.dump(d, open(p, "w"), indent=1)
-PY
+cp "$SCRATCH/policy.bak" "$WS/canon/config/policy.json"
 
 # Journal: a successful call must leave an append-only journal row.
 BEFORE=$(gwdb "SELECT count(*) FROM journal")

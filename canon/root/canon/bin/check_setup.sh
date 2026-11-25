@@ -466,14 +466,9 @@ for dp, _dn, fns in os.walk(canon_dir):
                 drifted_hooks.append(rel)
             continue
         # Declared project hooks (version_source.sh, baseline_env.sh)
-        # added mid-project are legal when the repo itself tracks
-        # them - git ls-files is authoritative, no extra pin needed.
-        if rel in ("canon/version_source.sh", "canon/baseline_env.sh"):
-            tr = subprocess.run(
-                ["git", "ls-files", "--error-unmatch", rel],
-                capture_output=True)
-            if tr.returncode == 0:
-                continue
+        # must be pinned in the deploy stamp - canon/ is NEVER
+        # git-tracked by design (invariant below), so a tracked-path
+        # exemption would only bless a planted backdoor.
         extra.append(rel)
 if drifted_hooks:
     print(f"SETUP FAIL: pinned adapter hooks drifted vs deploy stamp: {drifted_hooks[:5]}")

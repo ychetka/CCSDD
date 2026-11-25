@@ -32,6 +32,14 @@
 set -uo pipefail
 export PYTHONDONTWRITEBYTECODE=1  # canon bin imports must not litter __pycache__
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+# Gate 0 (review_15 #5): the verify path must never run under a
+# workspace-tampered canon - prove manifest hashes + the external
+# stamp before trusting any $CANON_DIR script or adapter hook.
+if [ -f "$CANON_DIR/canon_manifest.json" ]; then
+  [ -x "$CANON_DIR/bin/assert_canon_integrity.sh" ] \
+    || { echo "GATE_INTEGRITY: assert_canon_integrity.sh missing under a pinned manifest" >&2; exit 1; }
+  "$CANON_DIR/bin/assert_canon_integrity.sh" || exit 1
+fi
 TOP=$(git rev-parse --show-toplevel 2>/dev/null \
       || git -C code rev-parse --show-toplevel 2>/dev/null \
       || git -C "$CANON_DIR/../code" rev-parse --show-toplevel 2>/dev/null) \
@@ -119,19 +127,33 @@ if [ -n "$BASELINE_CMD" ]; then
           npm ci --silent --ignore-scripts) >/dev/null 2>&1 || ENV_RC=$?
       else
         # $WT is a fresh detached worktree - node_modules is never in
-        # git, so it cannot exist there. Dependencies come from the
-        # prepared main workspace ($TOP/node_modules); a baseline_env.sh
-        # adapter may instead create $WT/node_modules itself.
-        # Trust bound: the $TOP fallback applies only when $TOP is the
-        # main workspace. Detect a linked worktree by git-dir vs
-        # git-common-dir, NOT the canon symlink - an agent can delete
-        # $TOP/canon to look like a main workspace and plant
-        # node_modules/.bin/pytest to run under gate creds.
+        # git, so it cannot exist there. Dependency sources, in
+        # descending trust order (review_15 #10):
+        #   1. $WT/node_modules created by baseline_env.sh above;
+        #   2. <workspace>/.baseline_node_modules - a prepared dir OUTSIDE
+        #      the repo tree, unreachable by scope-whitelisted
+        #      code_writer edits (nested topology only);
+        #   3. $TOP/node_modules - ONLY when $TOP is the main workspace
+        #      (git-dir == git-common-dir, NOT the canon symlink - an
+        #      agent can delete $TOP/canon to look like a main
+        #      workspace) AND the tracked tree is clean: a dirty $TOP
+        #      means an agent worked there and node_modules/.bin is
+        #      untrusted (node_modules is gitignored - 'status' cannot
+        #      attest it, so a dirty tree disqualifies the fallback).
+        #   Otherwise: explicit env_setup_failed, never a silent pass.
         NM_DIR="$WT/node_modules"
         _gd=$(git -C "$TOP" rev-parse --absolute-git-dir 2>/dev/null)
         _gcd=$(git -C "$TOP" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
         if [ ! -d "$NM_DIR" ] && { [ -z "$_gd" ] || [ "$_gd" = "$_gcd" ]; }; then
-          NM_DIR="$TOP/node_modules"
+          WS_NM=$(CANON_DIR="$CANON_DIR" TOP="$TOP" python3 -I -c 'import os,sys
+ws = os.path.realpath(os.path.join(os.environ["CANON_DIR"], "..", ".baseline_node_modules"))
+top = os.path.realpath(os.environ["TOP"])
+print(ws if os.path.isdir(ws) and ws != top and not ws.startswith(top + os.sep) else "")' 2>/dev/null)
+          if [ -n "$WS_NM" ]; then
+            NM_DIR="$WS_NM"
+          elif [ -z "$(git -C "$TOP" status --porcelain 2>/dev/null)" ]; then
+            NM_DIR="$TOP/node_modules"
+          fi
         fi
         if [ -d "$NM_DIR" ]; then
           export NODE_PATH="$NM_DIR${NODE_PATH:+:$NODE_PATH}"

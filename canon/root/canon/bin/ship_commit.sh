@@ -76,66 +76,13 @@ fi
 # The gate scripts run from the deployed canon control plane, which
 # lives inside the agent's writable workspace. When the onboard stamp
 # canon_manifest.json carries sha256 digests, the gate scripts must
-# match them - a rewritten gate is a rewritten rule. (Residual: the
-# manifest is itself workspace state; deeper drift is caught by
-# check_setup.sh at instance start. This check just raises tampering
-# from a one-file to a two-file edit.)
+# match them - a rewritten gate is a rewritten rule. The shared
+# implementation lives in assert_canon_integrity.sh (review_15 #5);
+# the merge/release/verify paths run the same check.
 if [ -f "$CANON_DIR/canon_manifest.json" ]; then
-  if ! CANON_DIR="$CANON_DIR" python3 -I - <<'PY'
-import hashlib, json, os, sys
-canon_dir = os.environ["CANON_DIR"]
-try:
-    mf = json.load(open(os.path.join(canon_dir, "canon_manifest.json")))
-    sha = mf.get("sha256", {})
-except Exception:
-    # FAIL-CLOSED: a corrupt stamp is indistinguishable from a
-    # forged one - refuse, let check_setup diagnose.
-    sys.exit(1)
-if not isinstance(sha, dict):
-    sys.exit(1)
-bad = []
-# Verify EVERY manifest-covered file, not a script subset: a pinned
-# spec/agent/config edit is as much canon drift as a rewritten gate,
-# and partial coverage left the non-script half unchecked.
-for rel, want in sorted(sha.items()):
-    if not isinstance(rel, str) or not rel.startswith("canon/"):
-        continue
-    if not isinstance(want, str):
-        bad.append(rel + " (unpinned)")
-        continue
-    p = os.path.normpath(os.path.join(canon_dir, rel[len("canon/"):]))
-    if not p.startswith(canon_dir.rstrip("/") + "/"):
-        bad.append(rel + " (path escape)")
-        continue
-    try:
-        got = hashlib.sha256(open(p, "rb").read()).hexdigest()
-    except OSError:
-        bad.append(rel + " (unreadable)")
-        continue
-    if got != want:
-        bad.append(rel)
-if bad:
-    sys.stderr.write("canon files differ from canon_manifest sha256: "
-                     + ", ".join(bad[:12]) + "\n")
-    sys.exit(1)
-PY
-  then
-    echo "GATE_INTEGRITY: gate scripts do not match canon_manifest.json - refuse to run rewritten gates" >&2
-    exit 1
-  fi
-  # The manifest itself is workspace state: when the deploy left an
-  # external stamp in ~/.config/ccsdd/workspaces/, the local manifest
-  # must hash to it - otherwise the sha256 table above is self-
-  # attested and proves nothing.
-  if [ -x "$CANON_DIR/bin/stamp_verify.sh" ]; then
-    "$CANON_DIR/bin/stamp_verify.sh" || SRC=$?
-    case "${SRC:-0}" in
-      0|3) ;;   # match, or unmanaged workspace (no stamp)
-      *) echo "GATE_INTEGRITY: canon_manifest.json fails the external stamp check - refuse to run on a rewritten manifest" >&2
-         exit 1 ;;
-    esac
-    unset SRC
-  fi
+  [ -x "$CANON_DIR/bin/assert_canon_integrity.sh" ] \
+    || { echo "GATE_INTEGRITY: assert_canon_integrity.sh missing under a pinned manifest" >&2; exit 1; }
+  "$CANON_DIR/bin/assert_canon_integrity.sh" || exit 1
 fi
 
 # --- Gate 0b: precommit re-grounding (mechanical, unconditional) -----
@@ -260,6 +207,15 @@ fi
 # worktree/index/HEAD, or the shared canon one, is mandatory). On
 # non-task branches the gate stays optional as before.
 CUR_BR=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+# Detached HEAD has no branch identity at all: the task-branch
+# whitelist check below cannot bind a scope (the regex never
+# matches 'HEAD'), so a commit here would run gate-free. The git
+# agent works on named branches only - refuse outright.
+if [ "$CUR_BR" = "HEAD" ]; then
+  echo "SCOPE_GATE: refusing to commit on detached HEAD" >&2
+  echo "(no branch name to bind a scope whitelist to - check out the item branch first)" >&2
+  exit 2
+fi
 if [[ "$CUR_BR" =~ ^(epic_)?issue_[0-9]+- ]] \
     && [ ! -f "$WL" ] && [ "$wl_in_index" -eq 0 ] && [ "$wl_in_head" -eq 0 ]; then
   echo "SCOPE_GATE: task branch '$CUR_BR' has no active scope whitelist" >&2

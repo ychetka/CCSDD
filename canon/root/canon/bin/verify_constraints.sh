@@ -4,6 +4,14 @@
 # cited authorization).
 set -uo pipefail
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+# Gate 0 (review_15 #5): the verify path must never run under a
+# workspace-tampered canon - prove manifest hashes + the external
+# stamp before trusting any $CANON_DIR script or adapter hook.
+if [ -f "$CANON_DIR/canon_manifest.json" ]; then
+  [ -x "$CANON_DIR/bin/assert_canon_integrity.sh" ] \
+    || { echo "GATE_INTEGRITY: assert_canon_integrity.sh missing under a pinned manifest" >&2; exit 1; }
+  "$CANON_DIR/bin/assert_canon_integrity.sh" || exit 1
+fi
 
 GH=$("$CANON_DIR/bin/gh_id.sh" merge)
 # macOS has shasum, not sha256sum - resolve once like gate_run.sh.
@@ -612,6 +620,21 @@ for gid in os.environ["GWT_IDS"].split():
             ["git","-C",top,"show","HEAD:"+path],
             capture_output=True, text=True).stdout.splitlines()
         gi = lineno - 1
+        # Lines inside multi-line string literals (''' / """ / `) are
+        # not structural boundaries: a column-0 docstring line inside a
+        # test body must not cut the upward walk short (review_15 #11b).
+        in_ml = set()
+        ml_state = None
+        for _i, _l in enumerate(body):
+            if ml_state:
+                in_ml.add(_i)
+                if ml_state in _l:
+                    ml_state = None
+                continue
+            for _tok in ("'''", '"""', "`"):
+                if _l.count(_tok) % 2 == 1:
+                    ml_state = _tok
+                    break
         # Walk UP from the id to the enclosing test definition. Any
         # other def/class boundary first means the id is outside a
         # test body (comment, fixture helper, docstring).
@@ -623,10 +646,55 @@ for gid in os.environ["GWT_IDS"].split():
                 tdef = d; break
             if NEWDEF.search(l):
                 break
-            # a non-indented line above an indented id is a boundary
-            if l.strip() and not l.startswith((" ", "\t")) and d != gi:
+            # a non-indented line above an indented id is a boundary -
+            # unless it is content inside a multi-line string literal
+            if l.strip() and not l.startswith((" ", "\t")) and d != gi \
+               and d not in in_ml:
                 break
             d -= 1
+        if tdef < 0:
+            # The id may sit inside a DECORATOR above the test
+            # (@pytest.mark.parametrize("c", ["ITEM-1.GWT-1"])): the
+            # def it annotates is BELOW the id, so the upward walk
+            # never sees it. When gi is a decorator line or inside an
+            # open decorator call, walk DOWN through the decorator
+            # block to the def it precedes (review_15 #11a).
+            in_dec = body[gi].lstrip().startswith("@")
+            if not in_dec:
+                j = gi - 1
+                while j >= 0:
+                    s = body[j].strip()
+                    if s.startswith("@"):
+                        in_dec = sum(
+                            l.count("(") - l.count(")")
+                            for l in body[j:gi]) > 0
+                        break
+                    if not s or NEWDEF.search(body[j]) or TESTDEF.search(body[j]):
+                        break
+                    j -= 1
+            if in_dec:
+                j = gi; bal = 0
+                while j < len(body):   # finish the current call's parens
+                    s = body[j].strip()
+                    bal += s.count("(") - s.count(")")
+                    j += 1
+                    if bal <= 0:
+                        break
+                while j < len(body):
+                    s = body[j].strip()
+                    if not s:
+                        j += 1; continue
+                    if s.startswith("@"):
+                        bal = s.count("(") - s.count(")")
+                        j += 1
+                        while j < len(body) and bal > 0:
+                            s2 = body[j].strip()
+                            bal += s2.count("(") - s2.count(")")
+                            j += 1
+                        continue
+                    if TESTDEF.search(body[j]):
+                        tdef = j
+                    break
         if tdef < 0:
             continue
         # Decorators contiguously above the def belong to it. A

@@ -26,6 +26,14 @@ set -uo pipefail
 # nested workspaces the git top may be a subdir like code/ while
 # canon/ lives at the workspace root.
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+# Gate 0 (review_15 #5): the release path must never run under a
+# workspace-tampered canon - prove manifest hashes + the external
+# stamp before trusting any $CANON_DIR script or adapter hook.
+if [ -f "$CANON_DIR/canon_manifest.json" ]; then
+  [ -x "$CANON_DIR/bin/assert_canon_integrity.sh" ] \
+    || { echo "GATE_INTEGRITY: assert_canon_integrity.sh missing under a pinned manifest" >&2; exit 1; }
+  "$CANON_DIR/bin/assert_canon_integrity.sh" || exit 1
+fi
 json_error() {
   python3 -I -c 'import json,sys;print(json.dumps({"status":"error","failure_class":sys.argv[1],"message":sys.argv[2]}))' "$1" "$2"
   exit "${3:-1}"
@@ -97,14 +105,19 @@ SHA=$(git rev-parse "$REMOTE/$BASE" 2>/dev/null) || \
 # appends only when the tag is not journaled yet.
 record_release_history() {
   local tag="$1" sha="$2"
-  grep -q "\"tag\":\"$tag\"" "$CANON_DIR/release_history.jsonl" 2>/dev/null && return 0
+  # Tolerate reserialized lines ('"tag": "v1.2.3"' - json.dumps
+  # default spacing) so an idempotency check cannot miss a journaled
+  # tag and append a duplicate (review_15 #16).
+  grep -qE "\"tag\"[[:space:]]*:[[:space:]]*\"$tag\"" \
+    "$CANON_DIR/release_history.jsonl" 2>/dev/null && return 0
   local MERGER
   MERGER=$("$GH" api user --jq '.login' 2>/dev/null || basename "$GH")
   if command -v flock >/dev/null 2>&1; then
     ( exec 9>"$CANON_DIR/release_history.jsonl.lock"
       flock 9 || exit 1
       # Re-check inside the lock: the grep above races a parallel writer.
-      grep -q "\"tag\":\"$tag\"" "$CANON_DIR/release_history.jsonl" 2>/dev/null \
+      grep -qE "\"tag\"[[:space:]]*:[[:space:]]*\"$tag\"" \
+        "$CANON_DIR/release_history.jsonl" 2>/dev/null \
       || printf '{"version":"%s","tag":"%s","sha":"%s","merger":"%s","utc":"%s"}\n' \
         "${tag#v}" "$tag" "$sha" "$MERGER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         >> "$CANON_DIR/release_history.jsonl"
@@ -156,6 +169,10 @@ publish_tag_release() {
     }
   fi
   record_release_history "$tag" "$sha"
+  # Log rotation at the cycle boundary (review_15 #18): resolved
+  # chains move to cycle_log.archive.jsonl; live/open chains stay.
+  # Best-effort - a release must never fail on housekeeping.
+  "$CANON_DIR/bin/cycle_log.sh" compact >/dev/null 2>&1 || true
   TAG="$tag" SHA_V="$sha" NOTE_V="${note:-}" python3 -I -c 'import json,os
 print(json.dumps({"status":"released","tag":os.environ["TAG"],"sha":os.environ["SHA_V"],
                   **({"note":os.environ["NOTE_V"]} if os.environ["NOTE_V"] else {})}))'
@@ -428,9 +445,6 @@ for f in os.environ["FRAGS"].splitlines():
     p = os.path.join(wt, f)
     if not os.path.isfile(p): continue
     body = open(p, encoding="utf-8", errors="replace").read()
-    # strip the whole '## Spec impact' section (up to the next heading)
-    body = re.sub(r"(?im)^\s*#+\s*spec impact\s*$[\s\S]*?(?=^\s*#|\Z)",
-                  "", body)
     # Structural fold: only frontmatter key:value lines and '---'
     # fences are metadata. '#' lines INSIDE fenced code blocks are
     # code comments - they must survive, or generated changelog
@@ -439,19 +453,35 @@ for f in os.environ["FRAGS"].splitlines():
     # Headings: only the fragment's OWN top-level header is dropped -
     # an interior '### ' heading is fragment content and must not be
     # stripped or the changelog silently loses its structure.
-    lines, in_fence = [], None
+    # '## Spec impact' is removed LINE-WISE, not by a global regex:
+    # the section is only its heading plus the directive bullets
+    # ('- adds:/modifies:/removes:'/'- none'); a '#' inside a fenced
+    # block, or prose following the section without a new heading,
+    # is user content that must land in the changelog (review_15 #8).
+    lines, in_fence, in_si = [], None, False
     for l in body.splitlines():
         fm = re.match(r"^\s*(`{3,}|~{3,})", l)
         if fm:
             mark = fm.group(1)[0]
             if in_fence is None: in_fence = mark
             elif mark == in_fence: in_fence = None
+            in_si = False          # a fence line ends the bullet-only section
             lines.append(l)
             continue
-        if in_fence is None and (
-            re.match(r"^\s*(bump|user_visible|issue|manual_gate|ci_bootstrap|risk)\s*:", l, re.I)
-            or re.match(r"^\s*---\s*$", l)):
-            continue
+        if in_fence is None:
+            if re.match(r"(?i)^\s*#+\s*spec impact\s*$", l):
+                in_si = True
+                continue
+            if in_si:
+                if not l.strip():
+                    continue       # blank lines inside the section
+                if re.match(r"(?i)^\s*-\s*(adds|modifies|removes)\s*:", l) \
+                        or re.match(r"(?i)^\s*-\s*none\s*$", l):
+                    continue       # directive bullets are metadata
+                in_si = False      # first real content line ends the section
+            if (re.match(r"^\s*(bump|user_visible|issue|manual_gate|ci_bootstrap|risk)\s*:", l, re.I)
+                or re.match(r"^\s*---\s*$", l)):
+                continue
         lines.append(l)
     # drop the fragment's leading heading line only - and only a
     # top-level '# '/'## ' header. A leading '### Fixed' is fragment

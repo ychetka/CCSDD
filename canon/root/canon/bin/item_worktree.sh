@@ -52,10 +52,12 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$BRANCH" ] || die "--branch required"
-case "$BRANCH" in
-  *..*|*//*|*'..'*|*' '*|*~*|*^*|*:*|*'?'*|*'*'*|*'['*|'\\'*)
-    die "invalid branch name: $BRANCH";;
-esac
+# Strict canon whitelist (review_15 #14): the deny-list never covered
+# a leading '-' (a git worktree/branch CLI flag) or '/' (nested dirs
+# under .worktrees whose emptied parents never get cleaned up). The
+# canon task/epic pattern admits neither.
+[[ "$BRANCH" =~ ^(epic_)?issue_[0-9]+-[a-z0-9][a-z0-9_-]*$ ]] \
+  || die "branch '$BRANCH' must match issue_<N>-<slug> or epic_issue_<N>-<slug>"
 WT="$WT_ROOT/$BRANCH"
 
 case "$VERB" in

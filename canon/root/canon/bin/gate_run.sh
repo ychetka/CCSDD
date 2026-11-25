@@ -263,10 +263,35 @@ OUT=$(mktemp); SCRIPT_TMP=""
 # runner). Neither may see the caller's credentials: an agent-run
 # pytest with access to SSH_AUTH_SOCK could mint human_sign.sh
 # envelopes itself, and a forged GH_TOKEN leaks to any child.
+# PATH hygiene: the check runs with CWD inside the candidate tree,
+# so an inherited relative PATH segment ('.', '.venv/bin',
+# 'node_modules/.bin') - or any segment resolving inside the repo
+# top - would exec the PR's own planted binaries (a fake python3 /
+# radon / lizard) under merge credentials. Drop relative segments
+# and anything under $TOP; keep absolute system paths only
+# (review_15 #4, same rule as verify_worktree's CLEAN_PATH).
+TOP_REAL=$(pwd -P)
+CLEAN_PATH=$(TOP_REAL="$TOP_REAL" python3 -I -c 'import os
+top = os.environ["TOP_REAL"]
+out = []
+for seg in os.environ.get("PATH", "").split(os.pathsep):
+    if not seg:
+        continue
+    if not os.path.isabs(seg):
+        continue                      # relative - resolves under CWD
+    r = os.path.realpath(seg)
+    try:
+        if os.path.commonpath([r, top]) == top:
+            continue                  # inside the candidate tree
+    except ValueError:
+        pass
+    out.append(seg)
+print(os.pathsep.join(out))')
 CHECK_ENV=(env -u SSH_AUTH_SOCK -u SSH_AGENT_PID -u SSH_ASKPASS \
            -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN \
            -u GITHUB_ENTERPRISE_TOKEN -u GL_TOKEN -u GITLAB_TOKEN \
-           -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN)
+           -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN \
+           "PATH=$CLEAN_PATH")
 if [ "$RUNNER" = canon ]; then
   SCRIPT_TMP=$(mktemp)
   if [ "$SCRIPT_SRC" = "blob" ]; then

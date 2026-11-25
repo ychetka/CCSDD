@@ -173,7 +173,8 @@ jobs:
           if [ -z "${V:-}" ]; then
             V=$(git diff-tree --first-parent --no-commit-id -p -r "$MERGE_SHA" 2>/dev/null | python3 - <<'PYEOF' || true
           import re, sys
-          cur = None; files = set(); added = {}
+          cur = None; files = set(); added = {}; removed = {}
+          SEMVER = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
           for ln in sys.stdin:
               m = re.match(r"^diff --git a/(\S+) b/(\S+)", ln)
               if m:
@@ -184,14 +185,35 @@ jobs:
                   elif cur:
                       files.add(cur)
                   continue
+              if cur and ln.startswith("@@"):
+                  # New hunk: (file, hunk-ordinal) keyed added/removed
+                  # so the candidate must share a hunk with a '-'
+                  # version line (review_15 #19) - an added comment
+                  # like '# requires tool >= 2.0.0' elsewhere in the
+                  # file is not a version bump.
+                  added.setdefault(cur, []).append([])
+                  removed.setdefault(cur, []).append([])
+                  continue
               if cur and ln.startswith("+") and not ln.startswith("+++"):
-                  added.setdefault(cur, []).append(ln[1:])
+                  if added.get(cur) is not None and added[cur]:
+                      added[cur][-1].append(ln[1:])
+              elif cur and ln.startswith("-") and not ln.startswith("---"):
+                  if removed.get(cur) is not None and removed[cur]:
+                      removed[cur][-1].append(ln[1:])
           if len(files) == 1:
               f = next(iter(files))
-              for line in added.get(f, []):
-                  m = re.search(r"[0-9]+\.[0-9]+\.[0-9]+", line)
-                  if m:
-                      print(m.group(0)); break
+              for hid in range(len(added.get(f, []))):
+                  # A version bump always pairs the added line with a
+                  # removed line carrying the OLD semver in the same
+                  # hunk.
+                  old = {m.group(0) for l in removed.get(f, [[]])[hid]
+                         for m in [SEMVER.search(l)] if m}
+                  if not old:
+                      continue
+                  for line in added[f][hid]:
+                      m = SEMVER.search(line)
+                      if m and m.group(0) not in old:
+                          print(m.group(0)); raise SystemExit(0)
           PYEOF
             )
           fi

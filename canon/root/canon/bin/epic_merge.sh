@@ -18,6 +18,14 @@
 # Usage: epic_merge.sh <pr_number> <expected_head_sha> [squash|merge|rebase]
 set -uo pipefail
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+# Gate 0 (review_15 #5): the merge path must never run under a
+# workspace-tampered canon - prove manifest hashes + the external
+# stamp before trusting any $CANON_DIR script or adapter hook.
+if [ -f "$CANON_DIR/canon_manifest.json" ]; then
+  [ -x "$CANON_DIR/bin/assert_canon_integrity.sh" ] \
+    || { echo "GATE_INTEGRITY: assert_canon_integrity.sh missing under a pinned manifest" >&2; exit 1; }
+  "$CANON_DIR/bin/assert_canon_integrity.sh" || exit 1
+fi
 TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
 cd "$TOP"
 

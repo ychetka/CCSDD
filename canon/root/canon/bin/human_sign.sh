@@ -38,6 +38,13 @@
 # is dead for ALL artifacts (no same-hash exemption - a rollback to
 # the signed file state must need a fresh signature), and the
 # envelope file itself is renamed to <name>.consumed.
+# CONTRACT envelopes (contract_<path>.json) are an exception by
+# design: a contract signature is frozen on CONTENT, not on a merge
+# event, so burning its nonce at the task merge would deadlock the
+# later epic merge that re-verifies the same signed bytes. Instead
+# merges record superseded artifact hashes in
+# human_signoffs/.superseded_contracts - one verify-time rejection
+# list covers rollbacks AND spent delete-artifacts.
 # init REFUSES to overwrite an existing allowed_signers: key
 # rotation is a deliberate out-of-band act (delete the file by hand
 # first). A workspace agent under the same UID could otherwise swap
@@ -66,15 +73,31 @@ die() { echo "human_sign: $1" >&2; exit 2; }
 
 # init/sign mint or rotate the trust root - they are HUMAN verbs.
 # SSH_AUTH_SOCK is reachable by every process under the same UID, so
-# policy.exec.deny alone is not enough (an agent can invoke the
-# script via a shell the deny list does not model). Require a real
-# terminal on stdin+stdout, or CCSDD_HUMAN_TTY=1 set out-of-band by
-# the human (remote-laptop paste flows set it explicitly in their
-# own shell). Agents run without a TTY and without that variable.
+# policy.exec.deny alone is not enough: an agent invokes the script
+# through paths the deny prefix cannot model (canon/bin/./h..sh),
+# can allocate a PTY with script/tmux so `[ -t 0 ]` comes back true,
+# and could trivially export a bypass variable - which is why the
+# old CCSDD_HUMAN_TTY=1 escape hatch is gone. The guards now:
+#   * CCSDD_AGENT_RUNTIME set by an adapter runtime -> hard refuse;
+#   * stdin on a terminal -> the human is at his own laptop (the
+#     remote --out - paste flow works: stdout need not be a tty);
+#   * otherwise require a typed "yes" read from /dev/tty itself -
+#     a daemon/pipeline context has no controlling terminal.
 case "$MODE" in
 init|sign)
-  if [ "${CCSDD_HUMAN_TTY:-}" != "1" ] && { [ ! -t 0 ] || [ ! -t 1 ]; }; then
-    die "'$MODE' requires an interactive terminal (or CCSDD_HUMAN_TTY=1) - humans only"
+  if [ -n "${CCSDD_AGENT_RUNTIME:-}" ]; then
+    die "'$MODE' refused under an agent runtime (CCSDD_AGENT_RUNTIME is set) - humans only"
+  fi
+  if [ ! -t 0 ]; then
+    if ! { exec 9<>/dev/tty; } 2>/dev/null; then
+      die "'$MODE' requires an interactive terminal - humans only"
+    fi
+    printf 'human_sign %s: type "yes" on the controlling terminal to confirm: ' "$MODE" >&9
+    _hs_ans=""
+    IFS= read -r _hs_ans <&9 || true
+    exec 9>&- 9<&-
+    [ "$_hs_ans" = "yes" ] \
+      || die "'$MODE' not confirmed on the controlling terminal - humans only"
   fi
   ;;
 esac
@@ -266,6 +289,22 @@ if os.path.isfile(store):
             used.add(ln.partition("|")[0])
 if e["nonce"] in used:
     sys.exit("human_sign: envelope nonce already consumed (replay)")
+# Contract envelopes are NOT nonce-burned at merge (a burn breaks
+# the epic flow: the same signed artifact re-verifies when the epic
+# itself merges). Instead the merge records the PREVIOUS content
+# hash in .superseded_contracts - so a signature stays valid for
+# the life of the frozen bytes, while any artifact hash the merge
+# replaced (or a delete-artifact already spent) can never be
+# re-presented (review_15 #6).
+sup_file = os.path.join(os.path.dirname(store), ".superseded_contracts")
+if os.path.isfile(sup_file):
+    with open(sup_file) as fh:
+        fcntl.flock(fh, fcntl.LOCK_SH)
+        superseded = {ln.strip() for ln in fh if ln.strip()}
+    if sha in superseded:
+        sys.exit("human_sign: artifact was superseded by a later "
+                 "contract merge - this signature covers bytes the "
+                 "repo already moved past (re-sign current content)")
 sig_raw = base64.b64decode(e["signature_b64"])
 tmp = tempfile.mkdtemp(prefix="ccsdd-verify.")
 try:

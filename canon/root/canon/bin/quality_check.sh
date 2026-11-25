@@ -72,8 +72,19 @@ else
     # PR's setup.cfg/.radon.cfg/flake8 plugins must never load here.
     BADSYNTAX=$(printf '%s\n' "$PYFILES" | tr '\n' '\0' \
       | xargs -0 -n1 sh -c 'python3 -I -m py_compile "$1" 2>/dev/null || printf "%s\n" "$1"' _ || true)
-    RADON_OUT=$(cd "$QCDIR" && printf '%s\n' "$PYFILES" | sed "s|^|$TOP/|" \
-      | tr '\n' '\0' | xargs -0 radon cc -s -n C 2>/dev/null || true)
+    # Crash safety (review_15 #12): a radon traceback exits non-zero
+    # WITHOUT emitting '^ERROR:' - swallowing rc would record PASS on
+    # an unanalyzed batch. Check 'ERROR:' findings first (radon may
+    # also exit non-zero on them), then the exit code as the
+    # crash detector.
+    RADON_OUT=$(cd "$QCDIR" && printf '%s\n' "$PYFILES" \
+      | TOP="$TOP" python3 -I -c 'import os,sys
+t=os.environ["TOP"]
+for l in sys.stdin:
+    l=l.rstrip("\n")
+    if l: print(os.path.join(t,l))' \
+      | tr '\n' '\0' | xargs -0 radon cc -s -n C 2>/dev/null)
+    RADON_RC=$?
     RADON_ERR=$(printf '%s\n' "$RADON_OUT" | grep -E '^ERROR:' || true)
     HOT=$(printf '%s\n' "$RADON_OUT" | grep -E ' - [DEF]\(' || true)
     if [ -n "$BADSYNTAX" ]; then
@@ -83,12 +94,15 @@ else
     if [ -n "$RADON_ERR" ]; then
       printf '%s\n' "$RADON_ERR" | head -10 | sed 's/^/  radon: /'
       echo "FAIL: radon could not analyze changed files"; fails=$((fails+1))
+    elif [ "$RADON_RC" != "0" ]; then
+      echo "FAIL: radon exited with code $RADON_RC (crash, not analysis)"; fails=$((fails+1))
     fi
     if [ -n "$HOT" ]; then
       printf '%s\n' "$HOT" | head -20 | sed 's/^/  complexity: /'
       echo "FAIL: cyclomatic complexity rank D+ in changed files"; fails=$((fails+1))
     fi
-    if [ -z "$BADSYNTAX" ] && [ -z "$RADON_ERR" ] && [ -z "$HOT" ]; then
+    if [ -z "$BADSYNTAX" ] && [ "$RADON_RC" = "0" ] \
+       && [ -z "$RADON_ERR" ] && [ -z "$HOT" ]; then
       echo "PASS: radon cyclomatic complexity (no rank D+ blocks)"
     fi
   elif [ -n "$PYFILES" ]; then
@@ -96,12 +110,27 @@ else
   fi
   if [ -n "$LIZFILES" ] && command -v lizard >/dev/null 2>&1; then
     covered=1
-    # Same isolation as radon: run from an empty dir on absolute paths.
-    HOT=$(cd "$QCDIR" && printf '%s\n' "$LIZFILES" | sed "s|^|$TOP/|" \
-      | tr '\n' '\0' | xargs -0 lizard -C 15 -L 100 2>/dev/null | grep -E '^\s+[0-9]+' || true)
+    # Same isolation as radon: run from an empty dir on absolute
+    # paths. Crash safety (review_15 #12): a lizard traceback exits
+    # non-zero while its partial stdout may still look clean - the
+    # grep alone cannot distinguish 'no hot spots' from 'died early'.
+    LIZ_OUT=$(cd "$QCDIR" && printf '%s\n' "$LIZFILES" \
+      | TOP="$TOP" python3 -I -c 'import os,sys
+t=os.environ["TOP"]
+for l in sys.stdin:
+    l=l.rstrip("\n")
+    if l: print(os.path.join(t,l))' \
+      | tr '\n' '\0' | xargs -0 lizard -C 15 -L 100 2>/dev/null)
+    LIZ_RC=$?
+    HOT=$(printf '%s\n' "$LIZ_OUT" | grep -E '^\s+[0-9]+' || true)
+    # lizard exits non-zero BOTH on threshold violations (with the
+    # violation lines in stdout) and on a real crash (no parseable
+    # output) - check the findings first, then the exit code.
     if [ -n "$HOT" ]; then
       printf '%s\n' "$HOT" | head -20 | sed 's/^/  complexity: /'
       echo "FAIL: lizard CCN>=15 or length>100 in changed files"; fails=$((fails+1))
+    elif [ "$LIZ_RC" != "0" ]; then
+      echo "FAIL: lizard exited with code $LIZ_RC (crash, not analysis)"; fails=$((fails+1))
     else
       echo "PASS: lizard complexity thresholds"
     fi

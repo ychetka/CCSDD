@@ -331,22 +331,32 @@ signal.signal(signal.SIGALRM, _timeout)
 signal.alarm(call_timeout)
 # SIGTERM/SIGHUP while blocked in call_tool leaves the spent quota
 # stranded until the NEXT caller's pid-reaper notices the orphan -
-# which may be never. Refund in the handler before dying; if the
-# handler itself fails mid-refund, the inflight row still lets the
-# reaper finish the job.
-def _sigkill_refund(_sig, _frm):
-    try:
-        _refund()
-    finally:
-        os._exit(4)
+# which may be never. But the handler must NOT run SQL itself: it can
+# fire while 'con' holds the write lock, and a second connection's
+# BEGIN IMMEDIATE would self-deadlock on busy_timeout (review_15
+# #15). The handler only raises an exception; the except below does
+# the refund in normal context - the handlers are also restored
+# right after call_tool so a late signal cannot interrupt the
+# journal append with a fake 'call failed'.
+class _PartnerKilled(Exception):
+    def __init__(self, signo):
+        super().__init__(f"killed by signal {signo}")
+_prev = {}
+def _sigkill(_sig, _frm):
+    raise _PartnerKilled(_sig)
 for _s in (signal.SIGTERM, signal.SIGHUP):
-    signal.signal(_s, _sigkill_refund)
+    _prev[_s] = signal.signal(_s, _sigkill)
 try:
     result = PartnerMCPServer(partner_id=partner).call_tool(tool, call_args)
     try:
         gw_store.inflight_clear(con, CALL_ID)
     except Exception:
         pass
+except _PartnerKilled as e:
+    _refund()
+    print(f"partner_call: REFUSED - {e} - "
+          f"failure_class=upstream_error", file=sys.stderr)
+    sys.exit(4)
 except TimeoutError as e:
     _refund()
     print(f"partner_call: REFUSED - {e} - "
@@ -359,6 +369,8 @@ except Exception as e:
     sys.exit(4)
 finally:
     signal.alarm(0)
+    for _s, _h in _prev.items():
+        signal.signal(_s, _h)
 
 # --- journal BEFORE returning ------------------------------------
 # Append-only journal row in the WAL store - the raw verdict exists

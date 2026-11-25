@@ -18,11 +18,17 @@ CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
 cd -P "$TOP"
 GH_BIN="${GH_BIN:-gh}"
+# When the project configures a review identity (review.gh_bin/api_bin
+# or reviewer_profiles), the allowlist is EXACTLY those binaries - an
+# unconditional gh/glab default would let a caller submit reviews
+# under the merge/author credential and spoof the reviewer
+# (review_15 #9). Single-identity projects (no review config) fall
+# back to the forge default.
 ALLOWED_GH=$(CANON_DIR="$CANON_DIR" python3 -I -c 'import json,os,re
 try:
     pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
     rev = pj.get("review") or {}
-    bins = ["gh", "glab", rev.get("gh_bin") or "", rev.get("api_bin") or ""]
+    bins = [rev.get("gh_bin") or "", rev.get("api_bin") or ""]
     # reviewer_profiles: per-identity reviewer accounts - each
     # declares its own gh/api binary (separate tokens); risk:high items
     # require approvals from distinct model families.
@@ -30,7 +36,11 @@ try:
         if isinstance(prof, dict):
             bins.append(prof.get("gh_bin") or "")
             bins.append(prof.get("api_bin") or "")
-    print(" ".join(b for b in bins if re.fullmatch(r"[A-Za-z0-9_-]+", b or "")))
+    bins = [b for b in bins if re.fullmatch(r"[A-Za-z0-9_-]+", b or "")]
+    if not bins:
+        forge = pj.get("forge") or "github"
+        bins = [{"gitlab": "glab"}.get(forge, "gh")]
+    print(" ".join(bins))
 except Exception:
     print("gh")' 2>/dev/null)
 case "$GH_BIN" in
@@ -38,7 +48,28 @@ case "$GH_BIN" in
 esac
 GH_OK=0
 for a in $ALLOWED_GH; do [ "$GH_BIN" = "$a" ] && GH_OK=1; done
-[ "$GH_OK" = "1" ] || { echo '{"status":"error","failure_class":"malformed_input","message":"GH_BIN not in allowlist (gh + project review.gh_bin)"}'; exit 2; }
+[ "$GH_OK" = "1" ] || { echo '{"status":"error","failure_class":"malformed_input","message":"GH_BIN not in review allowlist (project review.gh_bin/profiles, or forge default)"}'; exit 2; }
+# With a configured review identity the review binary must not be the
+# merge/author credential - a review submitted under merge.gh_bin is
+# self-issued (author == reviewer). forge=test shares one stub
+# transport by design and is exempt.
+REVIEW_CFGD=$(CANON_DIR="$CANON_DIR" python3 -I -c 'import json,os
+try:
+    pj = json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json")))
+    rev = pj.get("review") or {}
+    cfg = any([(rev.get("gh_bin") or "").strip(), (rev.get("api_bin") or "").strip(),
+               bool(rev.get("reviewer_profiles"))])
+    print("1" if cfg else "")
+except Exception: print("")' 2>/dev/null)
+FORGE=$(CANON_DIR="$CANON_DIR" python3 -I -c 'import json,os
+try: print(json.load(open(os.path.join(os.environ["CANON_DIR"], "project.json"))).get("forge") or "github")
+except Exception: print("github")' 2>/dev/null)
+if [ "$FORGE" != "test" ] && [ "$REVIEW_CFGD" = "1" ]; then
+  MERGE_BIN=$("$CANON_DIR/bin/gh_id.sh" merge 2>/dev/null || true)
+  if [ -n "$MERGE_BIN" ] && [ "$GH_BIN" = "$MERGE_BIN" ]; then
+    echo '{"status":"error","failure_class":"malformed_input","message":"review binary must differ from the merge identity"}'; exit 2
+  fi
+fi
 
 usage() { echo "usage: repo_pr_review.sh --pr <N> --event approve|request-changes|comment [--body text] | --pr <N> --json-file review.json" >&2; exit 2; }
 
