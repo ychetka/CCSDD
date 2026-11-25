@@ -10,47 +10,61 @@ flowchart LR
     TASK --> ARCH --> RM --> AP1 --> ISS
   end
 
-  subgraph P2["2 · EPIC → tasks"]
+  subgraph P2["2 · ITEM SPAWN — contract first"]
     EPB["epic branch<br/>epic_issue_&lt;N&gt;-&lt;slug&gt;"]
-    DEC["decomposed into tasks<br/>own issue_&lt;M&gt;-&lt;slug&gt; branches"]
-    EPB --> DEC
-  end
-
-  subgraph P3["3 · TASK → epic branch"]
-    CF["contract draft"]
+    CF["contract draft<br/>contract.py/ts · whitelist · risk"]
     JDG1["⚖️ judge<br/>draft verdict"]
-    SO["👨‍💻 sign-off envelope<br/>contract sha256 frozen"]
+    SO["👨‍💻 sign-off envelope<br/>contract sha256 frozen<br/>(superseded-hash rollback check)"]
     DSG["🎨 designer (conditional)<br/>delegated axes → impl spec"]
-    INT["pre-code interrogation<br/>assumptions · ambiguities"]
-    CODE["code + tests<br/>green native run"]
-    JDG2["⚖️ judge<br/>verdict vs frozen contract"]
-    TPR["task PR → epic branch<br/>reviewer bots + CI<br/>NO human · NO version bump"]
-    CF --> JDG1 --> SO --> DSG --> INT --> CODE --> JDG2 --> TPR
+    WT["item_worktree.sh open<br/>.worktrees/&lt;branch&gt; +<br/>scope_whitelist.txt bound to branch"]
+    EPB --> CF --> JDG1 --> SO --> DSG --> WT
   end
 
-  subgraph P4["4 · EPIC → default = release"]
-    INTG["integration run"]
-    GIT["🔀 git agent<br/>candidate commit (sha)<br/>+ push + PR"]
-    RVW{"🔍 review panel<br/>domain floors + domain signals<br/>aggregator APPROVE bound to head sha"}
-    MG{"merge gate<br/>isolated copy + expected_sha<br/>+ all domain signals + floors + green checks<br/>+ fragment issue: ↔ PR<br/>+ epic: all tasks closed<br/>+ risk:high → 2 model families + 👨‍💻 envelope"}
-    REL["release: merge to default<br/>version from .changes + tag<br/>(manual_gate waits for 👨‍💻 approve)"]
-    INTG --> GIT --> RVW -->|APPROVED| MG --> REL
+  subgraph P3["3 · IMPLEMENTATION — isolated worktree"]
+    INT["pre-code interrogation<br/>assumptions · ambiguities"]
+    CODE["code + tests<br/>commits only via ship_commit<br/>(Gate 0 · scope gate · hygiene ·<br/>secret scan · rollback pairing)"]
+    FLOOR["floor checks<br/>gate_checks.* → project_run.sh<br/>fixed argv · env -i · no inherited<br/>PYTHONPATH/PATH · gate_run attests"]
+    JDG2["⚖️ judge<br/>verdict vs frozen contract"]
+    TPR["task PR → epic branch"]
+    INT --> CODE --> FLOOR --> JDG2 --> TPR
+  end
+
+  subgraph P4["4 · MERGE GATE — issue_merge / epic_merge"]
+    G0["Gate 0: assert_canon_integrity<br/>manifest sha256 + external stamp<br/>+ adapters_sha256 pins"]
+    FRAG[".changes fragment scan<br/>bump · issue: ↔ PR · spec_impact<br/>diff-filter incl. deletions"]
+    VC["verify_constraints.sh<br/>Closes #N link · G/W/T coverage<br/>contract whitelist · spec anchors"]
+    SIG["blood-sign: verify_worktree.sh<br/>detached baseline, network-free<br/>PYTHONPATH/NODE_PATH rebuilt"]
+    PN["panel_gate.sh<br/>all floors attested green (gate_run)<br/>+ ccsdd/&lt;domain&gt; signals = success<br/>+ external_checks rollup"]
+    MG{"merge decision<br/>expected_sha bound<br/>risk:high → 2 model families<br/>+ 👨‍💻 envelope · manual_gate → envelope"}
+    G0 --> FRAG --> VC --> SIG --> PN --> MG
+  end
+
+  subgraph P5["5 · RELEASE — only on default base"]
+    RL["repo_release.sh<br/>version from .changes max-bump<br/>CHANGELOG fold + fragments consumed"]
+    TAG["v&lt;X.Y.Z&gt; tag + GitHub release<br/>release_history.jsonl row<br/>cycle_log compact"]
+    RPR["protected base → release/v* PR<br/>(provenance-proven: 1 commit,<br/>version file + CHANGELOG + .changes only)"]
+    RL --> TAG
+    RL -.->|push denied| RPR
   end
 
   ISS --> EPB
-  DEC --> CF
-  TPR -->|all tasks merged| INTG
+  WT --> INT
+  TPR -->|issue_merge → epic branch| P4
+  MG -->|merged → default| P5
+  MG -.->|non-default base| INTG["integration only —<br/>no bump, no tag"]
   JDG2 -->|changes, ≤2 rounds| CODE
   JDG2 -.->|">2 rounds"| RES["resolver → stop / escalation"]
   SO -.->|drift| PD["PLAN_DELTA → human"]
   DEV -.-> TASK
   AP1 -.-> DEV
   SO -.-> DEV
-  MG -.->|manual_gate fragment| DEV
+  MG -.->|manual_gate / risk:high envelope| DEV
   RES -.-> DEV
   PD -.-> DEV
 
   classDef human fill:#f5e6c8,stroke:#8a6d1f,stroke-width:2px
   classDef gate fill:#fde2e2,stroke:#a33,stroke-width:2px
+  classDef infra fill:#e3f0ff,stroke:#3366aa,stroke-width:1.5px
   class DEV,AP1,SO human
-  class JDG1,JDG2,RVW,MG gate
+  class JDG1,JDG2,PN,MG gate
+  class G0,WT,FLOOR,SIG,VC,FRAG infra

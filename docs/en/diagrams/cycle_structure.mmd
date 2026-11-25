@@ -3,31 +3,32 @@ flowchart LR
     ROOT["🧭 ROOT director<br/>plan · contracts · spawns"]
     AP[["🏛️ architect-partner<br/>co-designer · top-tier"]]
     PPA[["📦 product-partner<br/>co-designer · top-tier"]]
-    DEV(["👨‍💻 human<br/>arbiter"])
+    DEV(["👨‍💻 human<br/>arbiter · signs via<br/>ssh-agent key OFF workspace"])
   end
   subgraph COM2["EXECUTIVE COMMITTEE"]
-    CW["👷 CW executor<br/>code + tests in whitelist"]
+    CW["👷 CW executor<br/>code + tests in scope whitelist<br/>ship_commit only"]
     DSG["🎨 DSG designer (conditional)<br/>delegated axes → impl spec"]
     DP[["🧩 design-partner<br/>consultant · workhorse"]]
     PPE[["📦 product-partner<br/>consultant · workhorse"]]
   end
   subgraph REV["REVIEWERS — outside both committees"]
     JDG["⚖️ JDG judge<br/>frozen contract only"]
-    RVW["🔍 RVW review panel<br/>domain floors + signal verdicts<br/>aggregator posts the PR review"]
+    RVW["🔍 RVW review panel<br/>domain floors (gate_run attested)<br/>+ ccsdd/&lt;domain&gt; signals<br/>aggregator posts PR review"]
     RES["🤝 RES resolver"]
     RD["📖 RD reader<br/>sha attestation"]
   end
   subgraph REPOS["REPO AGENTS"]
-    GIT["🔀 GIT commit agent"]
-    RA["🏁 RA merge/release"]
+    GIT["🔀 GIT commit agent<br/>ship_commit/push (Gate 0 +<br/>scope + hygiene + secrets)"]
+    RA["🏁 RA merge/release<br/>issue/epic/repo_merge · repo_release<br/>Gate 0 → fragments → constraints<br/>→ blood-sign → panel → decision"]
     HYG["🧹 HYG hygiene gate"]
   end
 
-  ART[/"📦 artifacts:<br/>roadmap · contract(sha) · WS ·<br/>journals · envelopes"/]
+  ART[/"📦 artifacts:<br/>roadmap · contract(sha) · .changes<br/>journals: cycle_log · gate_runs ·<br/>release_history · actors.json"/]
+  ENV[/"🔐 envelopes:<br/>human_signoffs/ · .used_nonces ·<br/>.superseded_contracts<br/>ssh-sig · artifact-bound"/]
   REPO[("🗄️ storage<br/>repo + CI + PR")]
-  GW[["🛰️ gateway<br/>all partner calls"]]
+  GW[["🛰️ gateway<br/>partner_call → gw_store<br/>quota + inflight reaper + journal<br/>gateway.db"]]
   XA[["🏛️ ex-architect-partner<br/>Audit · dispute arbitration"]]
-  RULES[["📜 canon/<br/>RULES.md · agents ·<br/>specs · gates"]]
+  RULES[["📜 canon/<br/>RULES.md · agents · specs ·<br/>policy.json · manifest-pinned<br/>(Gate 0 verifies before use)"]]
 
   ROOT -->|spawn: package| CW
   ROOT -->|spawn: axes| DSG
@@ -42,6 +43,7 @@ flowchart LR
   RA -->|merge gate| REPO
   GIT -.-> HYG
   RA -.-> HYG
+  ART -.-> ENV
   ROOT <-.-> ART
   GW -.-> AP
   GW -.-> PPA
@@ -55,11 +57,14 @@ flowchart LR
   PPE -.->|consult| CW
   RULES -.-> ROOT
   RULES -.-> CW
-  DEV -.->|👨‍💻 roadmap · sign-off ·<br/>manual_gate · escalations| ROOT
+  RULES -.-> RA
+  DEV -.->|"👨‍💻 roadmap · sign-off ·<br/>manual_gate · escalations<br/>(envelope, never text)"| ROOT
 
   classDef human fill:#f5e6c8,stroke:#8a6d1f,stroke-width:2px
   classDef rev fill:#e8e0f5,stroke:#5b4a8a,stroke-width:2px
   classDef partner stroke-dasharray:5 5
+  classDef store fill:#eef7ee,stroke:#3a7a3a,stroke-width:1.5px
   class DEV human
   class JDG,RVW,RES,RD rev
   class AP,PPA,DP,PPE,XA partner
+  class ART,ENV,REPO store

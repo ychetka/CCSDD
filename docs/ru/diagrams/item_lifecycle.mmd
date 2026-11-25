@@ -1,56 +1,70 @@
 flowchart LR
-  DEV(["👨‍💻 человек — высший арбитр"])
+  DEV(["👨‍💻 человек — верховный арбитр"])
 
-  subgraph P1["1 · ПЛАН — арх. комитет + человек"]
-    TASK["комплексная задача<br/>ставит человек"]
-    ARCH["арх. комитет: ROOT +<br/>architect-partner + product-partner<br/>вопросы ↔ человек"]
-    RM["roadmap.md<br/>эпики · задачи · G/W/T · risk-флаги"]
-    AP1{"👨‍💻 аппрув<br/>roadmap"}
+  subgraph P1["1 · ПЛАН — арх-комитет + человек"]
+    TASK["составная задача<br/>от человека"]
+    ARCH["арх-комитет: ROOT +<br/>architect-partner + product-partner<br/>вопросы ↔ человек"]
+    RM["roadmap.md<br/>эпики · задачи · G/W/T · флаги риска"]
+    AP1{"👨‍💻 утверждение<br/>roadmap"}
     ISS["issues<br/>по одному на пункт"]
     TASK --> ARCH --> RM --> AP1 --> ISS
   end
 
-  subgraph P2["2 · ЭПИК → задачи"]
-    EPB["ветка эпика<br/>epic_issue_&lt;N&gt;-&lt;slug&gt;"]
-    DEC["декомпозиция в задачи<br/>свои issue_&lt;M&gt;-&lt;slug&gt; ветки"]
-    EPB --> DEC
-  end
-
-  subgraph P3["3 · ЗАДАЧА → ветка эпика"]
-    CF["контракт draft"]
+  subgraph P2["2 · СПАВН ПУНКТА — сначала контракт"]
+    EPB["эпик-ветка<br/>epic_issue_&lt;N&gt;-&lt;slug&gt;"]
+    CF["черновик контракта<br/>contract.py/ts · whitelist · риск"]
     JDG1["⚖️ судья<br/>вердикт по черновику"]
-    SO["👨‍💻 конверт sign-off<br/>sha256 контракта заморожен"]
-    DSG["🎨 дизайнер (условный)<br/>делегированные оси → impl spec"]
-    INT["опрос до кода<br/>допущения · неоднозначности"]
-    CODE["код + тесты<br/>зелёный нативный прогон"]
-    JDG2["⚖️ судья<br/>вердикт по замороженному контракту"]
-    TPR["task PR → ветка эпика<br/>ревьюер-боты + CI<br/>БЕЗ человека · БЕЗ версии"]
-    CF --> JDG1 --> SO --> DSG --> INT --> CODE --> JDG2 --> TPR
+    SO["👨‍💻 конверт подписи<br/>sha256 контракта заморожен<br/>(проверка отката по superseded-хэшу)"]
+    DSG["🎨 дизайнер (условно)<br/>делегированные оси → impl-спека"]
+    WT["item_worktree.sh open<br/>.worktrees/&lt;branch&gt; +<br/>scope_whitelist.txt привязан к ветке"]
+    EPB --> CF --> JDG1 --> SO --> DSG --> WT
   end
 
-  subgraph P4["4 · ЭПИК → default = релиз"]
-    INTG["интеграционный прогон"]
-    GIT["🔀 git-агент<br/>коммит кандидата (sha)<br/>+ push + PR"]
-    RVW{"🔍 ревью-панель<br/>доменные полы + доменные сигналы<br/>агрегатор APPROVE на текущем sha"}
-    MG{"merge-гейт<br/>изолир. копия + expected_sha<br/>+ все доменные сигналы и полы + зелёные проверки<br/>+ фрагмент issue: ↔ PR<br/>+ epic: все задачи закрыты<br/>+ risk:high → 2 семейства моделей + 👨‍💻 конверт"}
-    REL["релиз: merge в default<br/>версия из .changes + тег<br/>(manual_gate ждёт 👨‍💻 аппрува)"]
-    INTG --> GIT --> RVW -->|APPROVED| MG --> REL
+  subgraph P3["3 · РЕАЛИЗАЦИЯ — изолированный worktree"]
+    INT["допрос перед кодом<br/>допущения · неоднозначности"]
+    CODE["код + тесты<br/>коммиты только через ship_commit<br/>(Gate 0 · scope gate · hygiene ·<br/>secret scan · парность rollback)"]
+    FLOOR["этажные проверки<br/>gate_checks.* → project_run.sh<br/>фикс. argv · env -i · без унаслед.<br/>PYTHONPATH/PATH · gate_run аттестует"]
+    JDG2["⚖️ судья<br/>вердикт против заморож. контракта"]
+    TPR["task PR → эпик-ветка"]
+    INT --> CODE --> FLOOR --> JDG2 --> TPR
+  end
+
+  subgraph P4["4 · MERGE GATE — issue_merge / epic_merge"]
+    G0["Gate 0: assert_canon_integrity<br/>sha256-карта манифеста + внешний<br/>штамп + пины adapters_sha256"]
+    FRAG["скан .changes фрагментов<br/>bump · issue: ↔ PR · spec_impact<br/>diff-filter включая удаления"]
+    VC["verify_constraints.sh<br/>Closes #N · покрытие G/W/T<br/>whitelist контракта · якоря спек"]
+    SIG["blood-sign: verify_worktree.sh<br/>detached baseline, без сети<br/>PYTHONPATH/NODE_PATH собираются заново"]
+    PN["panel_gate.sh<br/>все этажи зелёные (аттестация gate_run)<br/>+ сигналы ccsdd/&lt;домен&gt; = success<br/>+ свод external_checks"]
+    MG{"решение о мерже<br/>expected_sha привязан<br/>risk:high → 2 семейства моделей<br/>+ 👨‍💻 конверт · manual_gate → конверт"}
+    G0 --> FRAG --> VC --> SIG --> PN --> MG
+  end
+
+  subgraph P5["5 · РЕЛИЗ — только на базовой ветке"]
+    RL["repo_release.sh<br/>версия = макс. bump из .changes<br/>CHANGELOG свёрнут, фрагменты удалены"]
+    TAG["тег v&lt;X.Y.Z&gt; + GitHub release<br/>строка в release_history.jsonl<br/>cycle_log compact"]
+    RPR["защищённая база → release/v* PR<br/>(доказуемый provenance: 1 коммит,<br/>только version-файл + CHANGELOG + .changes)"]
+    RL --> TAG
+    RL -.->|push запрещён| RPR
   end
 
   ISS --> EPB
-  DEC --> CF
-  TPR -->|все задачи влиты| INTG
-  JDG2 -->|правки, ≤2 раундов| CODE
-  JDG2 -.->|">2 раундов"| RES["резолвер → стоп / эскалация"]
-  SO -.->|дрейф| PD["PLAN_DELTA → человек"]
+  WT --> INT
+  TPR -->|issue_merge → эпик-ветка| P4
+  MG -->|смержено → база| P5
+  MG -.->|не базовая ветка| INTG["только интеграция —<br/>без бампа, без тега"]
+  JDG2 -->|доработки, ≤2 раунда| CODE
+  JDG2 -.->|"более 2 раундов"| RES["resolver → стоп / эскалация"]
+  SO -.->|дрейф| PD["PLAN_DELTA → человеку"]
   DEV -.-> TASK
   AP1 -.-> DEV
   SO -.-> DEV
-  MG -.->|manual_gate-фрагмент| DEV
+  MG -.->|manual_gate / конверт risk:high| DEV
   RES -.-> DEV
   PD -.-> DEV
 
   classDef human fill:#f5e6c8,stroke:#8a6d1f,stroke-width:2px
   classDef gate fill:#fde2e2,stroke:#a33,stroke-width:2px
+  classDef infra fill:#e3f0ff,stroke:#3366aa,stroke-width:1.5px
   class DEV,AP1,SO human
-  class JDG1,JDG2,RVW,MG gate
+  class JDG1,JDG2,PN,MG gate
+  class G0,WT,FLOOR,SIG,VC,FRAG infra

@@ -1,47 +1,49 @@
 flowchart LR
   subgraph COM1["АРХИТЕКТУРНЫЙ КОМИТЕТ"]
-    ROOT["🧭 ROOT директор<br/>план · контракты · спавны"]
-    AP[["🏛️ architect-partner<br/>со-дизайнер · топ-тир"]]
-    PPA[["📦 product-partner<br/>со-дизайнер · топ-тир"]]
-    DEV(["👨‍💻 человек<br/>арбитр"])
+    ROOT["🧭 ROOT директор<br/>план · контракты · спавн"]
+    AP[["🏛️ architect-partner<br/>со-дизайнер · top-tier"]]
+    PPA[["📦 product-partner<br/>со-дизайнер · top-tier"]]
+    DEV(["👨‍💻 человек<br/>арбитр · подписывает<br/>ключом ssh-agent ВНЕ workspace"])
   end
   subgraph COM2["ИСПОЛНИТЕЛЬНЫЙ КОМИТЕТ"]
-    CW["👷 CW исполнитель<br/>код + тесты в белом списке"]
-    DSG["🎨 DSG дизайнер (условный)<br/>делегированные оси → impl spec"]
-    DP[["🧩 design-partner<br/>консультант · рабочий тир"]]
-    PPE[["📦 product-partner<br/>консультант · рабочий тир"]]
+    CW["👷 CW исполнитель<br/>код + тесты в scope whitelist<br/>коммиты только через ship_commit"]
+    DSG["🎨 DSG дизайнер (условно)<br/>делегированные оси → impl-спека"]
+    DP[["🧩 design-partner<br/>консультант · workhorse"]]
+    PPE[["📦 product-partner<br/>консультант · workhorse"]]
   end
-  subgraph REV["РЕВЬЮВЕРЫ — вне обоих комитетов"]
+  subgraph REV["РЕЦЕНЗЕНТЫ — вне обоих комитетов"]
     JDG["⚖️ JDG судья<br/>только замороженный контракт"]
-    RVW["🔍 RVW ревью-панель<br/>доменные полы + вердикты-сигналы<br/>агрегатор публикует PR-ревью"]
-    RES["🤝 RES резолвер"]
-    RD["📖 RD читатель<br/>аттестация по sha"]
+    RVW["🔍 RVW ревью-панель<br/>доменные этажи (аттестация gate_run)<br/>+ сигналы ccsdd/&lt;домен&gt;<br/>агрегатор пишет ревью в PR"]
+    RES["🤝 RES резольвер"]
+    RD["📖 RD читатель<br/>аттестация sha"]
   end
-  subgraph REPOS["АГЕНТЫ ХРАНИЛИЩА"]
-    GIT["🔀 GIT агент коммитов"]
-    RA["🏁 RA merge/релиз"]
-    HYG["🧹 HYG гейт гигиены"]
+  subgraph REPOS["РЕПО-АГЕНТЫ"]
+    GIT["🔀 GIT агент коммитов<br/>ship_commit/push (Gate 0 +<br/>scope + hygiene + секреты)"]
+    RA["🏁 RA мерж/релиз<br/>issue/epic/repo_merge · repo_release<br/>Gate 0 → фрагменты → ограничения<br/>→ blood-sign → панель → решение"]
+    HYG["🧹 HYG гейта гигиены"]
   end
 
-  ART[/"📦 артефакты:<br/>roadmap · контракт(sha) · WS ·<br/>журналы · конверты"/]
-  REPO[("🗄️ хранилище<br/>repo + CI + PR")]
-  GW[["🛰️ шлюз<br/>все вызовы партнёров"]]
-  XA[["🏛️ ex-architect-partner<br/>Audit · арбитраж споров"]]
-  RULES[["📜 canon/<br/>RULES.md · agents ·<br/>specs · гейты"]]
+  ART[/"📦 артефакты:<br/>roadmap · contract(sha) · .changes<br/>журналы: cycle_log · gate_runs ·<br/>release_history · actors.json"/]
+  ENV[/"🔐 конверты:<br/>human_signoffs/ · .used_nonces ·<br/>.superseded_contracts<br/>ssh-sig · привязка к артефакту"/]
+  REPO[("🗄️ хранилище<br/>репо + CI + PR")]
+  GW[["🛰️ шлюз<br/>partner_call → gw_store<br/>квоты + reaper inflight + журнал<br/>gateway.db"]]
+  XA[["🏛️ ex-architect-partner<br/>аудит · арбитраж споров"]]
+  RULES[["📜 canon/<br/>RULES.md · агенты · спеки ·<br/>policy.json · пин манифеста<br/>(Gate 0 проверяет перед использ.)"]]
 
   ROOT -->|спавн: пакет| CW
   ROOT -->|спавн: оси| DSG
   ROOT -->|черновик контракта| JDG
-  DSG -->|impl spec| CW
+  DSG -->|impl-спека| CW
   CW -->|отчёт/блокер| ROOT
   CW --> ART
-  JDG -->|принят/резолвер/эскалация| ROOT
-  RVW -->|аппрув/правки — напрямую| REPO
+  JDG -->|accepted/resolver/эскалация| ROOT
+  RVW -->|approve/changes — напрямую| REPO
   RES -->|вердикт| ROOT
   GIT -->|кандидат sha| REPO
-  RA -->|merge-гейт| REPO
+  RA -->|merge gate| REPO
   GIT -.-> HYG
   RA -.-> HYG
+  ART -.-> ENV
   ROOT <-.-> ART
   GW -.-> AP
   GW -.-> PPA
@@ -55,11 +57,14 @@ flowchart LR
   PPE -.->|консультация| CW
   RULES -.-> ROOT
   RULES -.-> CW
-  DEV -.->|👨‍💻 roadmap · sign-off ·<br/>manual_gate · эскалации| ROOT
+  RULES -.-> RA
+  DEV -.->|"👨‍💻 roadmap · подпись ·<br/>manual_gate · эскалации<br/>(конверт, никогда текст)"| ROOT
 
   classDef human fill:#f5e6c8,stroke:#8a6d1f,stroke-width:2px
   classDef rev fill:#e8e0f5,stroke:#5b4a8a,stroke-width:2px
   classDef partner stroke-dasharray:5 5
+  classDef store fill:#eef7ee,stroke:#3a7a3a,stroke-width:1.5px
   class DEV human
   class JDG,RVW,RES,RD rev
   class AP,PPA,DP,PPE,XA partner
+  class ART,ENV,REPO store

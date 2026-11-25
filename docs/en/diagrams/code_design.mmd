@@ -1,0 +1,169 @@
+flowchart LR
+  subgraph EXT["EXTERNAL SYSTEMS"]
+    FORGE["gh / glab CLI<br/>→ GitHub · GitLab<br/>PR · status · reviews · releases"]
+    SSH["ssh-keygen + ssh-agent<br/>human key NEVER in workspace<br/>~/.config/ccsdd/allowed_signers"]
+    MCP["partner models<br/>(MCP / transport)"]
+    STAMPX["workspace stamp<br/>~/.config/ccsdd/workspaces/<br/>sha256(realpath).json"]
+  end
+
+  subgraph DEPLOY["DEPLOY / RUNTIME GLUE (repo root)"]
+    START["tools/start_project.sh<br/>copies manifest files → writes<br/>canon_manifest.json +<br/>adapters_sha256 + external stamp"]
+    ADP["adapters/<br/>devin.sh · generic.sh<br/>runtime allow-list: canon/bin only,<br/>project cmds forced via project_run"]
+    MS["tools/manual_start_project.sh<br/>interactive wizard → start_project"]
+  end
+
+  subgraph L0["GATE 0 — canon integrity (first line of every gate)"]
+    ACI["assert_canon_integrity.sh<br/>manifest sha256 map (non-empty,<br/>files↔sha equal) + adapters_sha256<br/>+ unsigned-hook refuse"]
+    SV["stamp_verify.sh<br/>manifest → external stamp"]
+    CMJ[("canon_manifest.json<br/>sha256 · files · adapters_sha256")]
+    ACI --> SV --> STAMPX
+    ACI --> CMJ
+  end
+
+  subgraph CFG["CONFIG / STATE (canon/)"]
+    PJ[("project.json<br/>gate_checks · review · merge ·<br/>version · forge · base_branch")]
+    POL[("config/policy.json<br/>exec.deny · exec.allow · exec_extra<br/>gateway quotas")]
+    PNL[("config/review_panel.json<br/>domain registry → gate_check")]
+    PTN[("config/partners.json<br/>role → partner_id/model")]
+    ACT[("actors.json<br/>actor_id · role · token_sha256")]
+    RM[("roadmap.md<br/>## Item zones · risk_flags")]
+    WL[("scope_whitelist.txt<br/>branch-bound allowed paths")]
+    CHG[(".changes/*.md fragments<br/>bump · issue · spec_impact ·<br/>manual_gate · risk · flags")]
+  end
+
+  subgraph EXECR["EXECUTION WRAPPERS (the only agent exec paths)"]
+    PRUN["project_run.sh<br/>gate_checks.<name> fixed argv<br/>env -i · CLEAN_PATH · no<br/>PYTHONPATH/NODE_PATH · 1 arg only"]
+    GRUN["gate_run.sh<br/>run/status/verify → gate_runs.jsonl<br/>canon script from BASE blob or<br/>manifest-pinned deployed copy"]
+    PROXY["git_ro.sh / gh_id.sh<br/>read-only git facade · merge vs<br/>review identity resolution"]
+    MSGS["msg_stamp.sh<br/>canonical message envelope"]
+  end
+
+  subgraph SHIP["COMMIT / PUSH PATH"]
+    SC["ship_commit.sh<br/>Gate 0 · detached-HEAD refuse ·<br/>release/v* refuse · SCOPE_GATE<br/>hygiene + secret_scan +<br/>rollback pairing + .pyc/temp"]
+    SP["ship_push.sh"]
+    IW["item_worktree.sh<br/>.worktrees/ open/close · branch<br/>name whitelist · WL seed"]
+    SC --> SP
+    IW --> SC
+  end
+
+  subgraph VERIF["VERIFICATION GATES"]
+    VW["verify_worktree.sh<br/>detached baseline, env -i,<br/>network-free · node_modules/<br/>PYTHONPATH trust order"]
+    VCN["verify_constraints.sh<br/>Closes #N · G/W/T coverage<br/>contract whitelist · roadmap items<br/>(changes_parser shared)"]
+    SAC["spec_anchor_check.sh<br/>spec_impact targets · anchors<br/>fence-aware · case-exact files"]
+    DSGC["design_spec_check.sh<br/>delegated axes coverage"]
+    CHECKS["quality_check · security_check ·<br/>hygiene_check · fidelity_check ·<br/>docs_check · agent_audit"]
+    PARSER["changes_parser.py<br/>front_fields · item_fields ·<br/>issue_numbers (ONE parser)"]
+    MIG["migration_gate.sh /<br/>migration_pattern.sh<br/>migration_dry_run_argv"]
+    RHM["roadmap_hash.sh<br/>roadmap state digest"]
+  end
+
+  subgraph PANEL["REVIEW PANEL"]
+    PV["panel_verdict.sh<br/>domain verdict → forge signal<br/>ccsdd/<domain> + findings comment<br/>review-identity allowlist only"]
+    PG["panel_gate.sh<br/>floors attested + signals green<br/>+ external_checks"]
+    FRG["forge/github.sh · forge/gitlab.sh<br/>· forge/test.sh<br/>signal_set/get · finding_post"]
+    PV --> FRG
+    PG --> FRG
+  end
+
+  subgraph MERGE["MERGE / RELEASE CORE"]
+    IM["issue_merge.sh<br/>fragment scan · issue ↔ PR ·<br/>signoff verify · manual_gate/<br/>risk:high envelope · supersede"]
+    EM["epic_merge.sh<br/>completeness: all tasks shipped<br/>+ issues closed → delegates"]
+    RMG["repo_merge.sh<br/>head-branch dispatch"]
+    RRL["repo_release.sh<br/>max-bump version · release commit<br/>tag + gh release · release/v* PR<br/>resume path · history row"]
+    RV["repo_version_set/at.sh<br/>version.file + regex<br/>tomllib post-check"]
+    RO["repo_pr_open · repo_pr_review<br/>repo_status_check · repo_read<br/>repo_issue_* · repo_branch_delete"]
+    SETUP["setup_repo.sh<br/>branch protection + release workflow"]
+    RMG --> IM
+    RMG --> EM --> IM
+    IM --> RRL --> RV
+    RRL --> RO
+  end
+
+  subgraph HGATE["HUMAN DECISION ENVELOPES"]
+    HS["human_sign.sh<br/>init · sign · verify · consume<br/>ssh-sig · 7-day window · nonce"]
+    HSX[("canon/human_signoffs/<br/>envelopes · .used_nonces ·<br/>.superseded_contracts")]
+    HS --> HSX
+    SSH -.-> HS
+  end
+
+  subgraph GWY["PARTNER GATEWAY"]
+    PC["partner_call.sh<br/>consult/audit · SIGALRM timeout<br/>refund in main thread"]
+    GWS["gw_store.py<br/>quota counters · inflight rows<br/>pid+TTL reaper (call_timeout+60)"]
+    GDB[("gateway.db<br/>+ gateway_counters.json<br/>partner_journal/")]
+    PC --> GWS --> GDB
+    PC --> MCP
+  end
+
+  subgraph LOGS["JOURNALS"]
+    CL["cycle_log.sh<br/>register/append/close/compact<br/>flock · actor tokens"]
+    HL["harness_log.sh<br/>per-item cycle metrics"]
+    JL[("cycle_log.jsonl(.archive)<br/>harness_log.jsonl<br/>gate_runs.jsonl<br/>release_history.jsonl")]
+    CL --> JL
+    HL --> JL
+    GRUN --> JL
+    RRL --> JL
+  end
+
+  subgraph CPUB["CANON SELF-PUBLICATION"]
+    CP["canon_pub.sh publish<br/>envelope + hygiene + read-limit<br/>→ manifest regen + canon-v* tag"]
+    CS["check_setup.sh<br/>full setup validation · schema ·<br/>manifest scan · adapter drift"]
+  end
+
+  subgraph TSTS["SELF-TESTS"]
+    GT["gate_tests.sh (144)"]
+    PT["pipeline_tests.sh (61)"]
+  end
+
+  ADP -->|exec allow: canon/bin| EXECR
+  START --> CMJ
+  START --> ADP
+  MS --> START
+  ACI -.->|first line| SC
+  ACI -.->|first line| IM
+  ACI -.->|first line| EM
+  ACI -.->|first line| RMG
+  ACI -.->|first line| RRL
+  ACI -.->|first line| VW
+  ACI -.->|first line| VCN
+  ACI -.->|first line| PV
+  ACI -.->|first line| PG
+  ACI -.->|first line| RO
+  ACI -.->|first line| CP
+  EXECR --> PJ
+  PRUN --> PJ
+  VCN --> CHG
+  VCN --> RM
+  IM --> CHG
+  IM --> HS
+  EM --> HS
+  IM --> FORGE
+  RRL --> FORGE
+  RO --> FORGE
+  PV --> FORGE
+  PG -->|gate_run verify| GRUN
+  GRUN -->|project argv| PRUN
+  VW -->|env adapter| PJ
+  SC --> WL
+  IM --> RRL
+  CP --> HS
+  CP --> CMJ
+  GWS --> POL
+  PC --> POL
+  CL --> ACT
+  CHECKS --> POL
+  PV --> POL
+  FRG --> POL
+  SAC --> PARSER
+  VCN --> PARSER
+  IM --> PARSER
+  RO --> PARSER
+  MIG --> PJ
+
+  classDef store fill:#eef7ee,stroke:#3a7a3a,stroke-width:1.5px
+  classDef gate fill:#fde2e2,stroke:#a33,stroke-width:2px
+  classDef sec fill:#f5e6c8,stroke:#8a6d1f,stroke-width:2px
+  classDef ext fill:#eee,stroke:#555,stroke-dasharray:5 5
+  class PJ,POL,PNL,PTN,ACT,RM,WL,CHG,CMJ,HSX,GDB,JL store
+  class SC,SP,VW,VCN,SAC,DSGC,CHECKS,IM,EM,RMG,RRL,PV,PG,GRUN gate
+  class HS,ACI,SV,SSH,STAMPX,PRUN sec
+  class FORGE,MCP ext

@@ -1,0 +1,169 @@
+flowchart LR
+  subgraph EXT["ВНЕШНИЕ СИСТЕМЫ"]
+    FORGE["gh / glab CLI<br/>→ GitHub · GitLab<br/>PR · статусы · ревью · релизы"]
+    SSH["ssh-keygen + ssh-agent<br/>ключ человека НИКОГДА не в workspace<br/>~/.config/ccsdd/allowed_signers"]
+    MCP["модели-партнёры<br/>(MCP / транспорт)"]
+    STAMPX["штамп воркспейса<br/>~/.config/ccsdd/workspaces/<br/>sha256(realpath).json"]
+  end
+
+  subgraph DEPLOY["ДЕПЛОЙ / RUNTIME-СВЯЗКА (корень репо)"]
+    START["tools/start_project.sh<br/>копирует файлы манифеста → пишет<br/>canon_manifest.json +<br/>adapters_sha256 + внешний штамп"]
+    ADP["adapters/<br/>devin.sh · generic.sh<br/>exec allow: только canon/bin,<br/>команды проекта — через project_run"]
+    MS["tools/manual_start_project.sh<br/>интерактивный мастер → start_project"]
+  end
+
+  subgraph L0["GATE 0 — целостность канона (первая строка каждого гейта)"]
+    ACI["assert_canon_integrity.sh<br/>sha256-карта манифеста (непустая,<br/>files↔sha равны) + adapters_sha256<br/>+ отказ при неподписанных хуках"]
+    SV["stamp_verify.sh<br/>манифест → внешний штамп"]
+    CMJ[("canon_manifest.json<br/>sha256 · files · adapters_sha256")]
+    ACI --> SV --> STAMPX
+    ACI --> CMJ
+  end
+
+  subgraph CFG["КОНФИГ / СОСТОЯНИЕ (canon/)"]
+    PJ[("project.json<br/>gate_checks · review · merge ·<br/>version · forge · base_branch")]
+    POL[("config/policy.json<br/>exec.deny · exec.allow · exec_extra<br/>квоты шлюза")]
+    PNL[("config/review_panel.json<br/>реестр доменов → gate_check")]
+    PTN[("config/partners.json<br/>роль → partner_id/model")]
+    ACT[("actors.json<br/>actor_id · роль · token_sha256")]
+    RM[("roadmap.md<br/>зоны ## Item · risk_flags")]
+    WL[("scope_whitelist.txt<br/>разрешённые пути, привязка к ветке")]
+    CHG[("фрагменты .changes/*.md<br/>bump · issue · spec_impact ·<br/>manual_gate · risk · flags")]
+  end
+
+  subgraph EXECR["ИСПОЛНИТЕЛЬНЫЕ ОБЁРТКИ (единственные пути exec для агентов)"]
+    PRUN["project_run.sh<br/>фикс. argv gate_checks.<name><br/>env -i · CLEAN_PATH · без<br/>PYTHONPATH/NODE_PATH · ровно 1 аргумент"]
+    GRUN["gate_run.sh<br/>run/status/verify → gate_runs.jsonl<br/>скрипт канона из blob базы или<br/>деплой-копия по манифесту"]
+    PROXY["git_ro.sh / gh_id.sh<br/>read-only фасад git · разрешение<br/>merge vs review идентичностей"]
+    MSGS["msg_stamp.sh<br/>канонический конверт сообщений"]
+  end
+
+  subgraph SHIP["ПУТЬ КОММИТА / PUSH"]
+    SC["ship_commit.sh<br/>Gate 0 · отказ detached-HEAD ·<br/>отказ release/v* · SCOPE_GATE<br/>hygiene + secret_scan +<br/>парность rollback + .pyc/temp"]
+    SP["ship_push.sh"]
+    IW["item_worktree.sh<br/>.worktrees/ open/close · whitelist<br/>имени ветки · семя WL"]
+    SC --> SP
+    IW --> SC
+  end
+
+  subgraph VERIF["ГЕЙТЫ ВЕРИФИКАЦИИ"]
+    VW["verify_worktree.sh<br/>detached baseline, env -i,<br/>без сети · доверие node_modules/<br/>PYTHONPATH"]
+    VCN["verify_constraints.sh<br/>Closes #N · покрытие G/W/T<br/>whitelist контракта · пункты roadmap<br/>(общий changes_parser)"]
+    SAC["spec_anchor_check.sh<br/>цели spec_impact · якоря<br/>fence-aware · регистр имён файлов"]
+    DSGC["design_spec_check.sh<br/>покрытие делегированных осей"]
+    CHECKS["quality_check · security_check ·<br/>hygiene_check · fidelity_check ·<br/>docs_check · agent_audit"]
+    PARSER["changes_parser.py<br/>front_fields · item_fields ·<br/>issue_numbers (ЕДИНЫЙ парсер)"]
+    MIG["migration_gate.sh /<br/>migration_pattern.sh<br/>migration_dry_run_argv"]
+    RHM["roadmap_hash.sh<br/>дайджест состояния roadmap"]
+  end
+
+  subgraph PANEL["РЕВЬЮ-ПАНЕЛЬ"]
+    PV["panel_verdict.sh<br/>вердикт домена → сигнал форджа<br/>ccsdd/&lt;домен&gt; + комментарий findings<br/>только allowlist review-идентичности"]
+    PG["panel_gate.sh<br/>этажи аттестованы + сигналы зелёные<br/>+ external_checks"]
+    FRG["forge/github.sh · forge/gitlab.sh<br/>· forge/test.sh<br/>signal_set/get · finding_post"]
+    PV --> FRG
+    PG --> FRG
+  end
+
+  subgraph MERGE["ЯДРО МЕРЖА / РЕЛИЗА"]
+    IM["issue_merge.sh<br/>скан фрагментов · issue ↔ PR ·<br/>проверка signoff · конверт<br/>manual_gate/risk:high · supersede"]
+    EM["epic_merge.sh<br/>полнота: все задачи отгружены<br/>+ issues закрыты → делегирует"]
+    RMG["repo_merge.sh<br/>диспетчер по head-ветке"]
+    RRL["repo_release.sh<br/>версия = макс-bump · релиз-коммит<br/>тег + gh release · release/v* PR<br/>путь resume · строка истории"]
+    RV["repo_version_set/at.sh<br/>version.file + regex<br/>пост-проверка tomllib"]
+    RO["repo_pr_open · repo_pr_review<br/>repo_status_check · repo_read<br/>repo_issue_* · repo_branch_delete"]
+    SETUP["setup_repo.sh<br/>защита ветки + релиз-воркфлоу"]
+    RMG --> IM
+    RMG --> EM --> IM
+    IM --> RRL --> RV
+    RRL --> RO
+  end
+
+  subgraph HGATE["КОНВЕРТЫ РЕШЕНИЙ ЧЕЛОВЕКА"]
+    HS["human_sign.sh<br/>init · sign · verify · consume<br/>ssh-sig · окно 7 дней · nonce"]
+    HSX[("canon/human_signoffs/<br/>конверты · .used_nonces ·<br/>.superseded_contracts")]
+    HS --> HSX
+    SSH -.-> HS
+  end
+
+  subgraph GWY["ШЛЮЗ ПАРТНЁРОВ"]
+    PC["partner_call.sh<br/>consult/audit · SIGALRM-таймаут<br/>refund в основном потоке"]
+    GWS["gw_store.py<br/>счётчики квот · строки inflight<br/>reaper по pid+TTL (call_timeout+60)"]
+    GDB[("gateway.db<br/>+ gateway_counters.json<br/>partner_journal/")]
+    PC --> GWS --> GDB
+    PC --> MCP
+  end
+
+  subgraph LOGS["ЖУРНАЛЫ"]
+    CL["cycle_log.sh<br/>register/append/close/compact<br/>flock · токены акторов"]
+    HL["harness_log.sh<br/>метрики цикла на пункт"]
+    JL[("cycle_log.jsonl(.archive)<br/>harness_log.jsonl<br/>gate_runs.jsonl<br/>release_history.jsonl")]
+    CL --> JL
+    HL --> JL
+    GRUN --> JL
+    RRL --> JL
+  end
+
+  subgraph CPUB["САМОПУБЛИКАЦИЯ КАНОНА"]
+    CP["canon_pub.sh publish<br/>конверт + hygiene + read-limit<br/>→ регена манифеста + тег canon-v*"]
+    CS["check_setup.sh<br/>полная проверка сетапа · схема ·<br/>скан манифеста · дрейф адаптеров"]
+  end
+
+  subgraph TSTS["САМОТЕСТЫ"]
+    GT["gate_tests.sh (144)"]
+    PT["pipeline_tests.sh (61)"]
+  end
+
+  ADP -->|"exec allow: canon/bin"| EXECR
+  START --> CMJ
+  START --> ADP
+  MS --> START
+  ACI -.->|"первая строка"| SC
+  ACI -.->|"первая строка"| IM
+  ACI -.->|"первая строка"| EM
+  ACI -.->|"первая строка"| RMG
+  ACI -.->|"первая строка"| RRL
+  ACI -.->|"первая строка"| VW
+  ACI -.->|"первая строка"| VCN
+  ACI -.->|"первая строка"| PV
+  ACI -.->|"первая строка"| PG
+  ACI -.->|"первая строка"| RO
+  ACI -.->|"первая строка"| CP
+  EXECR --> PJ
+  PRUN --> PJ
+  VCN --> CHG
+  VCN --> RM
+  IM --> CHG
+  IM --> HS
+  EM --> HS
+  IM --> FORGE
+  RRL --> FORGE
+  RO --> FORGE
+  PV --> FORGE
+  PG -->|"gate_run verify"| GRUN
+  GRUN -->|"argv проекта"| PRUN
+  VW -->|"env адаптера"| PJ
+  SC --> WL
+  IM --> RRL
+  CP --> HS
+  CP --> CMJ
+  GWS --> POL
+  PC --> POL
+  CL --> ACT
+  CHECKS --> POL
+  PV --> POL
+  FRG --> POL
+  SAC --> PARSER
+  VCN --> PARSER
+  IM --> PARSER
+  RO --> PARSER
+  MIG --> PJ
+
+  classDef store fill:#eef7ee,stroke:#3a7a3a,stroke-width:1.5px
+  classDef gate fill:#fde2e2,stroke:#a33,stroke-width:2px
+  classDef sec fill:#f5e6c8,stroke:#8a6d1f,stroke-width:2px
+  classDef ext fill:#eee,stroke:#555,stroke-dasharray:5 5
+  class PJ,POL,PNL,PTN,ACT,RM,WL,CHG,CMJ,HSX,GDB,JL store
+  class SC,SP,VW,VCN,SAC,DSGC,CHECKS,IM,EM,RMG,RRL,PV,PG,GRUN gate
+  class HS,ACI,SV,SSH,STAMPX,PRUN sec
+  class FORGE,MCP ext

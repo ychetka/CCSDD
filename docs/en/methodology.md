@@ -273,7 +273,8 @@ hardening for workspace-anchored items and is outside this drop.
 ```
 
 Diagrams: [item lifecycle](diagrams/item_lifecycle.svg) ·
-[cycle structure](diagrams/cycle_structure.svg)
+[cycle structure](diagrams/cycle_structure.svg) ·
+[code design](diagrams/code_design.svg)
 
 ## Lifecycle of one roadmap item
 

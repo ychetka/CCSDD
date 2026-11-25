@@ -271,7 +271,8 @@ sha256-карта), канон *деплоится, а не трекается*,
 ```
 
 Схемы: [жизненный цикл пункта](diagrams/item_lifecycle.svg) ·
-[структура цикла](diagrams/cycle_structure.svg)
+[структура цикла](diagrams/cycle_structure.svg) ·
+[архитектура кода](diagrams/code_design.svg)
 
 ## Жизненный цикл одного пункта
 
