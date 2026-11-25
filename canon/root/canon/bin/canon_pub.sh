@@ -29,6 +29,14 @@
 # hash-pinned at publication like the canon itself.
 set -euo pipefail
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+# Gate 0 (review_15 #5 / review_16 #12): never run under a
+# workspace-tampered canon - prove manifest hashes + the external
+# stamp before trusting any $CANON_DIR script or adapter hook.
+if [ -f "$CANON_DIR/canon_manifest.json" ]; then
+  [ -x "$CANON_DIR/bin/assert_canon_integrity.sh" ] \
+    || { echo "GATE_INTEGRITY: assert_canon_integrity.sh missing under a pinned manifest" >&2; exit 1; }
+  "$CANON_DIR/bin/assert_canon_integrity.sh" || exit 1
+fi
 
 [ "${1:-}" = "publish" ] || {
   echo "usage: canon_pub.sh publish --candidate <dir> --envelope <json> --version <semver> [--canon-root <dir>] [--manifest <path>] [--history <path>] [--orch-dir <dir>] [--max-lines N]" >&2

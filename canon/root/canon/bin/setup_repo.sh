@@ -37,7 +37,7 @@ fi
 [ -n "$REPO" ] || { echo "setup_repo: cannot resolve repo - pass --repo owner/name" >&2; exit 1; }
 echo "setup_repo: repository $REPO, base branch $BASE"
 
-if ! gh auth status >/dev/null 2>&1 && [ -z "${GH_TOKEN:-}" ]; then
+if ! ${NET_TO:+$NET_TO 30} gh auth status >/dev/null 2>&1 && [ -z "${GH_TOKEN:-}" ]; then
   echo "setup_repo: no GitHub credentials - run 'gh auth login' or export GH_TOKEN" >&2
   exit 1
 fi
@@ -50,11 +50,18 @@ fi
 # the canon's own merge rules, so a refusal is an operator action,
 # not a fallback branch.
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+
+# Network discipline (review_16 #13): no forge/git call may hang a
+# gate slot forever - prompt-hangs die instantly via the env flags,
+# transport stalls die via `timeout` where the binary exists.
+export GIT_TERMINAL_PROMPT=0 GH_PROMPT_DISABLED=1
+export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=30
+NET_TO=$(command -v timeout || command -v gtimeout || true)
 WF=$(cat "$CANON_DIR/templates/release_workflow.yml")
 # Substitute the __BASE__ placeholder with the deploy target branch -
 # a literal 'main' trigger never fires on repos whose base differs.
 WF=${WF//__BASE__/$BASE}
-HAVE_WF=$(gh api "repos/$REPO/contents/.github/workflows/release.yml" \
+HAVE_WF=$(${NET_TO:+$NET_TO 120} gh api "repos/$REPO/contents/.github/workflows/release.yml" \
             --jq .sha 2>/dev/null || true)
 if [ -n "$HAVE_WF" ]; then
   echo "setup_repo: release.yml already deployed (sha ${HAVE_WF:0:8}) - update via normal PR flow"
@@ -62,7 +69,7 @@ else
   echo "setup_repo: deploying .github/workflows/release.yml"
   if [ -z "$DRY" ]; then
     B64=$(printf '%s' "$WF" | base64 | tr -d '\n')
-    if gh api -X PUT "repos/$REPO/contents/.github/workflows/release.yml" \
+    if ${NET_TO:+$NET_TO 120} gh api -X PUT "repos/$REPO/contents/.github/workflows/release.yml" \
       -f message="canon: serialized release workflow" \
       -f content="$B64" -f branch="$BASE" >/dev/null 2>&1; then
       echo "setup_repo: release.yml committed directly to $BASE"
@@ -91,7 +98,7 @@ fi
 # --- 2. branch protection -------------------------------------------------
 # required_status_checks: PRESERVE whatever is already required -
 # sending null would silently drop the branch's existing CI gates.
-EXISTING_CHECKS=$(gh api "repos/$REPO/branches/$BASE/protection" \
+EXISTING_CHECKS=$(${NET_TO:+$NET_TO 120} gh api "repos/$REPO/branches/$BASE/protection" \
     --jq '.required_status_checks' 2>/dev/null || echo 'null')
 PROT=$(EXISTING="$EXISTING_CHECKS" python3 -I - <<'PY'
 import json, os
@@ -120,14 +127,14 @@ PY
 echo "setup_repo: applying branch protection on $BASE"
 echo "$PROT"
 if [ -z "$DRY" ]; then
-  gh api -X PUT "repos/$REPO/branches/$BASE/protection" \
+  ${NET_TO:+$NET_TO 120} gh api -X PUT "repos/$REPO/branches/$BASE/protection" \
     --input - <<<"$PROT" >/dev/null \
     || { echo "setup_repo: protection API failed (token lacks admin?)" >&2; exit 1; }
   # Read-back verification: a 2xx PUT can still leave the branch
   # differently protected than requested (API silently drops
   # unknown fields, org rulesets may override). Fail loudly rather
   # than report a phantom protection.
-  APPLIED=$(gh api "repos/$REPO/branches/$BASE/protection" 2>/dev/null || true)
+  APPLIED=$(${NET_TO:+$NET_TO 120} gh api "repos/$REPO/branches/$BASE/protection" 2>/dev/null || true)
   echo "$APPLIED" | python3 -I -c 'import json,sys
 try:
     d = json.loads(sys.stdin.read())

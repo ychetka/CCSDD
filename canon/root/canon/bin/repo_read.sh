@@ -4,6 +4,13 @@
 # Output: raw gh json/text under {data, status} envelope.
 set -uo pipefail
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+
+# Network discipline (review_16 #13): no forge/git call may hang a
+# gate slot forever - prompt-hangs die instantly via the env flags,
+# transport stalls die via `timeout` where the binary exists.
+export GIT_TERMINAL_PROMPT=0 GH_PROMPT_DISABLED=1
+export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=30
+NET_TO=$(command -v timeout || command -v gtimeout || true)
 GH=$("$CANON_DIR/bin/gh_id.sh" merge)
 TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
 cd "$TOP"
@@ -36,18 +43,18 @@ else:
 }
 
 case "$WHAT" in
-  pr)      run "$GH" pr view "$REF" --json number,title,body,state,headRefName,baseRefName,headRefOid,mergeable,mergeCommit,reviews,comments ;;
-  issue)   run "$GH" issue view "$REF" --json number,title,body,state,labels,comments ;;
-  checks)  run "$GH" pr view "$REF" --json statusCheckRollup ;;
-  reviews) run "$GH" pr view "$REF" --json reviews,latestReviews,reviewRequests ;;
-  diff)    run "$GH" pr diff "$REF" ;;
+  pr)      run ${NET_TO:+$NET_TO 120} "$GH" pr view "$REF" --json number,title,body,state,headRefName,baseRefName,headRefOid,mergeable,mergeCommit,reviews,comments ;;
+  issue)   run ${NET_TO:+$NET_TO 120} "$GH" issue view "$REF" --json number,title,body,state,labels,comments ;;
+  checks)  run ${NET_TO:+$NET_TO 120} "$GH" pr view "$REF" --json statusCheckRollup ;;
+  reviews) run ${NET_TO:+$NET_TO 120} "$GH" pr view "$REF" --json reviews,latestReviews,reviewRequests ;;
+  diff)    run ${NET_TO:+$NET_TO 120} "$GH" pr diff "$REF" ;;
   # release/tag reads take no ref: `latest` narrows releases to the
   # newest one, anything else lists all
   releases)
     if [ "$REF" = "latest" ]; then
-      run "$GH" release list --limit 1
+      run ${NET_TO:+$NET_TO 120} "$GH" release list --limit 1
     else
-      run "$GH" release list
+      run ${NET_TO:+$NET_TO 120} "$GH" release list
     fi ;;
   tags)
     run git tag --list 'v*' --sort=-v:refname ;;

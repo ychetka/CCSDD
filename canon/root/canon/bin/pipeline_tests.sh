@@ -39,8 +39,8 @@
 #   PR1 repo_pr_review refuses a stale commit_id
 #   PR2/3 a bound commit_id submits pinned to the head
 #   R1  release PR with provenance-clean diff skips .changes gate
-#   R2  release PR with an out-of-allowlist file is a REGULAR PR
-#       (missing_changes_entry blocks it)
+#   R2  release PR with an out-of-allowlist file fails provenance
+#       (release_provenance_failed, review_16 #7)
 #   F1  migration deletion covered by tracked
 #       docs/migration_rollforward.md passes in the DEPLOYED layout
 #       (canon/ untracked)
@@ -594,7 +594,8 @@ else
 fi
 
 # Same branch shape but the diff also touches src/evil.py -> NOT
-# provenance -> treated as regular PR -> missing_changes_entry.
+# provenance -> explicit release_provenance_failed (review_16 #7),
+# never silently degraded to a regular-PR scan.
 (cd "$WS" && git checkout -q -b release/v9.9.9 main \
   && printf '[project]\nname="pipe"\nversion="9.9.9"\n' > pyproject.toml \
   && mkdir -p src && echo bad > src/evil.py \
@@ -604,7 +605,7 @@ BAD_SHA=$(cd "$WS" && git rev-parse release/v9.9.9)
 printf '{"headRefOid":"%s","headRefName":"release/v9.9.9","baseRefName":"main","mergeable":"MERGEABLE","reviews":[],"statusCheckRollup":[],"mergeStateStatus":"CLEAN","labels":[],"author":{"login":"dev"},"body":"","reviewRequests":[]}' "$BAD_SHA" > "$GHSTATE/pr_view.json"
 (cd "$WS" && env FAKEGH_STATE="$GHSTATE" PATH="$FAKEBIN:$PATH" \
        canon/bin/repo_merge.sh 42 "$BAD_SHA" squash) >"$SCRATCH/out" 2>&1
-expect R2-tainted-release 1 $? "missing_changes_entry"
+expect R2-tainted-release 1 $? "release_provenance_failed"
 
 # M10: rulesets union — classic protection 404s but an active ruleset
 # requires check "sec" which the rollup lacks -> missing_required_checks

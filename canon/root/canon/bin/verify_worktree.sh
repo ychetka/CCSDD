@@ -109,6 +109,11 @@ if [ -n "$BASELINE_CMD" ]; then
     # distinct error - not a test failure and never silently skipped.
     ENV_RC=0
     TIMEOUT_BIN=$(command -v timeout || command -v gtimeout || true)
+    # Rebuild interpreter/module paths from scratch: an inherited
+    # PYTHONPATH/NODE_PATH (from whatever invoked the gate) would
+    # smuggle caller-controlled code into the baseline run under
+    # merge/review creds (review_16 #3).
+    unset PYTHONPATH NODE_PATH
     # The env adapter comes from the deployed control plane
     # ($CANON_DIR), never from $TOP - inside a PR worktree the
     # worktree copy is agent-controlled.
@@ -156,7 +161,7 @@ print(ws if os.path.isdir(ws) and ws != top and not ws.startswith(top + os.sep) 
           fi
         fi
         if [ -d "$NM_DIR" ]; then
-          export NODE_PATH="$NM_DIR${NODE_PATH:+:$NODE_PATH}"
+          export NODE_PATH="$NM_DIR"
           export PATH="$NM_DIR/.bin:$PATH"
         else
           ENV_RC=2   # no prepared node_modules and installs are off
@@ -194,7 +199,7 @@ print(ws if os.path.isdir(ws) and ws != top and not ws.startswith(top + os.sep) 
         # mutation, nothing the candidate tree can smuggle in.
         VW_PY_PATH="$WT"
         [ -d "$WT/src" ] && VW_PY_PATH="$WT/src:$WT"
-        export PYTHONPATH="$VW_PY_PATH${PYTHONPATH:+:$PYTHONPATH}"
+        export PYTHONPATH="$VW_PY_PATH"
       fi
     fi
     if [ "$BASE_UNRESOLVED" = "1" ]; then

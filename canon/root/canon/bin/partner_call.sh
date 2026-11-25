@@ -252,7 +252,8 @@ con = gw_store.connect(db_path)
 # refunded inside ONE transaction (gw_store.inflight_reap_dead) so
 # two concurrent callers can never refund the same orphan twice.
 try:
-    gw_store.inflight_reap_dead(con)
+    gw_store.inflight_reap_dead(
+        con, ttl=int(_gw.get("call_timeout_seconds", 300)) + 60)
 except Exception:
     pass   # an older DB without the table must not block the call
 spent_keys = []

@@ -62,6 +62,7 @@ allowed = required | {
     "version",                    # {file, regex} for repo_version_*
     "review",                     # {reviewer_logins: [...]}
     "migration_dry_run_cmd",      # verify_constraints dry-run
+    "migration_dry_run_argv",     # argv form (preferred over _cmd)
     "instances_bridge_dir",       # transport adapter location
     "canonical_harness_dir",      # canon root override
     "bound_instance", "workspace",# onboard linkage
@@ -87,7 +88,8 @@ types = {"protected_paths": list, "cyrillic_paths": list,
          "merge": dict, "security": dict,
          "repo": str, "text_language": str, "repo_language": str,
          "role": str, "forge": str, "base_branch": str,
-         "migration_dry_run_cmd": str, "instances_bridge_dir": str,
+         "migration_dry_run_cmd": str, "migration_dry_run_argv": list,
+         "instances_bridge_dir": str,
          "canonical_harness_dir": str, "bound_instance": str,
          "workspace": str, "project_name": str, "task_tracker": str}
 missing = required - set(cfg)
@@ -118,6 +120,17 @@ if isinstance(v, dict):
             re.compile(vr)
         except re.error as e:
             errs.append(f"version.regex does not compile: {e}")
+# A canon/version_source.sh adapter makes the version file opaque to
+# the release-PR provenance gate in issue_merge.sh - it can only
+# resolve deterministically when project.json declares version.file
+# (review_16 #7).
+_has_vfile = isinstance(v, dict) and isinstance(v.get("file"), str) \
+    and bool(v["file"].strip())
+if os.path.exists(os.path.join(os.environ["CANON_DIR"],
+                               "version_source.sh")) and not _has_vfile:
+    errs.append("canon/version_source.sh present but no version.file in "
+                "project.json - release-PR provenance cannot resolve the "
+                "version file (declare version.file)")
 r = cfg.get("review")
 if isinstance(r, dict):
     if "reviewer_logins" not in r:

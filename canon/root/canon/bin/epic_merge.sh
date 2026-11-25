@@ -18,6 +18,13 @@
 # Usage: epic_merge.sh <pr_number> <expected_head_sha> [squash|merge|rebase]
 set -uo pipefail
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+
+# Network discipline (review_16 #13): no forge/git call may hang a
+# gate slot forever - prompt-hangs die instantly via the env flags,
+# transport stalls die via `timeout` where the binary exists.
+export GIT_TERMINAL_PROMPT=0 GH_PROMPT_DISABLED=1
+export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=30
+NET_TO=$(command -v timeout || command -v gtimeout || true)
 # Gate 0 (review_15 #5): the merge path must never run under a
 # workspace-tampered canon - prove manifest hashes + the external
 # stamp before trusting any $CANON_DIR script or adapter hook.
@@ -54,7 +61,7 @@ GH=$("$CANON_DIR/bin/gh_id.sh" merge)
 command -v "$GH" >/dev/null 2>&1 || json_error upstream_error "github cli '$GH' not found on PATH"
 
 INFO_ERR=$(mktemp)
-INFO=$("$GH" pr view "$PR" --json headRefName,baseRefName 2>"$INFO_ERR") || {
+INFO=$(${NET_TO:+$NET_TO 120} "$GH" pr view "$PR" --json headRefName,baseRefName 2>"$INFO_ERR") || {
   json_error upstream_error "$(cat "$INFO_ERR" 2>/dev/null | head -c 300)"
 }
 rm -f "$INFO_ERR"
@@ -83,7 +90,7 @@ fi
 # The completeness gate diffs the head against its merge base - the
 # head object must be local.
 git cat-file -e "$EXPECTED" 2>/dev/null \
-  || git fetch -q "$REMOTE" "$HEAD_BRANCH" >/dev/null 2>&1 || true
+  || ${NET_TO:+$NET_TO 300} git fetch -q "$REMOTE" "$HEAD_BRANCH" >/dev/null 2>&1 || true
 git cat-file -e "$EXPECTED" 2>/dev/null \
   || json_error upstream_error "expected head $EXPECTED not available locally"
 
@@ -186,7 +193,7 @@ fi
 # not a substantive epic_incomplete block - the routings differ.
 OPEN_TASKS=""
 for t in $(TASKS="$TASKS" python3 -I -c 'import json,os;print(" ".join(json.loads(os.environ["TASKS"])["tasks"]))'); do
-  st_json=$("$GH" issue view "$t" --json state 2>/dev/null) \
+  st_json=$(${NET_TO:+$NET_TO 120} "$GH" issue view "$t" --json state 2>/dev/null) \
     || json_error upstream_error "failed to query issue #$t state"
   st=$(printf '%s' "$st_json" | python3 -I -c 'import json,sys;print((json.load(sys.stdin) or {}).get("state") or "")' 2>/dev/null) \
     || json_error upstream_error "unparseable issue #$t state payload"

@@ -6,6 +6,13 @@
 set -uo pipefail
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 
+# Network discipline (review_16 #13): no forge/git call may hang a
+# gate slot forever - prompt-hangs die instantly via the env flags,
+# transport stalls die via `timeout` where the binary exists.
+export GIT_TERMINAL_PROMPT=0 GH_PROMPT_DISABLED=1
+export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=30
+NET_TO=$(command -v timeout || command -v gtimeout || true)
+
 GH=$("$CANON_DIR/bin/gh_id.sh" merge)
 TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
 cd "$TOP"
@@ -35,7 +42,7 @@ print(json.dumps({"status":"error","failure_class":"gate_blocked","violations":v
   ARGS+=(--comment "$COMMENT")
 fi
 
-OUT=$("$GH" "${ARGS[@]}" 2>&1) || {
+OUT=$(${NET_TO:+$NET_TO 120} "$GH" "${ARGS[@]}" 2>&1) || {
   python3 -I -c 'import json,sys;print(json.dumps({"status":"error","failure_class":"upstream_error","message":sys.argv[1]}))' "$OUT"
   exit 1
 }

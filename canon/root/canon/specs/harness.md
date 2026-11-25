@@ -590,10 +590,12 @@ The version policy is fixed at roadmap approval, not at merge
   `repo_release.sh` tags the resulting head.
 - **Release history**: besides the tag and CHANGELOG, every
   publication leaves a durable record in the cycle artifacts
-  (release journal): version, tag, hash, merger, approval
-  envelopes, final review verdicts, UTC date. The release journal
-  is the audit source of "who released what, when and why" on top
-  of GitHub release links.
+  (release journal, `canon/release_history.jsonl`): version, tag,
+  sha, merger, UTC date. Approval envelopes and final review
+  verdicts live in `cycle_log.jsonl` / `gate_runs.jsonl` - the
+  release row is the audit anchor pointing at them, so the journal
+  stays the source of "who released what, when and why" on top of
+  GitHub release links.
 - Canonical orchestrator rollouts: canon_version is bumped by the
   manifest + a `canon-v<canon_version>` tag on the canon source
   repository (its own cycle, outside worker RoM gates; the

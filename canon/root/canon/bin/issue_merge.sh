@@ -14,6 +14,13 @@ set -uo pipefail
 # nested workspaces the git top may be a subdir like code/ while
 # canon/ lives at the workspace root.
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+
+# Network discipline (review_16 #13): no forge/git call may hang a
+# gate slot forever - prompt-hangs die instantly via the env flags,
+# transport stalls die via `timeout` where the binary exists.
+export GIT_TERMINAL_PROMPT=0 GH_PROMPT_DISABLED=1
+export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=30
+NET_TO=$(command -v timeout || command -v gtimeout || true)
 # Gate 0 (review_15 #5): the merge path must never run under a
 # workspace-tampered canon - prove manifest hashes + the external
 # stamp before trusting any $CANON_DIR script or adapter hook.
@@ -64,7 +71,7 @@ command -v "$GH" >/dev/null 2>&1 || json_error upstream_error "github cli '$GH' 
 # along: a reviewer whose review was re-requested holds no standing
 # approval.
 INFO_ERR="$TMPD/info.err"
-INFO=$("$GH" pr view "$PR" --json headRefOid,headRefName,baseRefName,mergeable,reviews,statusCheckRollup,mergeStateStatus,labels,author,body,reviewRequests 2>"$INFO_ERR") || {
+INFO=$(${NET_TO:+$NET_TO 120} "$GH" pr view "$PR" --json headRefOid,headRefName,baseRefName,mergeable,reviews,statusCheckRollup,mergeStateStatus,labels,author,body,reviewRequests 2>"$INFO_ERR") || {
   json_error upstream_error "$(cat "$INFO_ERR" 2>/dev/null | head -c 300)"
 }
 # A nonzero exit kills the gate; stderr alone does not - gh prints
@@ -101,10 +108,10 @@ fi
 [ -z "${REMOTE:-}" ] && REMOTE=$(git remote -v | awk '$2 ~ /github\.com|gitlab\./ {print $1; exit}')
 [ -z "${REMOTE:-}" ] && REMOTE=$(git remote get-url origin >/dev/null 2>&1 && echo origin)
 [ -n "${REMOTE:-}" ] || json_error upstream_error "no forge remote for project repo slug"
-git fetch "$REMOTE" "+refs/heads/$BASE:refs/remotes/$REMOTE/$BASE" --tags >/dev/null 2>&1 || {
+${NET_TO:+$NET_TO 300} git fetch "$REMOTE" "+refs/heads/$BASE:refs/remotes/$REMOTE/$BASE" --tags >/dev/null 2>&1 || {
   json_error upstream_error "fetch of base failed - refusing to gate on stale refs"
 }
-git fetch "$REMOTE" "$EXPECTED" >/dev/null 2>&1 || {
+${NET_TO:+$NET_TO 300} git fetch "$REMOTE" "$EXPECTED" >/dev/null 2>&1 || {
   json_error upstream_error "cannot fetch PR head sha"
 }
 
@@ -120,7 +127,7 @@ PRE_MERGE_SHA=$(git rev-parse --verify -q "$REMOTE/$BASE" 2>/dev/null || true)
 # integration work. Resolve locally when the API is silent:
 # <remote>/HEAD, then project.json base_branch, then 'main'
 # (review_15 #7).
-DEFAULT_BRANCH=$("$GH" repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null || echo "")
+DEFAULT_BRANCH=$(${NET_TO:+$NET_TO 120} "$GH" repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null || echo "")
 if [ -z "$DEFAULT_BRANCH" ]; then
   DEFAULT_BRANCH=$(git symbolic-ref --short "refs/remotes/$REMOTE/HEAD" 2>/dev/null \
                    | sed "s|^$REMOTE/||" || true)
@@ -224,9 +231,14 @@ PY
     [ "$PROV_OK" = "yes" ] && IS_RELEASE_PR=1
   fi
   if [ "$IS_RELEASE_PR" != "1" ]; then
-    # A non-provenance release/v* PR is treated as a REGULAR PR: the
-    # fragment/issue scans apply in full (fail-closed).
+    # A release/v* branch WITHOUT provenance is blocked with its own
+    # failure class, not treated as a regular PR: the .changes
+    # fragments are deleted by the release commit, so the regular
+    # scan would surface a misleading missing_changes_entry and the
+    # exemption boundary stays ambiguous (review_16 #7).
     IS_RELEASE_PR=0
+    echo '{"status":"blocked","failure_class":"release_provenance_failed","message":"release/v* head lacks release provenance (subject, single-commit shape, or path allowlist) - refusing to merge as a regular PR"}'
+    exit 1
   fi
 fi
 
@@ -239,7 +251,7 @@ BASE_ENC=$(python3 -I -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.a
 REQUIRED=""
 REQUIRED_LOOKUP_FAILED=0
 PROT_ERR="$TMPD/prot.err"
-if ! REQUIRED=$("$GH" api "repos/{owner}/{repo}/branches/${BASE_ENC}/protection/required_status_checks" \
+if ! REQUIRED=$(${NET_TO:+$NET_TO 120} "$GH" api "repos/{owner}/{repo}/branches/${BASE_ENC}/protection/required_status_checks" \
   --jq '[.contexts[]?, .checks[]?.context] | unique | .[]' 2>"$PROT_ERR"); then
   PROT_MSG=$(cat "$PROT_ERR" 2>/dev/null)
   case "$PROT_MSG" in
@@ -257,8 +269,12 @@ base = os.environ["BASE"]
 default_branch = os.environ.get("DEFAULT_BRANCH") or ""
 
 def gh(path):
-    r = subprocess.run([os.environ["GH"], "api", path, "--paginate"],
-                       capture_output=True, text=True)
+    try:
+        r = subprocess.run([os.environ["GH"], "api", path, "--paginate"],
+                           capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        print("__LOOKUP_FAILED__")
+        sys.exit(2)
     if r.returncode != 0:
         print("__LOOKUP_FAILED__")
         sys.exit(2)
@@ -399,7 +415,7 @@ fi
 # Reviews are keyed by (login, id) - id ordering breaks submittedAt
 # ties; commit_id binds the verdict to a head sha.
 REVIEWS_ERR="$TMPD/reviews.err"
-"$GH" api "repos/{owner}/{repo}/pulls/${PR}/reviews?per_page=100" --paginate \
+${NET_TO:+$NET_TO 120} "$GH" api "repos/{owner}/{repo}/pulls/${PR}/reviews?per_page=100" --paginate \
   --jq '.[] | @json' > "$TMPD/reviews.jsonl" 2>"$REVIEWS_ERR" || {
     json_error upstream_error "reviews fetch failed: $(head -c 200 "$REVIEWS_ERR")"
 }
@@ -679,7 +695,7 @@ MERGEABLE=$(INFO_FILE="$INFO_FILE" python3 -I -c 'import json,os;print(json.load
 if [ "$MERGEABLE" = "UNKNOWN" ]; then
   for _i in 1 2 3; do
     sleep 3
-    MERGEABLE=$("$GH" pr view "$PR" --json mergeable --jq .mergeable 2>/dev/null || echo "")
+    MERGEABLE=$(${NET_TO:+$NET_TO 120} "$GH" pr view "$PR" --json mergeable --jq .mergeable 2>/dev/null || echo "")
     [ "$MERGEABLE" = "UNKNOWN" ] || break
   done
 fi
@@ -1032,7 +1048,7 @@ print(json.dumps({"status":"blocked","failure_class":"version_source_missing",
   exit 1
 fi
 
-ERR=$("$GH" pr merge "$PR" --"$METHOD" --match-head-commit "$EXPECTED" 2>&1)
+ERR=$(${NET_TO:+$NET_TO 120} "$GH" pr merge "$PR" --"$METHOD" --match-head-commit "$EXPECTED" 2>&1)
 rc=$?
 if [ $rc -ne 0 ]; then
   python3 -I -c 'import json,sys;print(json.dumps({"status":"error","failure_class":"upstream_error","message":sys.argv[1]}))' "$ERR"
@@ -1066,22 +1082,40 @@ CONTRACT_TOUCHED=$(git diff --name-only --no-renames "${PRE_MERGE_SHA:-$REMOTE/$
 if [ -n "$CONTRACT_TOUCHED" ]; then
   SUP="$CANON_DIR/human_signoffs/.superseded_contracts"
   mkdir -p "$(dirname "$SUP")"
-  while IFS= read -r cpath; do
-    [ -n "$cpath" ] || continue
-    # The previous content hash is dead for future envelopes - a
-    # rollback to it is a fresh contract change needing fresh
-    # sign-off. A path that did not exist pre-merge records nothing.
-    # NOTE: the delete-artifact hash ('delete|path|base-blob') is
-    # deliberately NOT superseded - the epic merge re-computes it
-    # against the same merge-base blob, so spending it here would
-    # deadlock the epic exactly like a nonce burn did. Its replay
-    # surface stays closed because re-adding the deleted bytes is
-    # itself a superseded content hash.
-    if git cat-file -e "${PRE_MERGE_SHA:-$REMOTE/$BASE}:$cpath" 2>/dev/null; then
-      git show "${PRE_MERGE_SHA:-$REMOTE/$BASE}:$cpath" 2>/dev/null \
-        | $SHA256_BIN | cut -d' ' -f1 >> "$SUP"
-    fi
-  done <<< "$CONTRACT_TOUCHED"
+  # The superseded hash is the content at the MERGE BASE, not at
+  # PRE_MERGE_SHA: when main advanced the contract after this
+  # branch forked, $PRE_MERGE_SHA:<path> yields the CURRENT main
+  # content - superseding it would invalidate the live contract
+  # this PR never touched (review_16 #10). Three-dot diff already
+  # anchors the touched list at the merge-base, so the hash source
+  # must match.
+  MB=$(git merge-base "${PRE_MERGE_SHA:-$REMOTE/$BASE}" "$EXPECTED" 2>/dev/null || true)
+  if [ -n "$MB" ]; then
+    {
+      while IFS= read -r cpath; do
+        [ -n "$cpath" ] || continue
+        # The previous content hash is dead for future envelopes - a
+        # rollback to it is a fresh contract change needing fresh
+        # sign-off. A path that did not exist pre-merge records
+        # nothing.
+        # NOTE: the delete-artifact hash ('delete|path|base-blob') is
+        # deliberately NOT superseded - the epic merge re-computes it
+        # against the same merge-base blob, so spending it here would
+        # deadlock the epic exactly like a nonce burn did. Its replay
+        # surface stays closed because re-adding the deleted bytes
+        # is itself a superseded content hash.
+        if git cat-file -e "$MB:$cpath" 2>/dev/null; then
+          git show "$MB:$cpath" 2>/dev/null | $SHA256_BIN | cut -d' ' -f1
+        fi
+      done <<< "$CONTRACT_TOUCHED"
+    } | (
+      # Parallel merges append concurrently - human_sign.sh takes
+      # LOCK_SH on THE FILE ITSELF at verify, so the writer must
+      # lock the same inode: append through the locked fd
+      # (review_16 #9).
+      exec 9>>"$SUP"; flock 9 && cat >&9
+    )
+  fi
 fi
 
 # Post-merge release under RoM: release is part of the merge
@@ -1102,7 +1136,7 @@ case "$ENTRY_VIA" in
 esac
 if [ -n "$DEFAULT_BRANCH" ] && [ "$BASE" != "$DEFAULT_BRANCH" ]; then
   RELEASE='{"status":"skipped","reason":"non_default_base","base":"'"$BASE"'"}'
-elif ! git fetch "$REMOTE" "+refs/heads/$BASE:refs/remotes/$REMOTE/$BASE" --tags >/dev/null 2>&1; then
+elif ! ${NET_TO:+$NET_TO 300} git fetch "$REMOTE" "+refs/heads/$BASE:refs/remotes/$REMOTE/$BASE" --tags >/dev/null 2>&1; then
   RELEASE='{"status":"error","failure_class":"upstream_error","reason":"fetch_failed"}'
 elif [ ! -x "$CANON_DIR/bin/repo_release.sh" ]; then
   RELEASE='{"status":"error","failure_class":"release_failed","reason":"repo_release_missing"}'

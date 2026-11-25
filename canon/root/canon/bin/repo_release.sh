@@ -26,6 +26,13 @@ set -uo pipefail
 # nested workspaces the git top may be a subdir like code/ while
 # canon/ lives at the workspace root.
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+
+# Network discipline (review_16 #13): no forge/git call may hang a
+# gate slot forever - prompt-hangs die instantly via the env flags,
+# transport stalls die via `timeout` where the binary exists.
+export GIT_TERMINAL_PROMPT=0 GH_PROMPT_DISABLED=1
+export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=30
+NET_TO=$(command -v timeout || command -v gtimeout || true)
 # Gate 0 (review_15 #5): the release path must never run under a
 # workspace-tampered canon - prove manifest hashes + the external
 # stamp before trusting any $CANON_DIR script or adapter hook.
@@ -83,9 +90,9 @@ fi
 # (repo_merge.sh does); without it defaultBranchRef is the only
 # sane default - but a merge into a non-default base must never
 # silently release onto the default branch.
-[ -n "$BASE" ] || BASE=$("$GH" repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || echo main)
+[ -n "$BASE" ] || BASE=$(${NET_TO:+$NET_TO 120} "$GH" repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || echo main)
 [[ "$BASE" =~ ^[A-Za-z0-9._/-]+$ ]] || json_error malformed_input "unexpected base ref name: $BASE"
-git fetch "$REMOTE" "+refs/heads/$BASE:refs/remotes/$REMOTE/$BASE" --tags >/dev/null 2>&1 || \
+${NET_TO:+$NET_TO 300} git fetch "$REMOTE" "+refs/heads/$BASE:refs/remotes/$REMOTE/$BASE" --tags >/dev/null 2>&1 || \
   json_error upstream_error "fetch of base/tags failed - refusing to guess next version"
 
 SHA=$(git rev-parse "$REMOTE/$BASE" 2>/dev/null) || \
@@ -93,7 +100,7 @@ SHA=$(git rev-parse "$REMOTE/$BASE" 2>/dev/null) || \
 
 # --- publish helper: tag + GitHub release on an existing sha ---
 # Shared by the normal path and the resume path; idempotent for a
-# partially published release (tag pushed but "$GH" release failed, or
+# partially published release (tag pushed but ${NET_TO:+$NET_TO 120} "$GH" release failed, or
 # vice versa). A failed tag push removes the local tag so a retry is
 # not poisoned by a stale local ref.
 # Release journal (harness.md §3 "Release history"): a durable
@@ -111,22 +118,18 @@ record_release_history() {
   grep -qE "\"tag\"[[:space:]]*:[[:space:]]*\"$tag\"" \
     "$CANON_DIR/release_history.jsonl" 2>/dev/null && return 0
   local MERGER
-  MERGER=$("$GH" api user --jq '.login' 2>/dev/null || basename "$GH")
-  if command -v flock >/dev/null 2>&1; then
-    ( exec 9>"$CANON_DIR/release_history.jsonl.lock"
-      flock 9 || exit 1
-      # Re-check inside the lock: the grep above races a parallel writer.
-      grep -qE "\"tag\"[[:space:]]*:[[:space:]]*\"$tag\"" \
-        "$CANON_DIR/release_history.jsonl" 2>/dev/null \
-      || printf '{"version":"%s","tag":"%s","sha":"%s","merger":"%s","utc":"%s"}\n' \
-        "${tag#v}" "$tag" "$sha" "$MERGER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        >> "$CANON_DIR/release_history.jsonl"
-    ) 2>/dev/null || true
-  else
-    printf '{"version":"%s","tag":"%s","sha":"%s","merger":"%s","utc":"%s"}\n' \
+  MERGER=$(${NET_TO:+$NET_TO 120} "$GH" api user --jq '.login' 2>/dev/null || basename "$GH")
+  # flock is mandatory (check_setup requires it): an unlocked write
+  # races a parallel release and interleaves jsonl records.
+  ( exec 9>"$CANON_DIR/release_history.jsonl.lock"
+    flock 9 || exit 1
+    # Re-check inside the lock: the grep above races a parallel writer.
+    grep -qE "\"tag\"[[:space:]]*:[[:space:]]*\"$tag\"" \
+      "$CANON_DIR/release_history.jsonl" 2>/dev/null \
+    || printf '{"version":"%s","tag":"%s","sha":"%s","merger":"%s","utc":"%s"}\n' \
       "${tag#v}" "$tag" "$sha" "$MERGER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      >> "$CANON_DIR/release_history.jsonl" 2>/dev/null || true
-  fi
+      >> "$CANON_DIR/release_history.jsonl"
+  ) 2>/dev/null || true
 }
 
 publish_tag_release() {
@@ -140,28 +143,28 @@ publish_tag_release() {
     printf '{"status":"error","failure_class":"conflict","message":"tag %s exists on different sha %s"}' "$tag" "$(git rev-parse "refs/tags/$tag^{commit}")"
     return 12
   fi
-  if ! git push "$REMOTE" "refs/tags/$tag" >/dev/null 2>&1; then
+  if ! ${NET_TO:+$NET_TO 300} git push "$REMOTE" "refs/tags/$tag" >/dev/null 2>&1; then
     # Lost a publish race (the release workflow or a parallel run
     # pushed first)? Re-fetch before crying: a remote tag already on
     # this sha IS the outcome we wanted.
-    git fetch "$REMOTE" --tags >/dev/null 2>&1 || true
+    ${NET_TO:+$NET_TO 300} git fetch "$REMOTE" --tags >/dev/null 2>&1 || true
     if [ "$(git rev-parse "refs/tags/$tag^{commit}" 2>/dev/null)" != "$sha" ]; then
       git tag -d "$tag" >/dev/null 2>&1 || true
       printf '{"status":"error","failure_class":"upstream_error","message":"tag %s push failed - push it manually on %s"}' "$tag" "$sha"
       return 13
     fi
   fi
-  if ! "$GH" release view "$tag" >/dev/null 2>&1; then
+  if ! ${NET_TO:+$NET_TO 120} "$GH" release view "$tag" >/dev/null 2>&1; then
     if [ -n "$NOTES" ]; then
-      "$GH" release create "$tag" --notes "$NOTES" >/dev/null 2>&1
+      ${NET_TO:+$NET_TO 120} "$GH" release create "$tag" --notes "$NOTES" >/dev/null 2>&1
     else
-      "$GH" release create "$tag" --generate-notes >/dev/null 2>&1
+      ${NET_TO:+$NET_TO 120} "$GH" release create "$tag" --generate-notes >/dev/null 2>&1
     fi || {
       # Race with a repo release workflow (release.yml on
       # pull_request:closed) or a parallel repo_release.sh: the loser
       # gets HTTP 422 already_exists on create - but a now-visible
       # release IS the outcome we wanted, not a failure.
-      if ! "$GH" release view "$tag" >/dev/null 2>&1; then
+      if ! ${NET_TO:+$NET_TO 120} "$GH" release view "$tag" >/dev/null 2>&1; then
         GH_NAME=$(basename "$GH" 2>/dev/null || printf 'gh')
         printf '{"status":"error","failure_class":"upstream_error","message":"tag pushed but %s release create failed - create release for %s manually"}' "$GH_NAME" "$tag"
         return 14
@@ -552,7 +555,7 @@ REL_SHA=$(git rev-parse HEAD)
 # direct push - fall back to a release branch + PR instead of dying:
 # the PR lands the identical release commit, and the NEXT
 # repo_release.sh run (resume path above) finishes tag+release.
-if git push "$REMOTE" "HEAD:$BASE" >/dev/null 2>&1; then
+if ${NET_TO:+$NET_TO 300} git push "$REMOTE" "HEAD:$BASE" >/dev/null 2>&1; then
   :
 else
   RBR="release/$TAG"
@@ -563,7 +566,7 @@ else
   # Search ALL open release/v* PRs, not just this tag: a leftover
   # release/v<older> PR from a superseded bump must be closed, or two
   # competing release PRs race the same version namespace.
-  RELEASE_PRS=$("$GH" pr list --base "$BASE" --state open \
+  RELEASE_PRS=$(${NET_TO:+$NET_TO 120} "$GH" pr list --base "$BASE" --state open \
     --json headRefName,headRefOid,url --jq '.[] | select(.headRefName | startswith("release/v")) | .headRefName + " " + .headRefOid + " " + .url' 2>/dev/null || true)
   # Exact branch match - 'release/v1.2.1' is a PREFIX of
   # 'release/v1.2.10', so substring greps collide and would adopt or
@@ -576,15 +579,15 @@ else
     | awk -v t="release/$TAG" '!($1 == t || index($1, t "-r") == 1)' \
     | while read -r ob _osha ourl; do
     [ -n "$ob" ] || continue
-    "$GH" pr close "$ourl" --comment "superseded by release $TAG" >/dev/null 2>&1 || true
-    git push "$REMOTE" --delete "$ob" >/dev/null 2>&1 || true
+    ${NET_TO:+$NET_TO 120} "$GH" pr close "$ourl" --comment "superseded by release $TAG" >/dev/null 2>&1 || true
+    ${NET_TO:+$NET_TO 300} git push "$REMOTE" --delete "$ob" >/dev/null 2>&1 || true
   done
   if [ -n "$EXISTING_PR" ]; then
     EBR="${EXISTING_PR%% *}"
     REST="${EXISTING_PR#* }"
     ESHA="${REST%% *}"
     EURL="${REST##* }"
-    git fetch "$REMOTE" "$ESHA" >/dev/null 2>&1 || true
+    ${NET_TO:+$NET_TO 300} git fetch "$REMOTE" "$ESHA" >/dev/null 2>&1 || true
     # Tree-equality is the provenance check: identical trees mean the
     # open PR carries exactly this release content regardless of the
     # commit ancestry.
@@ -596,9 +599,9 @@ else
     # Stale content: replace the branch head with the regenerated
     # release so the existing PR converges instead of drifting.
     RBR="$EBR"
-    if ! git push "$REMOTE" --force-with-lease="refs/heads/$RBR:$ESHA" "HEAD:refs/heads/$RBR" >/dev/null 2>&1; then
+    if ! ${NET_TO:+$NET_TO 300} git push "$REMOTE" --force-with-lease="refs/heads/$RBR:$ESHA" "HEAD:refs/heads/$RBR" >/dev/null 2>&1; then
       RBR="release/$TAG-r$(git rev-parse --short HEAD 2>/dev/null || date +%s)"
-      git push "$REMOTE" "HEAD:$RBR" >/dev/null 2>&1 || \
+      ${NET_TO:+$NET_TO 300} git push "$REMOTE" "HEAD:$RBR" >/dev/null 2>&1 || \
         json_error permission_denied "release commit push rejected on $BASE and release branch - apply the release commit manually"
     else
       printf '{"status":"release_pr_opened","tag":"%s","sha":"%s","pr":"%s","message":"stale release PR updated to the regenerated release - merging it lands the release"}\n' \
@@ -606,14 +609,14 @@ else
       exit 0
     fi
   fi
-  if ! git push "$REMOTE" "HEAD:$RBR" >/dev/null 2>&1; then
+  if ! ${NET_TO:+$NET_TO 300} git push "$REMOTE" "HEAD:$RBR" >/dev/null 2>&1; then
     # A stale release branch from an earlier attempt blocks the push -
     # retry on a unique name rather than dying.
     RBR="release/$TAG-r$(git rev-parse --short HEAD 2>/dev/null || date +%s)"
-    git push "$REMOTE" "HEAD:$RBR" >/dev/null 2>&1 || \
+    ${NET_TO:+$NET_TO 300} git push "$REMOTE" "HEAD:$RBR" >/dev/null 2>&1 || \
       json_error permission_denied "release commit push rejected on $BASE and release branch - apply the release commit manually"
   fi
-  PR_URL=$("$GH" pr create --base "$BASE" --head "$RBR" \
+  PR_URL=$(${NET_TO:+$NET_TO 120} "$GH" pr create --base "$BASE" --head "$RBR" \
     --title "release: $TAG" \
     --body "Release-on-Merge commit for $TAG (version file + CHANGELOG fold + fragment consumption). Merging this lands the release commit; the next repo_release.sh run tags $TAG on the resulting head." 2>/dev/null || true)
   if [ -n "$PR_URL" ]; then
@@ -625,7 +628,7 @@ else
     # protection still blocks it, the release waits for a human or
     # the release workflow and the next repo_release.sh run tags the
     # landed merge commit.
-    AM_OUT=$("$GH" pr merge "$PR_URL" --squash --match-head-commit "$REL_SHA" 2>&1)
+    AM_OUT=$(${NET_TO:+$NET_TO 120} "$GH" pr merge "$PR_URL" --squash --match-head-commit "$REL_SHA" 2>&1)
     AM_RC=$?
     AUTO_FLAG=""
     [ $AM_RC -ne 0 ] && AUTO_FLAG=",\"merge_error\":$(python3 -I -c 'import json,sys;print(json.dumps(sys.argv[1][:300]))' "$AM_OUT")"

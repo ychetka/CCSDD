@@ -188,7 +188,7 @@ def inflight_clear(con, call_id):
     con.execute("DELETE FROM inflight WHERE call_id = ?", (call_id,))
 
 
-def inflight_reap_dead(con):
+def inflight_reap_dead(con, ttl=660):
     """Reap inflight rows whose pid no longer exists AND refund their
     quota in ONE BEGIN IMMEDIATE transaction. The row must be removed
     and the counters decremented atomically: a plain SELECT-then-
@@ -204,7 +204,11 @@ def inflight_reap_dead(con):
             # TTL first: pid reuse could put a live foreign process on
             # a dead caller's pid - a row older than call_timeout+60s
             # is an orphan regardless of os.kill(pid, 0) succeeding.
-            if now - (ts or 0) > 600:
+            # The caller passes call_timeout+60: a hardcoded floor
+            # shorter than the configured call timeout would reap the
+            # LIVE row of a slow legitimate call and refund its quota
+            # early (review_16 #6).
+            if now - (ts or 0) > ttl:
                 dead.append((call_id, keys_json)); continue
             try:
                 os.kill(pid, 0)

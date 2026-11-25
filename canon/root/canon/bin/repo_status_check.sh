@@ -21,9 +21,16 @@ PR="${1:?usage: repo_status_check.sh <pr_number>}"
 # Merge-context read: the merge identity binary, never the review
 # one - status reporting must not borrow reviewer credentials.
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+
+# Network discipline (review_16 #13): no forge/git call may hang a
+# gate slot forever - prompt-hangs die instantly via the env flags,
+# transport stalls die via `timeout` where the binary exists.
+export GIT_TERMINAL_PROMPT=0 GH_PROMPT_DISABLED=1
+export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=30
+NET_TO=$(command -v timeout || command -v gtimeout || true)
 GH_BIN="$("$CANON_DIR/bin/gh_id.sh" merge)"
 
-GH_OUT=$("$GH_BIN" pr view "$PR" --json statusCheckRollup,mergeable,headRefOid,author,reviewRequests 2>/dev/null) || {
+GH_OUT=$(${NET_TO:+$NET_TO 120} "$GH_BIN" pr view "$PR" --json statusCheckRollup,mergeable,headRefOid,author,reviewRequests 2>/dev/null) || {
   echo '{"status":"error","failure_class":"upstream_error","message":"gh pr view failed"}'
   exit 1
 }
@@ -35,7 +42,7 @@ GH_OUT=$("$GH_BIN" pr view "$PR" --json statusCheckRollup,mergeable,headRefOid,a
 REVIEWS_JSONL=$(mktemp "${TMPDIR:-/tmp}/ccsdd-reviews.XXXXXX")
 PR_FILES=$(mktemp "${TMPDIR:-/tmp}/ccsdd-prfiles.XXXXXX")
 trap 'rm -f "$REVIEWS_JSONL" "$PR_FILES"' EXIT
-"$GH_BIN" api "repos/{owner}/{repo}/pulls/${PR}/reviews?per_page=100" \
+${NET_TO:+$NET_TO 120} "$GH_BIN" api "repos/{owner}/{repo}/pulls/${PR}/reviews?per_page=100" \
   --paginate --jq '.[] | @json' > "$REVIEWS_JSONL" 2>/dev/null || {
   echo '{"status":"error","failure_class":"upstream_error","message":"reviews fetch failed"}'
   exit 1
@@ -44,7 +51,7 @@ trap 'rm -f "$REVIEWS_JSONL" "$PR_FILES"' EXIT
 # truncates at 100 nodes, so a .changes/ fragment landing as file
 # 101 of a large PR would report risk_high:false on a risk:high
 # delta. REST /pulls/<n>/files paginates fully.
-"$GH_BIN" api "repos/{owner}/{repo}/pulls/${PR}/files?per_page=100" \
+${NET_TO:+$NET_TO 120} "$GH_BIN" api "repos/{owner}/{repo}/pulls/${PR}/files?per_page=100" \
   --paginate --jq '.[].filename' > "$PR_FILES" 2>/dev/null || {
   echo '{"status":"error","failure_class":"upstream_error","message":"PR files fetch failed"}'
   exit 1
@@ -75,7 +82,8 @@ except Exception:
 # key:value only, same parser contract as issue_merge's FRAG_SCAN.
 # Fragment bodies come from the PR head via the contents API so the
 # report does not depend on the local checkout having the branch.
-RISK_HIGH=$(GH_OUT="$GH_OUT" GH_BIN="$GH_BIN" PR_FILES="$PR_FILES" python3 -I -c '
+RISK_HIGH=$(GH_OUT="$GH_OUT" GH_BIN="$GH_BIN" PR_FILES="$PR_FILES" \
+  CANON_DIR="$CANON_DIR" python3 -I -c '
 import json, os, re, subprocess, base64
 try:
     d = json.loads(os.environ["GH_OUT"])
@@ -98,31 +106,28 @@ for p in frags:
     if loc.returncode == 0:
         body = loc.stdout
     else:
-        out = subprocess.run(
-            [os.environ["GH_BIN"], "api",
-             "repos/{owner}/{repo}/contents/" + p + "?ref=" + head,
-             "--jq", ".content"],
-            capture_output=True, text=True)
+        try:
+            out = subprocess.run(
+                [os.environ["GH_BIN"], "api",
+                 "repos/{owner}/{repo}/contents/" + p + "?ref=" + head,
+                 "--jq", ".content"],
+                capture_output=True, text=True, timeout=120)
+        except subprocess.TimeoutExpired:
+            continue
         if out.returncode != 0:
             continue
         try:
             body = base64.b64decode(out.stdout.strip()).decode("utf-8", "replace")
         except Exception:
             continue
-    lines = body.splitlines()
-    start = 1 if lines and lines[0].strip() == "---" else 0
-    for ln in lines[start:]:
-        s = ln.strip()
-        if not s:
-            continue
-        if s == "---":
-            break
-        m = re.match(r"^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$", s)
-        if not m:
-            break
-        if m.group(1).lower() == "risk" and \
-                m.group(2).strip().strip('"').strip("'") == "high":
-            risk = True
+    # The canonical .changes front-zone parser - the inline copy used
+    # to end the scan at the first '#' comment inside the fence,
+    # silently dropping a later 'risk: high' (review_16 #8).
+    import sys as _s
+    _s.path.insert(0, os.path.join(os.environ.get("CANON_DIR") or "", "bin"))
+    from changes_parser import front_fields as _ff
+    if (_ff(body).get("risk") or "").lower() == "high":
+        risk = True
 print("yes" if risk else "no")' 2>/dev/null || echo no)
 
 GH_OUT="$GH_OUT" CFG="$CFG" RISK_HIGH="$RISK_HIGH" \

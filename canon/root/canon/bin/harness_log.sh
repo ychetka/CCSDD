@@ -48,7 +48,7 @@ LOCK="$LOG.lock"
 exec 9>"$LOCK"
 flock 9 || { echo "harness_log: cannot acquire lock" >&2; exit 1; }
 
-python3 -I - "$ITEM" "$CAT" "$AR" "$ER" "$DA" "$DE" "$MTU" "$OUT" "$NOTE" <<'PY' >> "$LOG"
+python3 -I - "$ITEM" "$CAT" "$AR" "$ER" "$DA" "$DE" "$MTU" "$OUT" "$NOTE" 9>&- <<'PY' >> "$LOG"
 import json, sys
 from datetime import datetime, timezone
 item, cat, ar, er, da, de, mtu, outcome, note = sys.argv[1:10]

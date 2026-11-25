@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# project_run.sh <check_name> [-- extra args...] - the ONLY way an
-# agent runs a project-declared command.
+# project_run.sh <check_name> - the ONLY way an agent runs a
+# project-declared command.
 #
 # Runtimes compile Exec() prefixes, and a prefix is a BROADENING
 # primitive: Exec(python3 -m pytest) also admits 'python3 -m pytest
@@ -22,7 +22,11 @@ set -euo pipefail
 CANON_DIR="$(cd "$(dirname "$0")/.." && pwd -P)"
 
 die() { echo "project_run: $*" >&2; exit 2; }
-[ $# -ge 1 ] || die "usage: project_run.sh <check_name> [-- extra args]"
+# Exactly one argument - the check name. Anything after it would
+# land on the declared argv's tail and smuggle interpreter flags
+# ('python3 -m pytest -o plugin=<evil>') around exec.deny - the very
+# hole this wrapper exists to close.
+[ $# -eq 1 ] || die "usage: project_run.sh <check_name>"
 CHECK="$1"; shift || true
 case "$CHECK" in
   *[!a-z0-9_-]*) die "invalid check name: $CHECK";;
@@ -59,21 +63,34 @@ case "$ARGV" in
 esac
 IFS=$'\t' read -r -a PARGV <<< "$ARGV"
 
-EXTRA=()
-while [ $# -gt 0 ]; do
-  case "$1" in --) shift; break;; esac
-  EXTRA+=("$1"); shift
-done
-
 # env -i whitelist (same contract as verify_worktree baseline):
 # project argv never inherits caller credentials or shell state.
+# PYTHONPATH/NODE_PATH are NOT forwarded - an inherited
+# PYTHONPATH=/tmp/evil shadows stdlib/site-packages under whatever
+# identity the check runs as.
+# PATH hygiene (same rule as gate_run/verify_worktree): a relative
+# segment or one resolving inside the workspace would exec a
+# planted python3/pytest the agent controls.
+TOP=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)
+CLEAN_PATH=$(TOP="$TOP" python3 -I -c 'import os
+top = os.path.realpath(os.environ["TOP"])
+out = []
+for seg in os.environ.get("PATH", "").split(os.pathsep):
+    if not seg or not os.path.isabs(seg):
+        continue
+    r = os.path.realpath(seg)
+    try:
+        if os.path.commonpath([r, top]) == top:
+            continue
+    except ValueError:
+        pass
+    out.append(seg)
+print(os.pathsep.join(out))')
 exec env -i \
-  "PATH=${PATH:-/usr/bin:/bin}" \
+  "PATH=$CLEAN_PATH" \
   "HOME=${HOME:-/tmp}" \
   "TMPDIR=${TMPDIR:-/tmp}" \
   "LANG=${LANG:-C.UTF-8}" \
   "LC_ALL=${LC_ALL:-$LANG}" \
   "USER=${USER:-agent}" \
-  ${PYTHONPATH:+"PYTHONPATH=$PYTHONPATH"} \
-  ${NODE_PATH:+"NODE_PATH=$NODE_PATH"} \
-  "${PARGV[@]}" ${EXTRA[@]+"${EXTRA[@]}"}
+  "${PARGV[@]}"

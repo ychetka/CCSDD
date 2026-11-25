@@ -22,6 +22,13 @@ die() { echo "review_worktree: $1" >&2; exit 2; }
 # `rev-parse --show-toplevel` (nested workspace <ws>/canon + <ws>/code
 # puts the repo root beside canon, not around it).
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+
+# Network discipline (review_16 #13): no forge/git call may hang a
+# gate slot forever - prompt-hangs die instantly via the env flags,
+# transport stalls die via `timeout` where the binary exists.
+export GIT_TERMINAL_PROMPT=0 GH_PROMPT_DISABLED=1
+export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=30
+NET_TO=$(command -v timeout || command -v gtimeout || true)
 TOP=$(git rev-parse --show-toplevel 2>/dev/null \
       || git -C code rev-parse --show-toplevel 2>/dev/null \
       || git -C "$CANON_DIR/../code" rev-parse --show-toplevel 2>/dev/null) \
@@ -62,7 +69,7 @@ case "$CMD" in
   open)
     if [ -z "$SHA" ]; then
       GH_BIN="$("$CANON_DIR/bin/gh_id.sh" review)"; export GH_BIN
-      SHA="$("$GH_BIN" pr view "$PR" --json headRefOid -q .headRefOid 2>/dev/null)" \
+      SHA="$(${NET_TO:+$NET_TO 120} "$GH_BIN" pr view "$PR" --json headRefOid -q .headRefOid 2>/dev/null)" \
         || die "cannot resolve PR head sha for #$PR"
     fi
     [[ "$SHA" =~ ^[0-9a-fA-F]{40}$ ]] || die "sha must be 40 hex, got: ${SHA:-<none>}"
@@ -70,8 +77,8 @@ case "$CMD" in
     # fetch it before asking for the worktree.
     if ! git cat-file -e "$SHA^{commit}" 2>/dev/null; then
       [ -n "$REMOTE" ] || die "commit $SHA not local and no remote configured"
-      git fetch "$REMOTE" "pull/$PR/head" >/dev/null 2>&1 \
-        || git fetch "$REMOTE" "$SHA" >/dev/null 2>&1 \
+      ${NET_TO:+$NET_TO 300} git fetch "$REMOTE" "pull/$PR/head" >/dev/null 2>&1 \
+        || ${NET_TO:+$NET_TO 300} git fetch "$REMOTE" "$SHA" >/dev/null 2>&1 \
         || die "cannot fetch $SHA for PR #$PR"
       git cat-file -e "$SHA^{commit}" 2>/dev/null \
         || die "commit $SHA still absent after fetch"

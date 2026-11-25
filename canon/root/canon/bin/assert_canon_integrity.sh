@@ -27,6 +27,17 @@ try:
 except Exception:
     sys.stderr.write("canon_manifest.json unreadable - integrity unknown\n")
     sys.exit(1)
+if not isinstance(sha, dict) or not sha:
+    # An empty sha256 table verifies nothing - the loop below would
+    # pass vacuously on {"sha256": {}}.
+    sys.stderr.write("canon_manifest.json sha256 table empty - refuse\n")
+    sys.exit(1)
+files = mf.get("files")
+if files is not None and (
+        not isinstance(files, list)
+        or set(str(f) for f in files) != set(sha.keys())):
+    sys.stderr.write("canon_manifest.json files/sha256 mismatch - refuse\n")
+    sys.exit(1)
 bad = []
 # Verify EVERY manifest-covered file, not a script subset: a pinned
 # spec/agent/config edit is as much canon drift as a rewritten gate,
@@ -48,6 +59,50 @@ for rel, want in sorted(sha.items()):
         continue
     if got != want:
         bad.append(rel)
+# Adapter hooks (project-installed version_source.sh / baseline_env.sh
+# / canon/tools/*) are pinned separately in adapters_sha256: merge
+# paths execute them under gate creds, so a rewritten hook is as
+# fatal as a rewritten gate script.
+pinned = mf.get("adapters_sha256") or {}
+if not isinstance(pinned, dict):
+    sys.stderr.write("canon_manifest.json adapters_sha256 malformed - refuse\n")
+    sys.exit(1)
+for rel, want in sorted(pinned.items()):
+    if not isinstance(rel, str) or not rel.startswith("canon/"):
+        bad.append(rel + " (adapter path escape)")
+        continue
+    p = os.path.normpath(os.path.join(canon_dir, rel[len("canon/"):]))
+    if not p.startswith(canon_dir.rstrip("/") + "/"):
+        bad.append(rel + " (adapter path escape)")
+        continue
+    try:
+        got = hashlib.sha256(open(p, "rb").read()).hexdigest()
+    except OSError:
+        bad.append(rel + " (adapter unreadable)")
+        continue
+    if got != want:
+        bad.append(rel + " (adapter drift)")
+# A hook that exists on disk but is NOT pinned executes unsigned:
+# refuse rather than trust it.
+HOOKS = ("version_source.sh", "baseline_env.sh")
+unsigned = []
+for h in HOOKS:
+    rel = "canon/" + h
+    if rel not in pinned and rel not in sha and os.path.exists(
+            os.path.join(canon_dir, h)):
+        unsigned.append(rel)
+tools_dir = os.path.join(canon_dir, "tools")
+if os.path.isdir(tools_dir):
+    for dp, _dn, fns in os.walk(tools_dir):
+        for name in sorted(fns):
+            rel = "canon/" + os.path.relpath(
+                os.path.join(dp, name), canon_dir)
+            if rel not in pinned and rel not in sha:
+                unsigned.append(rel)
+if unsigned:
+    sys.stderr.write("unsigned adapter hooks present (not in "
+                     "adapters_sha256): " + ", ".join(unsigned) + "\n")
+    sys.exit(1)
 if bad:
     sys.stderr.write("canon files differ from canon_manifest sha256: "
                      + ", ".join(bad[:12]) + "\n")

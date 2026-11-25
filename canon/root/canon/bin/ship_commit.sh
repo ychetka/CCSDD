@@ -216,6 +216,14 @@ if [ "$CUR_BR" = "HEAD" ]; then
   echo "(no branch name to bind a scope whitelist to - check out the item branch first)" >&2
   exit 2
 fi
+# release/v* branches are produced exclusively by repo_release.sh in
+# an isolated worktree - a ship_commit here would skip the
+# task-branch whitelist regex and pass scope-free (review_16 #16).
+if [[ "$CUR_BR" =~ ^release/v[0-9]+\.[0-9]+\.[0-9]+(-r[0-9a-zA-Z]+)?$ ]]; then
+  echo "SCOPE_GATE: refusing to commit on release branch '$CUR_BR'" >&2
+  echo "(release commits are created by repo_release.sh only - a hand commit here bypasses the whitelist gate)" >&2
+  exit 2
+fi
 if [[ "$CUR_BR" =~ ^(epic_)?issue_[0-9]+- ]] \
     && [ ! -f "$WL" ] && [ "$wl_in_index" -eq 0 ] && [ "$wl_in_head" -eq 0 ]; then
   echo "SCOPE_GATE: task branch '$CUR_BR' has no active scope whitelist" >&2

@@ -4,6 +4,13 @@
 # cited authorization).
 set -uo pipefail
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+
+# Network discipline (review_16 #13): no forge/git call may hang a
+# gate slot forever - prompt-hangs die instantly via the env flags,
+# transport stalls die via `timeout` where the binary exists.
+export GIT_TERMINAL_PROMPT=0 GH_PROMPT_DISABLED=1
+export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=30
+NET_TO=$(command -v timeout || command -v gtimeout || true)
 # Gate 0 (review_15 #5): the verify path must never run under a
 # workspace-tampered canon - prove manifest hashes + the external
 # stamp before trusting any $CANON_DIR script or adapter hook.
@@ -152,7 +159,7 @@ if [ -n "$ISSUE_LIST" ] || [ -n "$VERIFY_PR" ]; then
   PR_ARGS=(pr view)
   [ -n "$VERIFY_PR" ] && PR_ARGS+=("$VERIFY_PR")
   PR_ARGS+=(--json body,state,headRefName)
-  PR_JSON=$("$GH" "${PR_ARGS[@]}" 2>"$PR_ERR")
+  PR_JSON=$(${NET_TO:+$NET_TO 120} "$GH" "${PR_ARGS[@]}" 2>"$PR_ERR")
   PR_RC=$?
   PR_BODY="" PR_STATE="" PR_HEAD=""
   if [ $PR_RC -eq 0 ]; then
@@ -177,7 +184,7 @@ if [ -n "$ISSUE_LIST" ] || [ -n "$VERIFY_PR" ]; then
     # --json number: a plain `gh issue view` queries the deprecated
     # projectCards field and exits 1 on every issue (gh 2.46+), which
     # this check would misread as "not found"
-    "$GH" issue view "$ISSUE_NUM" --json number >/dev/null 2>&1 \
+    ${NET_TO:+$NET_TO 120} "$GH" issue view "$ISSUE_NUM" --json number >/dev/null 2>&1 \
       && pass "issue #$ISSUE_NUM exists" \
       || fail "issue #$ISSUE_NUM not found" \
               "create it via repository-agent"
@@ -501,7 +508,7 @@ if [ -n "$ISSUE_N" ] && [ -n "$BASE" ]; then
     git -c core.quotepath=false diff --name-only "$BASE"...HEAD 2>/dev/null \
       | grep -qx 'CHANGELOG.md' && EXEMPT="changelog-diff"
     if [ -z "$EXEMPT" ] && [ -n "$VERIFY_PR" ] && [ "${VERIFY_PR:-0}" != "0" ]; then
-      "$GH" pr view "$VERIFY_PR" --json labels --jq '.labels[].name' 2>/dev/null \
+      ${NET_TO:+$NET_TO 120} "$GH" pr view "$VERIFY_PR" --json labels --jq '.labels[].name' 2>/dev/null \
         | grep -qx 'no-changes-entry' && EXEMPT="no-changes-entry label"
     fi
     [ -n "$EXEMPT" ] \
@@ -626,13 +633,19 @@ for gid in os.environ["GWT_IDS"].split():
         in_ml = set()
         ml_state = None
         for _i, _l in enumerate(body):
+            # Comment tails are stripped before token counting: a lone
+            # backtick in '// see `foo` here' or '# uses `x`' would
+            # otherwise flip ml_state on and mark the REST of the file
+            # as string content, disabling boundary detection
+            # (review_16 #14). (?<!:) keeps 'http://' intact.
+            _code = re.split(r"(?<!:)//|#", _l, 1)[0]
             if ml_state:
                 in_ml.add(_i)
-                if ml_state in _l:
+                if ml_state in _code:
                     ml_state = None
                 continue
             for _tok in ("'''", '"""', "`"):
-                if _l.count(_tok) % 2 == 1:
+                if _code.count(_tok) % 2 == 1:
                     ml_state = _tok
                     break
         # Walk UP from the id to the enclosing test definition. Any

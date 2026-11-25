@@ -249,8 +249,23 @@ except Exception:
         anchors |= set(re.findall(r"\{#([^}\s]+)\}", body))
         return {a.lower() for a in anchors}
 
-def anchor_resolves(path, anchor):
+def case_isfile(path):
+    """os.path.isfile folds case on APFS/NTFS (macOS/Windows default)
+    while git object names are byte-exact - a 'docs/specs/auth.md'
+    directive target would resolve against 'Auth.md' on disk but
+    miss in 'git show base:docs/specs/auth.md'. Verify the basename
+    against the real directory listing so both worlds agree
+    (review_16 #11)."""
     if not os.path.isfile(path):
+        return False
+    d, name = os.path.split(path)
+    try:
+        return name in os.listdir(d or ".")
+    except OSError:
+        return False
+
+def anchor_resolves(path, anchor):
+    if not case_isfile(path):
         return False
     body = strip_fenced(open(path, encoding="utf-8", errors="replace").read())
     return anchor.lower() in collect_anchors(body)
@@ -398,7 +413,7 @@ for rel in frags:
             if kind in ("adds", "modifies"):
                 if removed_in_delta(norm_fp, anchor or None):
                     continue  # removed later in the same delta
-                if not os.path.isfile(p):
+                if not case_isfile(p):
                     bad.append(f"{name}: {kind} target missing: {t}")
                 elif os.path.isdir(p):
                     bad.append(f"{name}: {kind} target is a directory: {t}")

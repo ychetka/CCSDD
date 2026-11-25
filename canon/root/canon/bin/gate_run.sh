@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # gate_run.sh - mechanical floor runner with execution attestation.
 #
-#   gate_run.sh run    --check <name> --candidate <sha40> [-- <argv>...]
+#   gate_run.sh run    --check <name> --candidate <sha40>
 #   gate_run.sh status --check <name> --candidate <sha40>
 #   gate_run.sh verify --check <name> --candidate <sha40>
 #
@@ -34,7 +34,7 @@ JOURNAL="$CANON_DIR/gate_runs.jsonl"
 PJ="$CANON_DIR/project.json"
 
 usage() {
-  echo "usage: gate_run.sh run --check <name> --candidate <sha40> [-- <argv>...]" >&2
+  echo "usage: gate_run.sh run --check <name> --candidate <sha40>" >&2
   echo "       gate_run.sh status --check <name> --candidate <sha40>" >&2
   echo "       gate_run.sh verify --check <name> --candidate <sha40>" >&2
   exit 2
@@ -42,12 +42,11 @@ usage() {
 [ $# -ge 1 ] || usage
 CMD=$1; shift
 
-CHECK=""; CAND=""; EXTRA=()
+CHECK=""; CAND=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --check) CHECK=$2; shift 2;;
     --candidate) CAND=$2; shift 2;;
-    --) shift; EXTRA=("$@"); break;;
     *) usage;;
   esac
 done
@@ -300,13 +299,13 @@ if [ "$RUNNER" = canon ]; then
     cat "$DEPLOYED" > "$SCRIPT_TMP"
   fi
   CANON_DIR="$CANON_DIR" BASE="$CHILD_BASE" BASE_REF="$BASE_REF" \
-    "${CHECK_ENV[@]}" bash "$SCRIPT_TMP" ${EXTRA[@]+"${EXTRA[@]}"} > "$OUT" 2>&1
+    "${CHECK_ENV[@]}" bash "$SCRIPT_TMP" > "$OUT" 2>&1
   RC=$?
 elif [ "$OPTIONAL" = "yes" ]; then
   echo "SKIP: $CHECK optional and unconfigured" > "$OUT"; RC=0
 else
   IFS=$'\t' read -r -a PARGV <<< "$ARGV"
-  "${CHECK_ENV[@]}" "${PARGV[@]}" ${EXTRA[@]+"${EXTRA[@]}"} > "$OUT" 2>&1
+  "${CHECK_ENV[@]}" "${PARGV[@]}" > "$OUT" 2>&1
   RC=$?
 fi
 OUT_SHA=$($SHA256_BIN "$OUT" | cut -d' ' -f1)
@@ -319,7 +318,7 @@ flock 9 || { echo "gate_run: cannot acquire lock" >&2; rm -f "$OUT" "$SCRIPT_TMP
 CANON_DIR="$CANON_DIR" OUT_SHA="$OUT_SHA" RC="$RC" CHECK="$CHECK" CAND="$CAND" \
   RUNNER="$RUNNER" BASE_SHA="$BASE_SHA" BASE_REF="$BASE_REF" \
   BASE_HEAD="$BASE_HEAD" ARGV="${ARGV:-}" \
-  NOTE="${NOTE:-}" python3 -I - <<'PY' >> "$JOURNAL"
+  NOTE="${NOTE:-}" python3 -I - 9>&- <<'PY' >> "$JOURNAL"
 import datetime, hashlib, json, os, sys
 rec = {"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
        "check": os.environ["CHECK"],

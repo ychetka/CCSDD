@@ -20,6 +20,10 @@
 # not accept `glab`.
 set -uo pipefail
 API_BIN="${API_BIN:-glab}"
+# Network discipline (review_16 #13): prompt-hangs die instantly;
+# transport stalls die via `timeout` where the binary exists.
+export GIT_TERMINAL_PROMPT=0 GH_PROMPT_DISABLED=1
+NET_TO=$(command -v timeout || command -v gtimeout || true)
 
 usage() {
   echo "usage: gitlab.sh signal_set --sha <s> --context <c> --state <success|failure|pending> --description <d> [--url <u>]" >&2
@@ -44,7 +48,7 @@ if [ "$OP" = "signal_set" ]; then
   case "$ST" in success|failure|pending) ;; *) echo "bad state" >&2; exit 2;; esac
   ARGS=(--form "state=$(gl_state "$ST")" --form "name=$CTX" --form "description=${DSC:0:255}")
   [ -n "$URL" ] && ARGS+=(--form "target_url=$URL")
-  "$API_BIN" api -X POST "projects/:id/statuses/$SHA" "${ARGS[@]}" >/dev/null || exit 1
+  ${NET_TO:+$NET_TO 120} "$API_BIN" api -X POST "projects/:id/statuses/$SHA" "${ARGS[@]}" >/dev/null || exit 1
   exit 0
 fi
 
@@ -56,7 +60,7 @@ if [ "$OP" = "signal_get" ]; then
   # Read endpoint differs from the write endpoint: statuses are
   # listed under repository/commits. --paginate + multi-document
   # decode, same as the GitHub adapter.
-  OUT=$("$API_BIN" api --paginate \
+  OUT=$(${NET_TO:+$NET_TO 120} "$API_BIN" api --paginate \
         "projects/:id/repository/commits/$SHA/statuses" 2>/dev/null) || exit 1
   OUT="$OUT" python3 - <<'PY'
 import json, os
@@ -99,7 +103,7 @@ if [ "$OP" = "finding_post" ]; then
   BF="$BF" BODY_JSON="$BODY_JSON" python3 -c 'import json,os
 json.dump({"body": open(os.environ["BF"], encoding="utf-8").read()},
           open(os.environ["BODY_JSON"], "w", encoding="utf-8"))'
-  "$API_BIN" api -X POST "projects/:id/merge_requests/$PR/notes" \
+  ${NET_TO:+$NET_TO 120} "$API_BIN" api -X POST "projects/:id/merge_requests/$PR/notes" \
     --input "$BODY_JSON" --jq '.id' 2>/dev/null | python3 -c 'import json,sys
 i = sys.stdin.read().strip()
 print(json.dumps({"url": ("note:" + i) if i else ""}))'

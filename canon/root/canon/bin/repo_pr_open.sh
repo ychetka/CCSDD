@@ -5,6 +5,21 @@
 # Output JSON: {pr_url, pr_number, status}
 set -uo pipefail
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+
+# Network discipline (review_16 #13): no forge/git call may hang a
+# gate slot forever - prompt-hangs die instantly via the env flags,
+# transport stalls die via `timeout` where the binary exists.
+export GIT_TERMINAL_PROMPT=0 GH_PROMPT_DISABLED=1
+export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=30
+NET_TO=$(command -v timeout || command -v gtimeout || true)
+# Gate 0 (review_15 #5 / review_16 #12): never run under a
+# workspace-tampered canon - prove manifest hashes + the external
+# stamp before trusting any $CANON_DIR script or adapter hook.
+if [ -f "$CANON_DIR/canon_manifest.json" ]; then
+  [ -x "$CANON_DIR/bin/assert_canon_integrity.sh" ] \
+    || { echo "GATE_INTEGRITY: assert_canon_integrity.sh missing under a pinned manifest" >&2; exit 1; }
+  "$CANON_DIR/bin/assert_canon_integrity.sh" || exit 1
+fi
 TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
 cd "$TOP"
 
@@ -25,7 +40,7 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$BRANCH" ] && [ -n "$TITLE" ] || {
   echo '{"status":"error","failure_class":"malformed_input","message":"--branch and --title required"}'; exit 2; }
-[ -n "$BASE" ] || BASE=$("$GH" repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || echo main)
+[ -n "$BASE" ] || BASE=$(${NET_TO:+$NET_TO 120} "$GH" repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || echo main)
 [[ "$BASE" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || {
   echo '{"status":"error","failure_class":"malformed_input","message":"unsafe --base ref"}'; exit 2; }
 if [ -n "$ISSUE" ]; then
@@ -112,7 +127,7 @@ print(json.dumps({"status":"error","failure_class":"gate_blocked","violations":v
   exit 2
 fi
 
-URL=$("$GH" pr create --head "$BRANCH" --base "$BASE" --title "$TITLE" --body "$BODY" 2>&1) || {
+URL=$(${NET_TO:+$NET_TO 120} "$GH" pr create --head "$BRANCH" --base "$BASE" --title "$TITLE" --body "$BODY" 2>&1) || {
   python3 -I -c 'import json,sys;print(json.dumps({"status":"error","failure_class":"upstream_error","message":sys.argv[1]}))' "$URL"
   exit 1
 }

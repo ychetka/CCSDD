@@ -11,6 +11,13 @@ set -uo pipefail
 # nested workspaces the git top may be a subdir like code/ while
 # canon/ lives at the workspace root.
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+
+# Network discipline (review_16 #13): no forge/git call may hang a
+# gate slot forever - prompt-hangs die instantly via the env flags,
+# transport stalls die via `timeout` where the binary exists.
+export GIT_TERMINAL_PROMPT=0 GH_PROMPT_DISABLED=1
+export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=30
+NET_TO=$(command -v timeout || command -v gtimeout || true)
 # Gate 0 (review_15 #5): the merge path must never run under a
 # workspace-tampered canon - prove manifest hashes + the external
 # stamp before trusting any $CANON_DIR script or adapter hook.
@@ -41,7 +48,7 @@ GH=$("$CANON_DIR/bin/gh_id.sh" merge)
 command -v "$GH" >/dev/null 2>&1 || json_error upstream_error "github cli '$GH' not found on PATH"
 
 INFO_ERR=$(mktemp)
-INFO=$("$GH" pr view "$PR" --json headRefName 2>"$INFO_ERR") || {
+INFO=$(${NET_TO:+$NET_TO 120} "$GH" pr view "$PR" --json headRefName 2>"$INFO_ERR") || {
   json_error upstream_error "$(cat "$INFO_ERR" 2>/dev/null | head -c 300)"
 }
 rm -f "$INFO_ERR"

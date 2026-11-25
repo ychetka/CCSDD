@@ -15,6 +15,21 @@
 # Output JSON: {pr_number, event, status}
 set -uo pipefail
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+
+# Network discipline (review_16 #13): no forge/git call may hang a
+# gate slot forever - prompt-hangs die instantly via the env flags,
+# transport stalls die via `timeout` where the binary exists.
+export GIT_TERMINAL_PROMPT=0 GH_PROMPT_DISABLED=1
+export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=30
+NET_TO=$(command -v timeout || command -v gtimeout || true)
+# Gate 0 (review_15 #5 / review_16 #12): never run under a
+# workspace-tampered canon - prove manifest hashes + the external
+# stamp before trusting any $CANON_DIR script or adapter hook.
+if [ -f "$CANON_DIR/canon_manifest.json" ]; then
+  [ -x "$CANON_DIR/bin/assert_canon_integrity.sh" ] \
+    || { echo "GATE_INTEGRITY: assert_canon_integrity.sh missing under a pinned manifest" >&2; exit 1; }
+  "$CANON_DIR/bin/assert_canon_integrity.sh" || exit 1
+fi
 TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
 cd -P "$TOP"
 GH_BIN="${GH_BIN:-gh}"
@@ -101,7 +116,7 @@ if [ -n "$JFILE" ]; then
   # is always pinned to it (caller commit_id must match; an absent
   # one is filled in) - a review bound to a stale/arbitrary commit
   # does not count at the merge gate.
-  HEAD_SHA=$("$GH_BIN" pr view "$PR" --json headRefOid --jq .headRefOid 2>/dev/null)
+  HEAD_SHA=$(${NET_TO:+$NET_TO 120} "$GH_BIN" pr view "$PR" --json headRefOid --jq .headRefOid 2>/dev/null)
   [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {
     echo '{"status":"error","failure_class":"upstream_error","message":"cannot resolve PR head sha"}'; exit 1; }
   # Read the payload once into memory (no TOCTOU between validation
@@ -220,7 +235,7 @@ with open(os.environ["SANIT"], "w", encoding="utf-8") as f:
 print("hygiene-ok")
 PY
     echo '{"status":"error","failure_class":"gate_blocked","message":"review.json invalid or failed hygiene"}'; exit 2; }
-  ERR=$("$GH_BIN" api -X POST "repos/{owner}/{repo}/pulls/$PR/reviews" --input "$SANIT" 2>&1)
+  ERR=$(${NET_TO:+$NET_TO 120} "$GH_BIN" api -X POST "repos/{owner}/{repo}/pulls/$PR/reviews" --input "$SANIT" 2>&1)
   rc=$?
   if [ $rc -eq 0 ]; then
     python3 -I -c 'import json,sys;print(json.dumps({"pr_number":int(sys.argv[1]),"event":"review","status":"ok"}))' "$PR"
@@ -277,14 +292,14 @@ if re.search(r"\**\[(?:CRITICAL|BLOCKER|UNCERTAIN)\]\**", b, re.I) or \
     sys.exit(2)
 PY
 fi
-HEAD_SHA=$("$GH_BIN" pr view "$PR" --json headRefOid --jq .headRefOid 2>/dev/null)
+HEAD_SHA=$(${NET_TO:+$NET_TO 120} "$GH_BIN" pr view "$PR" --json headRefOid --jq .headRefOid 2>/dev/null)
 [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {
   echo '{"status":"error","failure_class":"upstream_error","message":"cannot resolve PR head sha"}'; exit 1; }
 PAYLOAD=$(EVENT="$GHEVENT" BODY="$BODY" HEAD_SHA="$HEAD_SHA" python3 -I -c 'import json,os
 p = {"event": os.environ["EVENT"], "commit_id": os.environ["HEAD_SHA"]}
 if os.environ.get("BODY"): p["body"] = os.environ["BODY"]
 print(json.dumps(p))')
-ERR=$(printf '%s' "$PAYLOAD" | "$GH_BIN" api -X POST "repos/{owner}/{repo}/pulls/$PR/reviews" --input - 2>&1)
+ERR=$(printf '%s' "$PAYLOAD" | ${NET_TO:+$NET_TO 120} "$GH_BIN" api -X POST "repos/{owner}/{repo}/pulls/$PR/reviews" --input - 2>&1)
 rc=$?
 if [ $rc -eq 0 ]; then
   python3 -I -c 'import json,sys;print(json.dumps({"pr_number":int(sys.argv[1]),"event":sys.argv[2],"status":"ok"}))' "$PR" "$EVENT"

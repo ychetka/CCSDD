@@ -4,6 +4,10 @@
 # findings = PR issue comments. Env: API_BIN (allowlisted gh basename).
 set -uo pipefail
 API_BIN="${API_BIN:-gh}"
+# Network discipline (review_16 #13): prompt-hangs die instantly;
+# transport stalls die via `timeout` where the binary exists.
+export GIT_TERMINAL_PROMPT=0 GH_PROMPT_DISABLED=1
+NET_TO=$(command -v timeout || command -v gtimeout || true)
 
 usage() {
   echo "usage: github.sh signal_set --sha <s> --context <c> --state <success|failure|pending> --description <d> [--url <u>]" >&2
@@ -25,7 +29,7 @@ if [ "$OP" = "signal_set" ]; then
   case "$ST" in success|failure|pending) ;; *) echo "bad state" >&2; exit 2;; esac
   ARGS=(-f "state=$ST" -f "context=$CTX" -f "description=${DSC:0:140}")
   [ -n "$URL" ] && ARGS+=(-f "target_url=$URL")
-  "$API_BIN" api -X POST "repos/{owner}/{repo}/statuses/$SHA" "${ARGS[@]}" >/dev/null || exit 1
+  ${NET_TO:+$NET_TO 120} "$API_BIN" api -X POST "repos/{owner}/{repo}/statuses/$SHA" "${ARGS[@]}" >/dev/null || exit 1
   exit 0
 fi
 
@@ -37,7 +41,7 @@ if [ "$OP" = "signal_get" ]; then
   # --paginate: a busy sha can exceed one page of statuses;
   # concatenated pages are separate JSON documents, decoded via
   # raw_decode - a truncated read would silently miss a domain.
-  OUT=$("$API_BIN" api --paginate "repos/{owner}/{repo}/commits/$SHA/status" 2>/dev/null) || exit 1
+  OUT=$(${NET_TO:+$NET_TO 120} "$API_BIN" api --paginate "repos/{owner}/{repo}/commits/$SHA/status" 2>/dev/null) || exit 1
   OUT="$OUT" python3 - <<'PY'
 import json, os, sys
 raw = os.environ["OUT"]
@@ -72,7 +76,7 @@ if [ "$OP" = "finding_post" ]; then
     case "$1" in --pr) PR=$2;; --body-file) BF=$2;; *) usage;; esac; shift 2
   done
   [ -n "$PR" ] && [ -f "$BF" ] || usage
-  "$API_BIN" api -X POST "repos/{owner}/{repo}/issues/$PR/comments" \
+  ${NET_TO:+$NET_TO 120} "$API_BIN" api -X POST "repos/{owner}/{repo}/issues/$PR/comments" \
     -F "body=@$BF" --jq '.html_url' 2>/dev/null | python3 -c 'import json,sys
 u = sys.stdin.read().strip()
 print(json.dumps({"url": u}))'

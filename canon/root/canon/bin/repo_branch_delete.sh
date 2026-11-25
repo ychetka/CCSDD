@@ -7,6 +7,13 @@
 # Output JSON: {branch, deleted, status}
 set -uo pipefail
 CANON_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+
+# Network discipline (review_16 #13): no forge/git call may hang a
+# gate slot forever - prompt-hangs die instantly via the env flags,
+# transport stalls die via `timeout` where the binary exists.
+export GIT_TERMINAL_PROMPT=0 GH_PROMPT_DISABLED=1
+export GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=30
+NET_TO=$(command -v timeout || command -v gtimeout || true)
 TOP=$(git rev-parse --show-toplevel 2>/dev/null || git -C code rev-parse --show-toplevel 2>/dev/null) || { echo "not a git repo" >&2; exit 1; }
 cd "$TOP"
 
@@ -28,7 +35,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-BASE=$("$GH" repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || echo main)
+BASE=$(${NET_TO:+$NET_TO 120} "$GH" repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || echo main)
 if [ "$BRANCH" = "$BASE" ] || [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
   echo '{"status":"error","failure_class":"gate_blocked","message":"refusing to delete base branch"}'
   exit 2
@@ -53,11 +60,11 @@ fi
 DELETED=()
 REMOTE_ERR=""
 if [ "$SCOPE" != "local" ] && [ -n "${REMOTE:-}" ]; then
-  if git ls-remote --exit-code --heads "$REMOTE" "$BRANCH" >/dev/null 2>&1; then
-    PUSH_ERR=$(git push "$REMOTE" --delete "$BRANCH" 2>&1) && {
+  if ${NET_TO:+$NET_TO 300} git ls-remote --exit-code --heads "$REMOTE" "$BRANCH" >/dev/null 2>&1; then
+    PUSH_ERR=$(${NET_TO:+$NET_TO 300} git push "$REMOTE" --delete "$BRANCH" 2>&1) && {
       # verify the remote ref is actually gone - a swallowed delete
       # must not report as deleted
-      if git ls-remote --exit-code --heads "$REMOTE" "$BRANCH" >/dev/null 2>&1; then
+      if ${NET_TO:+$NET_TO 300} git ls-remote --exit-code --heads "$REMOTE" "$BRANCH" >/dev/null 2>&1; then
         REMOTE_ERR="remote delete accepted but branch still present"
       else
         DELETED+=("remote")
