@@ -1,10 +1,10 @@
-# CCSDD Documentation / Документация
+# CCSDD — Committee Cycle Spec-Driven Development
+
+Multi-agent software delivery governed by specification, contracts and
+signed human gates — English is the primary documentation language.
 
 The documentation set ships in two languages; each language folder is
 self-contained (docs + diagrams).
-
-Документация поставляется на двух языках; каждая языковая папка
-самодостаточна (документы + схемы).
 
 ## English — `docs/en/`
 
@@ -18,40 +18,35 @@ self-contained (docs + diagrams).
     → implementation → assembly → release, gates and escalation loops.
   - [cycle structure](docs/en/diagrams/cycle_structure.svg) — committees,
     roles, boundaries, artifacts.
+  - [code design](docs/en/diagrams/code_design.svg) — canon component map:
+    Gate 0, exec wrappers, verification gates, merge/release core.
   - `.mmd` sources alongside every `.svg` (edit the source, re-render
     with `mmdc`).
 
-## Русский — `docs/ru/`
+## Russian (second language) — `docs/ru/`
 
-- [README](docs/ru/README.md) — обзор продукта, укладка, быстрый старт,
-  шаги деплоя, адаптеры, гейты человека.
-- [methodology](docs/ru/methodology.md) — что такое CCSDD, решаемая
-  задача, базовые примитивы, карта наследования (SDD, OpenSpec, SDLC,
-  Agile, GitOps, SLSA, maker–checker), что сознательно не взято.
+Russian is the secondary documentation language; it mirrors `docs/en/`
+one-to-one and is not independently versioned.
+
+- [README](docs/ru/README.md) — product overview, layout, quick start,
+  deploy steps, adapters, human gates (in Russian).
+- [methodology](docs/ru/methodology.md) — what CCSDD is, the problem it
+  solves, core primitives, inheritance map, what we deliberately reject
+  (in Russian).
 - diagrams/
-  - [жизненный цикл пункта](docs/ru/diagrams/item_lifecycle.svg) — план →
-    контракт → имплементация → сборка → релиз, гейты и петли эскалаций.
-  - [структура цикла](docs/ru/diagrams/cycle_structure.svg) — комитеты,
-    роли, границы, артефакты.
-  - рядом с каждым `.svg` лежит исходник `.mmd` (править источник,
-    перерендеривать через `mmdc`).
+  - [item lifecycle](docs/ru/diagrams/item_lifecycle.svg) — the pipeline
+    stages, gates and escalation loops.
+  - [cycle structure](docs/ru/diagrams/cycle_structure.svg) — committees,
+    roles, boundaries, artifacts.
+  - [code design](docs/ru/diagrams/code_design.svg) — canon component map.
+  - `.mmd` sources alongside every `.svg`.
 
-## Conventions / Конвенции
+## Conventions
 
-- `👨‍💻` — human gate / гейт человека; `»` — escalation / эскалация;
-  `✕` — forced stop / принудительная остановка.
-- Dotted arrows ending at `👨‍💻` = the decision is made by the human at
-  that point / Пунктирные стрелки в `👨‍💻` = в этом месте решение
-  принимает человек.
-- Mermaid `.mmd` sources are authoritative; `.svg` are generated.
-  Render: `mmdc -i <mmd> -o <svg>` then optionally
-  `python3 svg_legend.py <svg>` (injects the table legend below the
-  diagram; idempotent). `svg_legend.py` is an optional author/CI-side
-  helper that lives at the *development* repository root
-  (`ai_controller_2/svg_legend.py`) — it is not tracked inside this
-  package; skip the step when it is absent (the SVG is valid either
-  way).
-  / Исходники `.mmd` первичны; `.svg` генерируются: `mmdc` +
-  опционально `svg_legend.py` (табличная легенда под диаграммой;
-  скрипт лежит в корне dev-репозитория `ai_controller_2`, в пакет
-  не входит — при его отсутствии шаг пропускается).
+- `👨‍💻` — human gate; `»` — escalation; `✕` — forced stop.
+- Dotted arrows ending at `👨‍💻` = the decision is made by the human
+  at that point.
+- Mermaid `.mmd` sources are authoritative; `.svg` files are generated.
+  Render: `mmdc -i <mmd> -o <svg> -p <puppeteer-config>`, then
+  `python3 tools/diagram_legend.py <svg>` injects the table-style
+  legend below the diagram (idempotent, English/Russian by path).
