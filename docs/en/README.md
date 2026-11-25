@@ -8,8 +8,8 @@ both committees verify — and discipline is held not by prompts but by
 mechanical gates, hash-pinned artifacts, and signed human decision
 envelopes.
 
-Two version axes, deliberately separate: **product release** `v0.2.15`
-(the repo tag on this package) and **canon version** `1.2.15`
+Two version axes, deliberately separate: **product release** `v0.2.16`
+(the repo tag on this package) and **canon version** `1.2.16`
 (`MANIFEST.json.canon_version`, released as `canon-v*` tags — the axis
 deploy/release fencing cares about). Product tags track the package;
 canon tags track the methodology payload.
@@ -163,6 +163,9 @@ root. Its first move is to read `canon/RULES.md` (last line must be
   signature, artifact binding, 7-day freshness and nonce replay —
   all offline. Remote humans can sign on their laptop and paste the
   line; `consume` burns the nonce only after the merge lands.
+  Contract sign-offs keep their nonce unburned and instead record
+  the superseded content hash (`harness.md` §3), so the same
+  contract's envelope verifies on every merge it gates.
 - `canon/bin/setup_repo.sh` applies the repo-side control plane:
   branch protection (preserving existing required checks), the
   `.changes` fragment layout, and prints the expected

@@ -215,6 +215,15 @@ An immutable record of a human decision that affects a gate
   artifact is an idempotent retry, for a different one - a
   replay) — a captured envelope cannot approve a different
   artifact, a different verdict, or a second merge.
+  Contract sign-off envelopes follow the same verify path plus a
+  supersede check: their nonce is NOT consumed at merge — the
+  same contract's envelope legitimately verifies on every merge
+  the contract gates. Instead `issue_merge` records the contract
+  file's pre-merge content hash in
+  `canon/human_signoffs/.superseded_contracts`, and `verify`
+  rejects any envelope whose artifact was superseded — a later PR
+  that rolls the file back to a superseded hash cannot resurrect
+  an old approval.
 - Written into the instance STATE (managed mode) or into the cycle
   artifact journal (direct mode) — never passed as text through an
   LLM intermediary.

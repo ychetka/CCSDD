@@ -1,7 +1,7 @@
 {
   "canary": "GENERATED_AT_DEPLOY",
   "canon_home": "canon/root",
-  "canon_version": "1.2.15",
+  "canon_version": "1.2.16",
   "description": "CCSDD neutral canon: deployed into a project as canon/ dir. Runtime glue (adapters/*) is generated per-target at deploy time. canary is generated per-repo at deploy time.",
   "file_count": 88,
   "files": [
@@ -187,7 +187,7 @@
     "canon/specs/fleet.md": "6fef9ba721bc728e7578a1ab8b0951806f38fff2d67b6f788af205dfaf5fd12a",
     "canon/specs/gateway.md": "a8115f1b29451ad1476869a138c8db9ac33b82012b1a91c17f52f904903dfdcd",
     "canon/specs/glossary.md": "a5682bc4f3e23b68ac7bc0eb117f28697df5be1c74bbc873d1ccd2aa8b97e19a",
-    "canon/specs/harness.md": "83eca0948c3a4f3cc5c255d4ef6e6d6f35cc26af6d1e2dc8e673aa6466f3b9af",
+    "canon/specs/harness.md": "9be085ffcd5b343d4e6b6818afc47b43cb90dae5f7c8686d9028e6c7ce7eaebc",
     "canon/specs/quota.md": "56b8a86289c24cd22da7fc87c7e0e4abdde162712204cacf0429eb961ec0d3e5",
     "canon/specs/review_panel.md": "8bdeb2bd17798473d972b8d003c2b3c68719015045649cfbdffd601b4455561d",
     "canon/templates/release_workflow.yml": "49522e97e11d34b5049390a7db606f0727df3be81594db2d2bc6b7dc9e0719cc",
