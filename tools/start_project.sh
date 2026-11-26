@@ -104,7 +104,7 @@ if [ "$DRY_RUN" = "1" ]; then
   echo ""
   echo "[DRY-RUN ONLY - no files modified]"
   echo "Planned actions on a real run:"
-  echo "  1. release tag check: canon-v$CANON_VER must exist in the canon repo"
+  echo "  1. release tag check: v$CANON_VER (or legacy canon-v$CANON_VER) must exist in the canon repo"
   echo "  2. deploy every manifest file verbatim, sha256-verified; remove stale canon files"
   echo "  3. generate per-repo canary -> canon/RULES.md tail + canon/canon_manifest.json stamp"
   echo "  4. insert canon gitignore block; untrack deployed paths (infra commit, default branch only)"
@@ -116,14 +116,15 @@ fi
 
 [ -n "$GIT_TOP" ] || die "workspace must contain a git repository (init it first, or re-run pointing at the repo root)"
 
-# Canon release fencing: deploy only a released canon (canon-v<ver> tag).
+# Canon release fencing: deploy only a released canon (tag = version: v<ver>; legacy canon-v<ver> accepted).
 CANON_REPO=$(git -C "$CANON_DIR" rev-parse --show-toplevel 2>/dev/null || true)
 if [ -n "$CANON_REPO" ]; then
-  if ! git -C "$CANON_REPO" rev-parse -q --verify "refs/tags/canon-v$CANON_VER" >/dev/null; then
+  if ! git -C "$CANON_REPO" rev-parse -q --verify "refs/tags/v$CANON_VER" >/dev/null \
+     && ! git -C "$CANON_REPO" rev-parse -q --verify "refs/tags/canon-v$CANON_VER" >/dev/null; then
     if [ "$ALLOW_UNTAGGED" = "1" ]; then
-      warn "canon v$CANON_VER has no canon-v$CANON_VER tag - deploying under --allow-untagged-canon (drift incident, journal it)"
+      warn "canon v$CANON_VER has no release tag (v$CANON_VER) - deploying under --allow-untagged-canon (drift incident, journal it)"
     else
-      die "canon v$CANON_VER is not released (no canon-v$CANON_VER tag in $CANON_REPO). Publish via canon_pub.sh + tag, or pass --allow-untagged-canon"
+      die "canon v$CANON_VER is not released (no v$CANON_VER tag in $CANON_REPO). Publish via canon_pub.sh + tag, or pass --allow-untagged-canon"
     fi
   fi
 else

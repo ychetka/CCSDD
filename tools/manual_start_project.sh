@@ -111,8 +111,9 @@ MANIFEST="$CANON/../MANIFEST.json"
 CANON_REPO=$(git -C "$CANON" rev-parse --show-toplevel 2>/dev/null || true)
 if [ -n "$CANON_REPO" ] && [ -f "$MANIFEST" ]; then
   VER=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['canon_version'])" 2>/dev/null || echo "?")
-  if ! git -C "$CANON_REPO" rev-parse -q --verify "refs/tags/canon-v$VER" >/dev/null 2>&1; then
-    echo "NOTE: canon v$VER has no canon-v$VER release tag in $CANON_REPO."
+  if ! git -C "$CANON_REPO" rev-parse -q --verify "refs/tags/v$VER" >/dev/null 2>&1 \
+     && ! git -C "$CANON_REPO" rev-parse -q --verify "refs/tags/canon-v$VER" >/dev/null 2>&1; then
+    echo "NOTE: canon v$VER has no release tag (v$VER) in $CANON_REPO."
     confirm "Deploy anyway (--allow-untagged-canon, logged drift incident)?" \
       && ALLOW_UNTAGGED=1 \
       || { echo "aborted: release the canon first (canon_pub.sh + tag)" >&2; exit 1; }

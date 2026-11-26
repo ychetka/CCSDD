@@ -10,9 +10,11 @@ envelopes.
 
 Two version axes, deliberately separate: **product release** `v0.2.18`
 (the repo tag on this package) and **canon version** `1.2.18`
-(`MANIFEST.json.canon_version`, released as `canon-v*` tags — the axis
-deploy/release fencing cares about). Product tags track the package;
-canon tags track the methodology payload.
+(`MANIFEST.json.canon_version`, released as `v<canon_version>` tags —
+release tag always equals the version; `canon-v*` tags remain as the
+legacy namespace for earlier releases and for the internal deploy
+fencing fallback). Product tags track the package; canon tags track
+the methodology payload.
 
 Requirements: `git`, `python3`, `bash`. The merge/release pipeline
 (`repo_merge.sh`, `repo_release.sh`, `repo_pr_review.sh`,
