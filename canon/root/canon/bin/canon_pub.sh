@@ -11,7 +11,7 @@
 #      machinery the merge gates use (canon/bin/human_sign.sh): an
 #      ssh-sig envelope binding verdict=approve + artifact +
 #      ts + nonce. The artifact here is
-#      sha256("canon-v<ver>|<candidate_tree_sha256>") so a valid
+#      sha256("v<ver>|<candidate_tree_sha256>") so a valid
 #      envelope can never be replayed under a different version;
 #      verify runs before publish, consume after, so a refused
 #      publish does not burn the human's nonce.
@@ -20,7 +20,7 @@
 #   4. hygiene: no secrets-shaped content in candidate files
 #   5. publish: candidate -> canon root, MANIFEST.json sha map
 #      recomputed, canon_version bumped, release history row
-#      appended. Git commit + canon-v<version> tag are performed
+#      appended. Git commit + v<version> tag are performed
 #      afterwards by the git-agent (instances never run git).
 #
 # --orch-dir <dir> additionally folds a second tree (the
@@ -143,7 +143,7 @@ tree_sha = hashlib.sha256(
 # version + tree are bound inside one signature; freshness (7d) and
 # nonce replay are enforced by the verifier.
 publish_sha = hashlib.sha256(
-    f"canon-v{ver}|{tree_sha}".encode()).hexdigest()
+    f"v{ver}|{tree_sha}".encode()).hexdigest()
 HS = os.environ.get("HS") or ""
 if not os.path.isfile(HS):
     fail(f"canon/bin/human_sign.sh missing: {HS!r}", 5)
@@ -318,6 +318,6 @@ print(json.dumps({
     "canon_version": ver,
     "tree_sha": tree_sha,
     "files": len(tree_entries),
-    "next": f"git-agent: commit canon tree + tag canon-v{ver}",
+    "next": f"git-agent: commit canon tree + tag v{ver}",
 }))
 PY

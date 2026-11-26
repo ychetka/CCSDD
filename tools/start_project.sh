@@ -24,7 +24,7 @@
 #   --canon DIR              canon source root dir (default: this product's canon/root)
 #   --manifest PATH          MANIFEST.json path (default: <canon>/../MANIFEST.json)
 #   --protected-paths a,b,c  extra paths for project.json protected_paths
-#   --allow-untagged-canon   deploy canon without a canon-v<ver> tag (logged drift)
+#   --allow-untagged-canon   deploy canon without a v<ver> release tag (logged drift)
 #   --dry-run                resolve and print planned actions; modify nothing
 #   -h|--help
 set -euo pipefail

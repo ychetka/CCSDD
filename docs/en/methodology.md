@@ -200,7 +200,7 @@ the verdict journal — an agent does not attend meetings.
 
 **Taken:** desired-state-in-manifest deployment (`MANIFEST.json` +
 sha256 map), *deployed-not-tracked* canon, release fencing via
-`canon-v<version>` tags, drift detection by hash comparison.
+`v<version>` tags (legacy `canon-v<version>` before 1.2.19), drift detection by hash comparison.
 
 ### From supply-chain security (SLSA / in-toto / Sigstore patterns)
 

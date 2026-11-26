@@ -269,7 +269,7 @@ fi
 # --- base version: max(latest semver tag merged into base, version
 # source at base). Neither source -> hard error, never a synthetic
 # v0.0.0 baseline. Pre-release tags (v1.2.3-rc.1) are excluded by the
-# strict filter; canon-v* live in a separate namespace. ---
+# strict filter; canon-v* are the legacy namespace (pre-1.2.19). ---
 LATEST=$(git tag --merged "$SHA" --list 'v*' --sort=-v:refname \
          | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)
 FILE_VER=$(bash "$CANON_DIR/bin/repo_version_at.sh" "$REMOTE/$BASE" 2>/dev/null || true)

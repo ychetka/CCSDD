@@ -231,8 +231,9 @@ PYEOF
 }
 export PARTNER_IMPL_DIR="$IMPL"
 
+FAKE_SK="sk-$(printf 'x%.0s' $(seq 30))"
 PARTNER_IMPL_DIR="$IMPL" "$PC" --partner acme --tool t \
-  --args '{"api_key": "sk-1234567890abcdefghij1234567890"}' \
+  --args "{\"api_key\": \"$FAKE_SK\"}" \
   >"$SCRATCH/out" 2>&1
 expect G1-secret-refused 3 $? "REFUSED"
 
@@ -977,7 +978,7 @@ PY
 # canon_pub verifies through human_sign.sh, so the fixture builds a
 # real ssh-sig envelope: a scratch ed25519 key signs the canonical
 # `ccsdd-signoff v1|approve|<publish_sha>|<ts>|<nonce>` message with
-# publish_sha = sha256("canon-v<ver>|<tree_sha>").
+# publish_sha = sha256("v<ver>|<tree_sha>").
 CAND="$SCRATCH/candidate"; mkdir -p "$CAND/canon/specs" "$CAND/canon/bin"
 cp "$PRODUCT/canon/root/canon/RULES.md" "$CAND/canon/RULES.md"
 cp "$PRODUCT/canon/root/canon/specs/harness.md" "$CAND/canon/specs/harness.md"
@@ -1001,7 +1002,7 @@ for p in sorted(cand.rglob("*")):
 tree_sha = hashlib.sha256(
     "".join(f"{r}={s}" for r, s in entries).encode()).hexdigest()
 publish_sha = hashlib.sha256(
-    f"canon-v9.9.9|{tree_sha}".encode()).hexdigest()
+    f"v9.9.9|{tree_sha}".encode()).hexdigest()
 ts = datetime.datetime.now(datetime.timezone.utc).strftime(
     "%Y-%m-%dT%H:%M:%SZ")
 nonce = secrets.token_hex(16)

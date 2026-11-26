@@ -147,7 +147,7 @@ for name in ("README.md",):
                 # only lines that DECLARE the canon version count -
                 # prose mentioning an old release ("fixed in canon
                 # 1.1.0") is not a version declaration
-                if not re.search(r"canon[\s_-]*version|canon-v\d", l, re.I):
+                if not re.search(r"canon[\s_-]*version|canon[\s_-]*v\d", l, re.I):
                     continue
                 m = re.search(r"v?(\d+\.\d+\.\d+)", l)
                 if m and m.group(1) != want:

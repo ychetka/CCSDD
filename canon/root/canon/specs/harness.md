@@ -597,10 +597,10 @@ The version policy is fixed at roadmap approval, not at merge
   stays the source of "who released what, when and why" on top of
   GitHub release links.
 - Canonical orchestrator rollouts: canon_version is bumped by the
-  manifest + a `canon-v<canon_version>` tag on the canon source
-  repository (its own cycle, outside worker RoM gates; the
-  `canon-v*` prefix is a separate semver space from product `v*`
-  tags). Canon owner — one instance (the `canon_owner` mark in
+  manifest + a `v<canon_version>` tag on the canon source
+  repository (release tag = version; the legacy `canon-v*`
+  namespace remains for releases before 1.2.19. Its own cycle,
+  outside worker RoM gates). Canon owner — one instance (the `canon_owner` mark in
   FLEET, assigned by the human, see `fleet.md`); drafts live in the
   owner's canon work area, publication — through the canon gate
   with a human approval envelope (see §3 "Human decision
